@@ -1,35 +1,32 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from '/vite.svg'
-import './App.css'
+import { BrowserRouter, Routes, Route } from "react-router-dom";
+
+import LandingPage from "./pages/landing";
+import AuthPage from "./pages/auth/auth";
+import AdminOverview from "./pages/dashboard/admin/overview";
+import CounselorOverview from "./pages/dashboard/counselor/overview";
+import StudentOverview from "./pages/dashboard/student/overview";
+import NotFoundPage from "./pages/404";
 
 function App() {
-  const [count, setCount] = useState(0)
-
   return (
-    <>
-      <div>
-        <a href="https://vite.dev" target="_blank">
-          <img src={viteLogo} className="logo" alt="Vite logo" />
-        </a>
-        <a href="https://react.dev" target="_blank">
-          <img src={reactLogo} className="logo react" alt="React logo" />
-        </a>
-      </div>
-      <h1>Vite + React</h1>
-      <div className="card">
-        <button onClick={() => setCount((count) => count + 1)}>
-          count is {count}
-        </button>
-        <p>
-          Edit <code>src/App.tsx</code> and save to test HMR
-        </p>
-      </div>
-      <p className="read-the-docs">
-        Click on the Vite and React logos to learn more
-      </p>
-    </>
-  )
+    <BrowserRouter>
+      <Routes>
+        {/* Public landing page */}
+        <Route path="/" element={<LandingPage />} />
+
+        {/* Auth */}
+        <Route path="/auth" element={<AuthPage />} />
+
+        {/* Dashboards (do not modify actual page files) */}
+        <Route path="/dashboard/admin" element={<AdminOverview />} />
+        <Route path="/dashboard/counselor" element={<CounselorOverview />} />
+        <Route path="/dashboard/student" element={<StudentOverview />} />
+
+        {/* 404 */}
+        <Route path="*" element={<NotFoundPage />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
 
-export default App
+export default App;
