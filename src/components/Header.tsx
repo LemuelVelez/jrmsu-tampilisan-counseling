@@ -3,13 +3,6 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 
 const Header: React.FC = () => {
-    const handleExploreClick = () => {
-        const section = document.getElementById("how-it-works");
-        if (section) {
-            section.scrollIntoView({ behavior: "smooth", block: "start" });
-        }
-    };
-
     return (
         <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-8">
@@ -40,16 +33,6 @@ const Header: React.FC = () => {
                 </nav>
 
                 <div className="flex items-center gap-2">
-                    {/* EXPLORE: now smoothly scrolls to the How It Works section */}
-                    <Button
-                        variant="ghost"
-                        size="sm"
-                        type="button"
-                        onClick={handleExploreClick}
-                    >
-                        Explore
-                    </Button>
-
                     <Button size="sm" asChild>
                         <Link to="/auth">Sign in</Link>
                     </Button>
