@@ -1,5 +1,4 @@
 import React from "react";
-import { Link } from "react-router-dom";
 
 const Footer: React.FC = () => {
     const year = new Date().getFullYear();
@@ -21,12 +20,6 @@ const Footer: React.FC = () => {
                 </div>
 
                 <div className="flex flex-wrap items-center gap-4">
-                    <Link
-                        to="/auth"
-                        className="underline-offset-4 hover:text-amber-900 hover:underline"
-                    >
-                        Counselor / Admin sign in
-                    </Link>
                     <span className="text-[0.7rem] text-muted-foreground/80">
                         © {year} Jose Rizal Memorial State University – Tampilisan Campus
                     </span>

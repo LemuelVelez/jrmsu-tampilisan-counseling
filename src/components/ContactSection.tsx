@@ -10,6 +10,12 @@ const CONTACT_EMAIL: string =
     (import.meta as any).env?.GMAIL_ADDRESS_RECEPIENT ??
     "";
 
+// Phone number from env, with a sensible fallback if not set
+const PHONE_NUMBER: string =
+    (import.meta as any).env?.VITE_PHONE_NUMBER ??
+    (import.meta as any).env?.PHONE_NUMBER ??
+    "(+63) 000 000 0000";
+
 // Optional fallback to show in the UI if env is not set
 const DISPLAY_EMAIL = CONTACT_EMAIL || "guidance.office@example.edu";
 
@@ -136,7 +142,7 @@ const ContactSection: React.FC = () => {
                             <dt className="text-xs font-medium uppercase tracking-[0.16em] text-amber-800">
                                 Phone
                             </dt>
-                            <dd>(+63) 000 000 0000</dd>
+                            <dd>{PHONE_NUMBER}</dd>
                         </div>
                     </dl>
 
