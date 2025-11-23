@@ -21,6 +21,9 @@ const Header: React.FC = () => {
                 </Link>
 
                 <nav className="hidden items-center gap-6 text-sm font-medium md:flex">
+                    <a href="#hero" className="text-muted-foreground hover:text-foreground">
+                        Home
+                    </a>
                     <a href="#benefits" className="text-muted-foreground hover:text-foreground">
                         Benefits
                     </a>
