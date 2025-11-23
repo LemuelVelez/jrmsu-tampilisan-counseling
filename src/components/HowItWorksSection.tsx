@@ -47,7 +47,7 @@ const HowItWorksSection: React.FC = () => {
                         className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur"
                     >
                         <CardContent className="flex gap-4 py-4">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-linear-to-br from-amber-400 to-yellow-400 text-sm font-semibold text-amber-900 shadow-sm">
+                            <div className="flex h-8 w-8 flex-none shrink-0 items-center justify-center rounded-full bg-linear-to-br from-amber-400 to-yellow-400 text-sm font-semibold text-amber-900 shadow-sm">
                                 {step.step}
                             </div>
                             <div className="space-y-1">
