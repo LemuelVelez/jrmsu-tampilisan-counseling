@@ -10,6 +10,7 @@ import {
     SheetClose,
 } from "@/components/ui/sheet";
 import { PanelLeftIcon } from "lucide-react";
+import ecounselingLogo from "@/assets/images/ecounseling.svg";
 
 const Header: React.FC = () => {
     return (
@@ -17,9 +18,11 @@ const Header: React.FC = () => {
             <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-8">
                 {/* Logo / brand */}
                 <Link to="/" className="flex items-center gap-2">
-                    <div className="flex h-9 w-9 items-center justify-center rounded-full bg-linear-to-br from-yellow-400 to-amber-500 text-sm font-bold text-amber-950 shadow-sm">
-                        eC
-                    </div>
+                    <img
+                        src={ecounselingLogo}
+                        alt="eCounseling logo"
+                        className="h-9 w-9"
+                    />
                     <div className="flex flex-col leading-tight">
                         <span className="text-sm font-semibold tracking-tight">
                             eCounseling
@@ -82,9 +85,11 @@ const Header: React.FC = () => {
                             <SheetHeader className="px-0 pt-0">
                                 <SheetTitle>
                                     <div className="flex items-center gap-2">
-                                        <div className="flex h-9 w-9 items-center justify-center rounded-full bg-linear-to-br from-yellow-400 to-amber-500 text-sm font-bold text-amber-950 shadow-sm">
-                                            eC
-                                        </div>
+                                        <img
+                                            src={ecounselingLogo}
+                                            alt="eCounseling logo"
+                                            className="h-9 w-9"
+                                        />
                                         <div className="flex flex-col leading-tight">
                                             <span className="text-sm font-semibold tracking-tight">
                                                 eCounseling
