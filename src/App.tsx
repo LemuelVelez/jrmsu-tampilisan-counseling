@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import LandingPage from "./pages/landing";
 import AuthPage from "./pages/auth/auth";
 import ForgotPasswordPage from "./pages/auth/forgot-password";
+import ResetPasswordPage from "./pages/auth/reset-password";
 import AdminOverview from "./pages/dashboard/admin/overview";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
@@ -18,6 +19,7 @@ function App() {
         {/* Auth */}
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+        <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
 
         {/* Dashboards (do not modify actual page files) */}
         <Route path="/dashboard/admin" element={<AdminOverview />} />
