@@ -102,12 +102,12 @@ const LoginForm: React.FC<AuthFormProps> = ({
                             <Field>
                                 <div className="flex items-center">
                                     <FieldLabel htmlFor="login-password">Password</FieldLabel>
-                                    <a
-                                        href="#"
+                                    <Link
+                                        to="/auth/forgot-password"
                                         className="ml-auto text-xs underline-offset-2 hover:text-amber-900 hover:underline"
                                     >
                                         Forgot your password?
-                                    </a>
+                                    </Link>
                                 </div>
                                 <div className="relative">
                                     <Input
