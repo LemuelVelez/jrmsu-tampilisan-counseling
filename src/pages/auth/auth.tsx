@@ -9,7 +9,51 @@ import {
     FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 import heroIllustration from "@/assets/images/hero.png";
+import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import { Eye, EyeOff } from "lucide-react";
+import { Link } from "react-router-dom";
+
+const YEAR_LEVELS = ["1st", "2nd", "3rd", "4th", "5th"] as const;
+type YearLevel = (typeof YEAR_LEVELS)[number];
+type YearLevelOption = YearLevel | "Others";
+
+const YEAR_LEVEL_OPTIONS: YearLevelOption[] = [...YEAR_LEVELS, "Others"];
+
+// Colleges and programs used to drive cascaded selects
+const COLLEGES: Record<string, string[]> = {
+    "College of Business Administration": ["BSBA", "BSAM", "BSHM"],
+    "College of Teacher Education": [
+        "BSED Filipino",
+        "BSED English",
+        "BSED Math",
+        "BSED Social Studies",
+        "Bachelor of Physical Education",
+        "BEED",
+    ],
+    "College of Computing Studies": ["BS Information Systems", "BS Computer Science"],
+    "College of Agriculture and Forestry": ["BS Agriculture", "BS Forestry"],
+    "College of Liberal Arts, Mathematics and Sciences": ["BAELS"],
+    "School of Engineering": ["Agricultural Biosystems Engineering"],
+    "School of Criminal Justice Education": ["BS Criminology"],
+};
+
+const COLLEGE_ACRONYM: Record<string, string> = {
+    "College of Business Administration": "CBA",
+    "College of Teacher Education": "CTED",
+    "College of Computing Studies": "CCS",
+    "College of Agriculture and Forestry": "CAF",
+    "College of Liberal Arts, Mathematics and Sciences": "CLAMS",
+    "School of Engineering": "SOE",
+    "School of Criminal Justice Education": "SCJE",
+};
 
 type AuthMode = "login" | "signup";
 
@@ -22,6 +66,8 @@ const LoginForm: React.FC<AuthFormProps> = ({
     onSwitchMode,
     ...props
 }) => {
+    const [showLoginPassword, setShowLoginPassword] = React.useState(false);
+
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
             <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
@@ -39,17 +85,16 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                     Sign in to eCounseling
                                 </h1>
                                 <p className="text-sm text-muted-foreground text-balance">
-                                    Use your JRMSU account to access the student, counselor, or
-                                    admin portal.
+                                    Use your email to access the student, counselor, or admin portal.
                                 </p>
                             </div>
 
                             <Field>
-                                <FieldLabel htmlFor="login-email">JRMSU email</FieldLabel>
+                                <FieldLabel htmlFor="login-email">Email</FieldLabel>
                                 <Input
                                     id="login-email"
                                     type="email"
-                                    placeholder="name@jrmsu.edu"
+                                    placeholder="you@example.com"
                                     required
                                 />
                             </Field>
@@ -64,7 +109,29 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                         Forgot your password?
                                     </a>
                                 </div>
-                                <Input id="login-password" type="password" required />
+                                <div className="relative">
+                                    <Input
+                                        id="login-password"
+                                        type={showLoginPassword ? "text" : "password"}
+                                        placeholder="Enter your password"
+                                        required
+                                        className="pr-10"
+                                    />
+                                    <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="absolute inset-y-0 right-0 flex items-center justify-center hover:bg-transparent"
+                                        onClick={() => setShowLoginPassword((prev) => !prev)}
+                                        aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                                    >
+                                        {showLoginPassword ? (
+                                            <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                        ) : (
+                                            <Eye className="h-4 w-4 text-muted-foreground" />
+                                        )}
+                                    </Button>
+                                </div>
                             </Field>
 
                             <Field>
@@ -109,6 +176,27 @@ const SignupForm: React.FC<AuthFormProps> = ({
     onSwitchMode,
     ...props
 }) => {
+    const [accountType, setAccountType] = React.useState<"student" | "guest">(
+        "student"
+    );
+    const [gender, setGender] = React.useState<string>("");
+    const [yearLevel, setYearLevel] = React.useState<YearLevelOption | "">("");
+    const [yearLevelOther, setYearLevelOther] = React.useState<string>("");
+
+    const [selectedProgram, setSelectedProgram] = React.useState<string>("");
+    const [programOther, setProgramOther] = React.useState<string>("");
+
+    const [selectedCourse, setSelectedCourse] = React.useState<string>("");
+    const [courseOther, setCourseOther] = React.useState<string>("");
+
+    const [showSignupPassword, setShowSignupPassword] = React.useState(false);
+    const [showSignupConfirmPassword, setShowSignupConfirmPassword] =
+        React.useState(false);
+
+    const coursesForSelectedProgram = selectedProgram
+        ? COLLEGES[selectedProgram] ?? []
+        : [];
+
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
             <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
@@ -126,39 +214,291 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                     Create your eCounseling account
                                 </h1>
                                 <p className="text-sm text-muted-foreground text-balance">
-                                    Enter your JRMSU email to set up your account.
+                                    Enter your email to set up your account.
                                 </p>
                             </div>
 
                             <Field>
-                                <FieldLabel htmlFor="signup-email">JRMSU email</FieldLabel>
+                                <FieldLabel htmlFor="signup-email">Email</FieldLabel>
                                 <Input
                                     id="signup-email"
                                     type="email"
-                                    placeholder="name@jrmsu.edu"
+                                    placeholder="you@example.com"
                                     required
                                 />
                                 <FieldDescription>
-                                    We&apos;ll use this to contact you about counseling updates
-                                    and appointments. Your email will not be shared.
+                                    We&apos;ll use this personal email to contact you about counseling
+                                    updates and appointments. Your email will not be shared.
                                 </FieldDescription>
                             </Field>
+
+                            {/* Gender + Registration type */}
+                            <Field>
+                                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                    <Field>
+                                        <FieldLabel htmlFor="signup-gender">Gender</FieldLabel>
+                                        <Select
+                                            value={gender}
+                                            onValueChange={(value) => setGender(value)}
+                                        >
+                                            <SelectTrigger id="signup-gender">
+                                                <SelectValue placeholder="Select gender" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="male">Male</SelectItem>
+                                                <SelectItem value="female">Female</SelectItem>
+                                                <SelectItem value="nonbinary">Non-binary</SelectItem>
+                                                <SelectItem value="prefer-not-to-say">
+                                                    Prefer not to say
+                                                </SelectItem>
+                                                <SelectItem value="other">Other</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </Field>
+
+                                    <Field>
+                                        <FieldLabel htmlFor="signup-account-type">
+                                            Registration type
+                                        </FieldLabel>
+                                        <Select
+                                            value={accountType}
+                                            onValueChange={(value) =>
+                                                setAccountType(value as "student" | "guest")
+                                            }
+                                        >
+                                            <SelectTrigger id="signup-account-type">
+                                                <SelectValue placeholder="Select registration type" />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                <SelectItem value="student">Student</SelectItem>
+                                                <SelectItem value="guest">Guest</SelectItem>
+                                            </SelectContent>
+                                        </Select>
+                                    </Field>
+                                </div>
+                            </Field>
+
+                            {/* Student-only fields */}
+                            {accountType === "student" && (
+                                <Field>
+                                    <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <Field>
+                                            <FieldLabel htmlFor="signup-student-id">
+                                                Student ID
+                                            </FieldLabel>
+                                            <Input
+                                                id="signup-student-id"
+                                                name="studentId"
+                                                placeholder="TC-23-B-00123"
+                                            />
+                                        </Field>
+
+                                        <Field>
+                                            <FieldLabel htmlFor="signup-year-level">
+                                                Year level
+                                            </FieldLabel>
+                                            <Select
+                                                value={yearLevel}
+                                                onValueChange={(value) =>
+                                                    setYearLevel(value as YearLevelOption)
+                                                }
+                                            >
+                                                <SelectTrigger id="signup-year-level">
+                                                    <SelectValue placeholder="Select year level" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {YEAR_LEVEL_OPTIONS.map((level) => (
+                                                        <SelectItem key={level} value={level}>
+                                                            {level === "Others"
+                                                                ? "Others (please specify)"
+                                                                : level}
+                                                        </SelectItem>
+                                                    ))}
+                                                </SelectContent>
+                                            </Select>
+                                            {yearLevel === "Others" && (
+                                                <div className="mt-2">
+                                                    <FieldLabel
+                                                        htmlFor="signup-year-level-other"
+                                                        className="sr-only"
+                                                    >
+                                                        Please specify year level
+                                                    </FieldLabel>
+                                                    <Input
+                                                        id="signup-year-level-other"
+                                                        placeholder="Please specify your year level"
+                                                        value={yearLevelOther}
+                                                        onChange={(e) => setYearLevelOther(e.target.value)}
+                                                    />
+                                                </div>
+                                            )}
+                                        </Field>
+                                    </div>
+
+                                    <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+                                        <Field>
+                                            <FieldLabel htmlFor="signup-program">Program</FieldLabel>
+                                            <Select
+                                                value={selectedProgram}
+                                                onValueChange={(value) => {
+                                                    setSelectedProgram(value);
+                                                    setSelectedCourse("");
+                                                    setCourseOther("");
+                                                }}
+                                            >
+                                                <SelectTrigger id="signup-program">
+                                                    <SelectValue placeholder="Select program" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {Object.keys(COLLEGES).map((collegeName) => {
+                                                        const acronym = COLLEGE_ACRONYM[collegeName];
+                                                        return (
+                                                            <SelectItem key={collegeName} value={collegeName}>
+                                                                {collegeName}
+                                                                {acronym ? ` (${acronym})` : ""}
+                                                            </SelectItem>
+                                                        );
+                                                    })}
+                                                    <SelectItem value="Others">
+                                                        Others (please specify)
+                                                    </SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                            {selectedProgram === "Others" && (
+                                                <div className="mt-2">
+                                                    <FieldLabel
+                                                        htmlFor="signup-program-other"
+                                                        className="sr-only"
+                                                    >
+                                                        Please specify program
+                                                    </FieldLabel>
+                                                    <Input
+                                                        id="signup-program-other"
+                                                        placeholder="Please specify your program"
+                                                        value={programOther}
+                                                        onChange={(e) => setProgramOther(e.target.value)}
+                                                    />
+                                                </div>
+                                            )}
+                                        </Field>
+
+                                        <Field>
+                                            <FieldLabel htmlFor="signup-course">Course</FieldLabel>
+                                            <Select
+                                                value={selectedCourse}
+                                                onValueChange={(value) => setSelectedCourse(value)}
+                                                disabled={!selectedProgram}
+                                            >
+                                                <SelectTrigger id="signup-course">
+                                                    <SelectValue
+                                                        placeholder={
+                                                            selectedProgram
+                                                                ? "Select course"
+                                                                : "Select a program first"
+                                                        }
+                                                    />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    {coursesForSelectedProgram.map((course) => (
+                                                        <SelectItem key={course} value={course}>
+                                                            {course}
+                                                        </SelectItem>
+                                                    ))}
+                                                    {selectedProgram && (
+                                                        <SelectItem value="Others">
+                                                            Others (please specify)
+                                                        </SelectItem>
+                                                    )}
+                                                </SelectContent>
+                                            </Select>
+                                            {selectedCourse === "Others" && (
+                                                <div className="mt-2">
+                                                    <FieldLabel
+                                                        htmlFor="signup-course-other"
+                                                        className="sr-only"
+                                                    >
+                                                        Please specify course
+                                                    </FieldLabel>
+                                                    <Input
+                                                        id="signup-course-other"
+                                                        placeholder="Please specify your course"
+                                                        value={courseOther}
+                                                        onChange={(e) => setCourseOther(e.target.value)}
+                                                    />
+                                                </div>
+                                            )}
+                                        </Field>
+                                    </div>
+                                </Field>
+                            )}
 
                             <Field>
                                 <Field className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <Field>
                                         <FieldLabel htmlFor="signup-password">Password</FieldLabel>
-                                        <Input id="signup-password" type="password" required />
+                                        <div className="relative">
+                                            <Input
+                                                id="signup-password"
+                                                type={showSignupPassword ? "text" : "password"}
+                                                placeholder="Create a password"
+                                                required
+                                                className="pr-10"
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="absolute inset-y-0 right-0 flex items-center justify-center hover:bg-transparent"
+                                                onClick={() =>
+                                                    setShowSignupPassword((prev) => !prev)
+                                                }
+                                                aria-label={
+                                                    showSignupPassword ? "Hide password" : "Show password"
+                                                }
+                                            >
+                                                {showSignupPassword ? (
+                                                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                                ) : (
+                                                    <Eye className="h-4 w-4 text-muted-foreground" />
+                                                )}
+                                            </Button>
+                                        </div>
                                     </Field>
                                     <Field>
                                         <FieldLabel htmlFor="signup-confirm-password">
                                             Confirm password
                                         </FieldLabel>
-                                        <Input
-                                            id="signup-confirm-password"
-                                            type="password"
-                                            required
-                                        />
+                                        <div className="relative">
+                                            <Input
+                                                id="signup-confirm-password"
+                                                type={
+                                                    showSignupConfirmPassword ? "text" : "password"
+                                                }
+                                                placeholder="Re-enter your password"
+                                                required
+                                                className="pr-10"
+                                            />
+                                            <Button
+                                                type="button"
+                                                variant="ghost"
+                                                size="icon"
+                                                className="absolute inset-y-0 right-0 flex items-center justify-center hover:bg-transparent"
+                                                onClick={() =>
+                                                    setShowSignupConfirmPassword((prev) => !prev)
+                                                }
+                                                aria-label={
+                                                    showSignupConfirmPassword
+                                                        ? "Hide password"
+                                                        : "Show password"
+                                                }
+                                            >
+                                                {showSignupConfirmPassword ? (
+                                                    <EyeOff className="h-4 w-4 text-muted-foreground" />
+                                                ) : (
+                                                    <Eye className="h-4 w-4 text-muted-foreground" />
+                                                )}
+                                            </Button>
+                                        </div>
                                     </Field>
                                 </Field>
                                 <FieldDescription>
@@ -209,16 +549,23 @@ const AuthPage: React.FC = () => {
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
-                {/* Simple header without toggle tabs */}
+                {/* Header with logo (clickable back to landing page) */}
                 <div className="flex items-center justify-between gap-2">
-                    <div className="flex flex-col">
-                        <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                            eCounseling Portal
-                        </h1>
-                        <p className="text-xs text-muted-foreground">
-                            JRMSU – Tampilisan Campus
-                        </p>
-                    </div>
+                    <Link to="/" className="flex items-center gap-3">
+                        <img
+                            src={ecounselingLogo}
+                            alt="eCounseling logo"
+                            className="h-8 w-auto"
+                        />
+                        <div className="flex flex-col">
+                            <h1 className="text-lg font-semibold tracking-tight text-amber-900">
+                                eCounseling Portal
+                            </h1>
+                            <p className="text-xs text-muted-foreground">
+                                JRMSU – Tampilisan Campus
+                            </p>
+                        </div>
+                    </Link>
                 </div>
 
                 {mode === "login" ? (
