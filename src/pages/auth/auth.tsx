@@ -19,7 +19,9 @@ import {
 import heroIllustration from "@/assets/images/hero.png";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Eye, EyeOff } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
+import { useSession } from "@/hooks/use-session";
+import { registerAccount, type RegisterPayload } from "@/lib/authentication";
 
 const YEAR_LEVELS = ["1st", "2nd", "3rd", "4th", "5th"] as const;
 type YearLevel = (typeof YEAR_LEVELS)[number];
@@ -38,7 +40,10 @@ const COLLEGES: Record<string, string[]> = {
         "Bachelor of Physical Education",
         "BEED",
     ],
-    "College of Computing Studies": ["BS Information Systems", "BS Computer Science"],
+    "College of Computing Studies": [
+        "BS Information Systems",
+        "BS Computer Science",
+    ],
     "College of Agriculture and Forestry": ["BS Agriculture", "BS Forestry"],
     "College of Liberal Arts, Mathematics and Sciences": ["BAELS"],
     "School of Engineering": ["Agricultural Biosystems Engineering"],
@@ -57,6 +62,23 @@ const COLLEGE_ACRONYM: Record<string, string> = {
 
 type AuthMode = "login" | "signup";
 
+const resolveDashboardPathForRole = (
+    role: string | null | undefined,
+): string => {
+    const normalized = (role ?? "").toString().toLowerCase();
+
+    if (normalized.includes("admin")) {
+        return "/dashboard/admin";
+    }
+
+    if (normalized.includes("counselor") || normalized.includes("counsellor")) {
+        return "/dashboard/counselor";
+    }
+
+    // Default to student dashboard for unknown roles.
+    return "/dashboard/student";
+};
+
 interface AuthFormProps extends React.HTMLAttributes<HTMLDivElement> {
     onSwitchMode: () => void;
 }
@@ -67,25 +89,56 @@ const LoginForm: React.FC<AuthFormProps> = ({
     ...props
 }) => {
     const [showLoginPassword, setShowLoginPassword] = React.useState(false);
+    const [formError, setFormError] = React.useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const { signIn } = useSession();
+
+    const handleSubmit = React.useCallback(
+        async (event: React.FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            setFormError(null);
+            setIsSubmitting(true);
+
+            const formData = new FormData(event.currentTarget);
+            const email = String(formData.get("email") ?? "").trim();
+            const password = String(formData.get("password") ?? "");
+
+            if (!email || !password) {
+                setFormError("Please enter both your email and password.");
+                setIsSubmitting(false);
+                return;
+            }
+
+            try {
+                await signIn({ email, password });
+                // Successful sign in: AuthPage listens to session changes and will redirect.
+            } catch (error) {
+                console.error("[auth] Sign in failed", error);
+                const message =
+                    error instanceof Error && error.message
+                        ? error.message
+                        : "We couldn't sign you in with those credentials. Please try again.";
+                setFormError(message);
+            } finally {
+                setIsSubmitting(false);
+            }
+        },
+        [signIn],
+    );
 
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
             <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
                 <CardContent className="grid p-0 md:grid-cols-2">
-                    <form
-                        className="p-6 md:p-8"
-                        onSubmit={(event) => {
-                            event.preventDefault();
-                            // TODO: hook up to real auth endpoint
-                        }}
-                    >
+                    <form className="p-6 md:p-8" onSubmit={handleSubmit}>
                         <FieldGroup>
                             <div className="flex flex-col items-center gap-2 text-center">
                                 <h1 className="text-2xl font-semibold text-amber-900">
                                     Sign in to eCounseling
                                 </h1>
                                 <p className="text-sm text-muted-foreground text-balance">
-                                    Use your email to access the student, counselor, or admin portal.
+                                    Use your email to access the student, counselor, or admin
+                                    portal.
                                 </p>
                             </div>
 
@@ -93,8 +146,10 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                 <FieldLabel htmlFor="login-email">Email</FieldLabel>
                                 <Input
                                     id="login-email"
+                                    name="email"
                                     type="email"
                                     placeholder="you@example.com"
+                                    autoComplete="email"
                                     required
                                 />
                             </Field>
@@ -112,8 +167,10 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                 <div className="relative">
                                     <Input
                                         id="login-password"
+                                        name="password"
                                         type={showLoginPassword ? "text" : "password"}
                                         placeholder="Enter your password"
+                                        autoComplete="current-password"
                                         required
                                         className="pr-10"
                                     />
@@ -123,7 +180,9 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                         size="icon"
                                         className="absolute inset-y-0 right-0 flex items-center justify-center hover:bg-transparent"
                                         onClick={() => setShowLoginPassword((prev) => !prev)}
-                                        aria-label={showLoginPassword ? "Hide password" : "Show password"}
+                                        aria-label={
+                                            showLoginPassword ? "Hide password" : "Show password"
+                                        }
                                     >
                                         {showLoginPassword ? (
                                             <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -134,9 +193,22 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                 </div>
                             </Field>
 
+                            {formError && (
+                                <FieldDescription
+                                    role="alert"
+                                    className="text-xs text-destructive"
+                                >
+                                    {formError}
+                                </FieldDescription>
+                            )}
+
                             <Field>
-                                <Button type="submit" className="w-full">
-                                    Sign in
+                                <Button
+                                    type="submit"
+                                    className="w-full"
+                                    disabled={isSubmitting}
+                                >
+                                    {isSubmitting ? "Signing in..." : "Sign in"}
                                 </Button>
                             </Field>
 
@@ -177,7 +249,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
     ...props
 }) => {
     const [accountType, setAccountType] = React.useState<"student" | "guest">(
-        "student"
+        "student",
     );
     const [gender, setGender] = React.useState<string>("");
     const [yearLevel, setYearLevel] = React.useState<YearLevelOption | "">("");
@@ -193,21 +265,114 @@ const SignupForm: React.FC<AuthFormProps> = ({
     const [showSignupConfirmPassword, setShowSignupConfirmPassword] =
         React.useState(false);
 
+    const [formError, setFormError] = React.useState<string | null>(null);
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
+
     const coursesForSelectedProgram = selectedProgram
         ? COLLEGES[selectedProgram] ?? []
         : [];
+
+    const handleSubmit = React.useCallback(
+        async (event: React.FormEvent<HTMLFormElement>) => {
+            event.preventDefault();
+            setFormError(null);
+            setIsSubmitting(true);
+
+            const formData = new FormData(event.currentTarget);
+            const email = String(formData.get("email") ?? "").trim();
+            const password = String(formData.get("password") ?? "");
+            const passwordConfirmation = String(
+                formData.get("password_confirmation") ?? "",
+            );
+
+            if (!email) {
+                setFormError("Please enter your email address.");
+                setIsSubmitting(false);
+                return;
+            }
+
+            if (!password || !passwordConfirmation) {
+                setFormError("Please enter and confirm your password.");
+                setIsSubmitting(false);
+                return;
+            }
+
+            if (password !== passwordConfirmation) {
+                setFormError("Passwords do not match. Please double-check them.");
+                setIsSubmitting(false);
+                return;
+            }
+
+            const studentId = String(formData.get("studentId") ?? "").trim();
+
+            const resolvedYearLevel =
+                yearLevel === "Others"
+                    ? yearLevelOther.trim()
+                    : (yearLevel || "").toString().trim();
+
+            const resolvedProgram =
+                selectedProgram === "Others"
+                    ? programOther.trim()
+                    : selectedProgram.trim();
+
+            const resolvedCourse =
+                selectedCourse === "Others"
+                    ? courseOther.trim()
+                    : selectedCourse.trim();
+
+            const registerPayload: RegisterPayload = {
+                email,
+                password,
+                password_confirmation: passwordConfirmation,
+                gender: gender || undefined,
+                account_type: accountType,
+                student_id:
+                    accountType === "student" && studentId ? studentId : undefined,
+                year_level:
+                    accountType === "student" && resolvedYearLevel
+                        ? resolvedYearLevel
+                        : undefined,
+                program:
+                    accountType === "student" && resolvedProgram
+                        ? resolvedProgram
+                        : undefined,
+                course:
+                    accountType === "student" && resolvedCourse
+                        ? resolvedCourse
+                        : undefined,
+            };
+
+            try {
+                await registerAccount(registerPayload);
+                // On success, AuthPage will redirect based on the new session.
+            } catch (error) {
+                console.error("[auth] Registration failed", error);
+                const message =
+                    error instanceof Error && error.message
+                        ? error.message
+                        : "We couldn't create your account with the provided details. Please try again.";
+                setFormError(message);
+            } finally {
+                setIsSubmitting(false);
+            }
+        },
+        [
+            accountType,
+            gender,
+            yearLevel,
+            yearLevelOther,
+            selectedProgram,
+            programOther,
+            selectedCourse,
+            courseOther,
+        ],
+    );
 
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
             <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
                 <CardContent className="grid p-0 md:grid-cols-2">
-                    <form
-                        className="p-6 md:p-8"
-                        onSubmit={(event) => {
-                            event.preventDefault();
-                            // TODO: hook up to real signup endpoint
-                        }}
-                    >
+                    <form className="p-6 md:p-8" onSubmit={handleSubmit}>
                         <FieldGroup>
                             <div className="flex flex-col items-center gap-2 text-center">
                                 <h1 className="text-2xl font-semibold text-amber-900">
@@ -222,13 +387,16 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                 <FieldLabel htmlFor="signup-email">Email</FieldLabel>
                                 <Input
                                     id="signup-email"
+                                    name="email"
                                     type="email"
                                     placeholder="you@example.com"
+                                    autoComplete="email"
                                     required
                                 />
                                 <FieldDescription>
-                                    We&apos;ll use this personal email to contact you about counseling
-                                    updates and appointments. Your email will not be shared.
+                                    We&apos;ll use this personal email to contact you about
+                                    counseling updates and appointments. Your email will not be
+                                    shared.
                                 </FieldDescription>
                             </Field>
 
@@ -328,7 +496,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                         id="signup-year-level-other"
                                                         placeholder="Please specify your year level"
                                                         value={yearLevelOther}
-                                                        onChange={(e) => setYearLevelOther(e.target.value)}
+                                                        onChange={(e) =>
+                                                            setYearLevelOther(e.target.value)
+                                                        }
                                                     />
                                                 </div>
                                             )}
@@ -353,7 +523,10 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                     {Object.keys(COLLEGES).map((collegeName) => {
                                                         const acronym = COLLEGE_ACRONYM[collegeName];
                                                         return (
-                                                            <SelectItem key={collegeName} value={collegeName}>
+                                                            <SelectItem
+                                                                key={collegeName}
+                                                                value={collegeName}
+                                                            >
                                                                 {collegeName}
                                                                 {acronym ? ` (${acronym})` : ""}
                                                             </SelectItem>
@@ -376,7 +549,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                         id="signup-program-other"
                                                         placeholder="Please specify your program"
                                                         value={programOther}
-                                                        onChange={(e) => setProgramOther(e.target.value)}
+                                                        onChange={(e) =>
+                                                            setProgramOther(e.target.value)
+                                                        }
                                                     />
                                                 </div>
                                             )}
@@ -439,8 +614,10 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                         <div className="relative">
                                             <Input
                                                 id="signup-password"
+                                                name="password"
                                                 type={showSignupPassword ? "text" : "password"}
                                                 placeholder="Create a password"
+                                                autoComplete="new-password"
                                                 required
                                                 className="pr-10"
                                             />
@@ -471,10 +648,10 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                         <div className="relative">
                                             <Input
                                                 id="signup-confirm-password"
-                                                type={
-                                                    showSignupConfirmPassword ? "text" : "password"
-                                                }
+                                                name="password_confirmation"
+                                                type={showSignupConfirmPassword ? "text" : "password"}
                                                 placeholder="Re-enter your password"
+                                                autoComplete="new-password"
                                                 required
                                                 className="pr-10"
                                             />
@@ -504,11 +681,23 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                 <FieldDescription>
                                     Must be at least 8 characters long.
                                 </FieldDescription>
+                                {formError && (
+                                    <FieldDescription
+                                        role="alert"
+                                        className="text-xs text-destructive"
+                                    >
+                                        {formError}
+                                    </FieldDescription>
+                                )}
                             </Field>
 
                             <Field>
-                                <Button type="submit" className="w-full">
-                                    Create account
+                                <Button
+                                    type="submit"
+                                    className="w-full"
+                                    disabled={isSubmitting}
+                                >
+                                    {isSubmitting ? "Creating account..." : "Create account"}
                                 </Button>
                             </Field>
 
@@ -545,6 +734,24 @@ const SignupForm: React.FC<AuthFormProps> = ({
 
 const AuthPage: React.FC = () => {
     const [mode, setMode] = React.useState<AuthMode>("login");
+    const { session, status } = useSession();
+    const navigate = useNavigate();
+
+    React.useEffect(() => {
+        if (status !== "authenticated" || !session.user) {
+            return;
+        }
+
+        const roleValue =
+            typeof session.user.role === "string"
+                ? session.user.role
+                : session.user.role != null
+                    ? String(session.user.role)
+                    : "";
+
+        const dashboardPath = resolveDashboardPathForRole(roleValue);
+        navigate(dashboardPath, { replace: true });
+    }, [status, session, navigate]);
 
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
