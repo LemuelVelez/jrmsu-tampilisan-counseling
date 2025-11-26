@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 
 import LandingPage from "./pages/landing";
@@ -10,29 +11,32 @@ import AdminOverview from "./pages/dashboard/admin/overview";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
 import NotFoundPage from "./pages/404";
+import Loading from "./components/Loading";
 
 function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        {/* Public landing page */}
-        <Route path="/" element={<LandingPage />} />
+      <Suspense fallback={<Loading />}>
+        <Routes>
+          {/* Public landing page */}
+          <Route path="/" element={<LandingPage />} />
 
-        {/* Auth */}
-        <Route path="/auth" element={<AuthPage />} />
-        <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
-        <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
-        <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
-        <Route path="/auth/callback" element={<AuthCallbackPage />} />
+          {/* Auth */}
+          <Route path="/auth" element={<AuthPage />} />
+          <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
+          <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+          <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+          <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
-        {/* Dashboards (do not modify actual page files) */}
-        <Route path="/dashboard/admin" element={<AdminOverview />} />
-        <Route path="/dashboard/counselor" element={<CounselorOverview />} />
-        <Route path="/dashboard/student" element={<StudentOverview />} />
+          {/* Dashboards (do not modify actual page files) */}
+          <Route path="/dashboard/admin" element={<AdminOverview />} />
+          <Route path="/dashboard/counselor" element={<CounselorOverview />} />
+          <Route path="/dashboard/student" element={<StudentOverview />} />
 
-        {/* 404 */}
-        <Route path="*" element={<NotFoundPage />} />
-      </Routes>
+          {/* 404 */}
+          <Route path="*" element={<NotFoundPage />} />
+        </Routes>
+      </Suspense>
     </BrowserRouter>
   );
 }
