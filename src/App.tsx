@@ -12,6 +12,7 @@ import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
+import { Toaster } from "./components/ui/sonner";
 
 function App() {
   return (
@@ -37,6 +38,9 @@ function App() {
           <Route path="*" element={<NotFoundPage />} />
         </Routes>
       </Suspense>
+
+      {/* Global Sonner toaster */}
+      <Toaster richColors closeButton />
     </BrowserRouter>
   );
 }
