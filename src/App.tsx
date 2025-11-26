@@ -4,6 +4,8 @@ import LandingPage from "./pages/landing";
 import AuthPage from "./pages/auth/auth";
 import ForgotPasswordPage from "./pages/auth/forgot-password";
 import ResetPasswordPage from "./pages/auth/reset-password";
+import VerifyEmailPage from "./pages/auth/verify-email";
+import AuthCallbackPage from "./pages/auth/callback";
 import AdminOverview from "./pages/dashboard/admin/overview";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
@@ -20,6 +22,8 @@ function App() {
         <Route path="/auth" element={<AuthPage />} />
         <Route path="/auth/forgot-password" element={<ForgotPasswordPage />} />
         <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
+        <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
+        <Route path="/auth/callback" element={<AuthCallbackPage />} />
 
         {/* Dashboards (do not modify actual page files) */}
         <Route path="/dashboard/admin" element={<AdminOverview />} />
