@@ -36,6 +36,8 @@ export interface LoginResult extends AuthSession {
 }
 
 export interface RegisterPayload {
+    // 👈 NEW: include name so signup can send it
+    name: string;
     email: string;
     password: string;
     password_confirmation: string;
@@ -232,6 +234,8 @@ export async function registerAccount(
     payload: RegisterPayload,
 ): Promise<RegisterResult> {
     const apiPayload: RegisterRequestDto = {
+        // 👈 send name to backend
+        name: payload.name,
         email: payload.email,
         password: payload.password,
         password_confirmation: payload.password_confirmation,

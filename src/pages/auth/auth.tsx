@@ -279,11 +279,18 @@ const SignupForm: React.FC<AuthFormProps> = ({
             setIsSubmitting(true);
 
             const formData = new FormData(event.currentTarget);
+            const name = String(formData.get("name") ?? "").trim();
             const email = String(formData.get("email") ?? "").trim();
             const password = String(formData.get("password") ?? "");
             const passwordConfirmation = String(
                 formData.get("password_confirmation") ?? "",
             );
+
+            if (!name) {
+                setFormError("Please enter your full name.");
+                setIsSubmitting(false);
+                return;
+            }
 
             if (!email) {
                 setFormError("Please enter your email address.");
@@ -321,6 +328,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                     : selectedCourse.trim();
 
             const registerPayload: RegisterPayload = {
+                name,
                 email,
                 password,
                 password_confirmation: passwordConfirmation,
@@ -379,9 +387,22 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                     Create your eCounseling account
                                 </h1>
                                 <p className="text-sm text-muted-foreground text-balance">
-                                    Enter your email to set up your account.
+                                    Enter your name and email to set up your account.
                                 </p>
                             </div>
+
+                            {/* NEW: Full name field */}
+                            <Field>
+                                <FieldLabel htmlFor="signup-name">Full name</FieldLabel>
+                                <Input
+                                    id="signup-name"
+                                    name="name"
+                                    type="text"
+                                    placeholder="Juan Dela Cruz"
+                                    autoComplete="name"
+                                    required
+                                />
+                            </Field>
 
                             <Field>
                                 <FieldLabel htmlFor="signup-email">Email</FieldLabel>

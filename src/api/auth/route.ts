@@ -29,6 +29,8 @@ export interface LoginResponseDto {
 }
 
 export interface RegisterRequestDto {
+    // 👈 NEW: backend expects a name, so include it here
+    name: string;
     email: string;
     password: string;
     password_confirmation: string;
