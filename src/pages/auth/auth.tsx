@@ -248,6 +248,8 @@ const SignupForm: React.FC<AuthFormProps> = ({
     onSwitchMode,
     ...props
 }) => {
+    const navigate = useNavigate();
+
     const [accountType, setAccountType] = React.useState<"student" | "guest">(
         "student",
     );
@@ -352,7 +354,10 @@ const SignupForm: React.FC<AuthFormProps> = ({
 
             try {
                 await registerAccount(registerPayload);
-                // On success, AuthPage will redirect based on the new session.
+                // On success, take the user to the email verification screen.
+                navigate(
+                    `/auth/verify-email?email=${encodeURIComponent(email)}`,
+                );
             } catch (error) {
                 console.error("[auth] Registration failed", error);
                 const message =
@@ -373,6 +378,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
             programOther,
             selectedCourse,
             courseOther,
+            navigate,
         ],
     );
 
@@ -763,6 +769,12 @@ const AuthPage: React.FC = () => {
             return;
         }
 
+        // Only auto-redirect after a successful sign-in.
+        // After registration we manually send the user to the verify-email page.
+        if (mode !== "login") {
+            return;
+        }
+
         const roleValue =
             typeof session.user.role === "string"
                 ? session.user.role
@@ -772,7 +784,7 @@ const AuthPage: React.FC = () => {
 
         const dashboardPath = resolveDashboardPathForRole(roleValue);
         navigate(dashboardPath, { replace: true });
-    }, [status, session, navigate]);
+    }, [status, session, navigate, mode]);
 
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
