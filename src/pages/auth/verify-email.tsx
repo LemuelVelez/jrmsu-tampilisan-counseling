@@ -14,6 +14,7 @@ import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Link, useSearchParams } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
+import { toast } from "sonner";
 
 async function resendVerificationEmailRequest(email: string): Promise<void> {
     if (!AUTH_API_BASE_URL) {
@@ -23,7 +24,6 @@ async function resendVerificationEmailRequest(email: string): Promise<void> {
     }
 
     // Backend route that should send a new verification email.
-    // You can point this to any route you prefer (e.g. /email/verification-notification).
     const url = `${AUTH_API_BASE_URL}/auth/email/resend-verification`;
 
     const response = await fetch(url, {
@@ -94,9 +94,10 @@ const VerifyEmailPage: React.FC = () => {
             const trimmedEmail = email.trim();
 
             if (!trimmedEmail) {
-                setFormError(
-                    "Please enter the email address associated with your account.",
-                );
+                const msg =
+                    "Please enter the email address associated with your account.";
+                setFormError(msg);
+                toast.error(msg);
                 return;
             }
 
@@ -105,9 +106,10 @@ const VerifyEmailPage: React.FC = () => {
             try {
                 await resendVerificationEmailRequest(trimmedEmail);
 
-                setFormSuccess(
-                    "If an account exists for this email, we've just sent a new verification link. Please check your inbox.",
-                );
+                const successMsg =
+                    "If an account exists for this email, we've just sent a new verification link. Please check your inbox.";
+                setFormSuccess(successMsg);
+                toast.success("Verification email sent. Please check your inbox.");
             } catch (error) {
                 console.error(
                     "[verify-email] Failed to resend verification email",
@@ -118,6 +120,7 @@ const VerifyEmailPage: React.FC = () => {
                         ? error.message
                         : "We couldn't resend the verification email right now. Please try again later.";
                 setFormError(message);
+                toast.error(message);
             } finally {
                 setIsSubmitting(false);
             }

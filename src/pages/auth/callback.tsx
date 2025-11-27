@@ -6,6 +6,7 @@ import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchCurrentUserFromServer } from "@/lib/authentication";
+import { toast } from "sonner";
 
 type CallbackStatus = "processing" | "success" | "error";
 
@@ -33,6 +34,7 @@ const AuthCallbackPage: React.FC = () => {
     const [status, setStatus] = React.useState<CallbackStatus>("processing");
     const [message, setMessage] = React.useState<string | null>(null);
     const [redirectPath, setRedirectPath] = React.useState<string>("/auth");
+    const hasShownToastRef = React.useRef(false);
 
     React.useEffect(() => {
         let isMounted = true;
@@ -116,6 +118,26 @@ const AuthCallbackPage: React.FC = () => {
             }
         };
     }, [navigate, searchParams]);
+
+    // Fire a toast exactly once when status is no longer "processing"
+    React.useEffect(() => {
+        if (hasShownToastRef.current) return;
+        if (status === "processing") return;
+
+        hasShownToastRef.current = true;
+
+        if (status === "success") {
+            toast.success(
+                message ??
+                "You're all set. Redirecting you to your dashboard.",
+            );
+        } else if (status === "error") {
+            toast.error(
+                message ??
+                "We couldn't finish sign-in. Please try again.",
+            );
+        }
+    }, [status, message]);
 
     const title =
         status === "success"

@@ -22,6 +22,7 @@ import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
 import { registerAccount, type RegisterPayload } from "@/lib/authentication";
+import { toast } from "sonner";
 
 const YEAR_LEVELS = ["1st", "2nd", "3rd", "4th", "5th"] as const;
 type YearLevel = (typeof YEAR_LEVELS)[number];
@@ -104,7 +105,9 @@ const LoginForm: React.FC<AuthFormProps> = ({
             const password = String(formData.get("password") ?? "");
 
             if (!email || !password) {
-                setFormError("Please enter both your email and password.");
+                const msg = "Please enter both your email and password.";
+                setFormError(msg);
+                toast.error(msg);
                 setIsSubmitting(false);
                 return;
             }
@@ -112,6 +115,7 @@ const LoginForm: React.FC<AuthFormProps> = ({
             try {
                 await signIn({ email, password });
                 // Successful sign in: AuthPage listens to session changes and will redirect.
+                toast.success("Signed in successfully.");
             } catch (error) {
                 console.error("[auth] Sign in failed", error);
                 const message =
@@ -119,6 +123,7 @@ const LoginForm: React.FC<AuthFormProps> = ({
                         ? error.message
                         : "We couldn't sign you in with those credentials. Please try again.";
                 setFormError(message);
+                toast.error(message);
             } finally {
                 setIsSubmitting(false);
             }
@@ -289,25 +294,33 @@ const SignupForm: React.FC<AuthFormProps> = ({
             );
 
             if (!name) {
-                setFormError("Please enter your full name.");
+                const msg = "Please enter your full name.";
+                setFormError(msg);
+                toast.error(msg);
                 setIsSubmitting(false);
                 return;
             }
 
             if (!email) {
-                setFormError("Please enter your email address.");
+                const msg = "Please enter your email address.";
+                setFormError(msg);
+                toast.error(msg);
                 setIsSubmitting(false);
                 return;
             }
 
             if (!password || !passwordConfirmation) {
-                setFormError("Please enter and confirm your password.");
+                const msg = "Please enter and confirm your password.";
+                setFormError(msg);
+                toast.error(msg);
                 setIsSubmitting(false);
                 return;
             }
 
             if (password !== passwordConfirmation) {
-                setFormError("Passwords do not match. Please double-check them.");
+                const msg = "Passwords do not match. Please double-check them.";
+                setFormError(msg);
+                toast.error(msg);
                 setIsSubmitting(false);
                 return;
             }
@@ -354,6 +367,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
 
             try {
                 await registerAccount(registerPayload);
+                toast.success(
+                    "Account created. Please check your email for a verification link.",
+                );
                 // On success, take the user to the email verification screen.
                 navigate(
                     `/auth/verify-email?email=${encodeURIComponent(email)}`,
@@ -365,6 +381,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                         ? error.message
                         : "We couldn't create your account with the provided details. Please try again.";
                 setFormError(message);
+                toast.error(message);
             } finally {
                 setIsSubmitting(false);
             }
