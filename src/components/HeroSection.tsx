@@ -4,14 +4,37 @@ import { Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import heroIllustration from "@/assets/images/hero.png";
+import {
+    getCurrentSession,
+    subscribeToSession,
+} from "@/lib/authentication";
 
 const HeroSection: React.FC = () => {
+    const [hasSession, setHasSession] = React.useState<boolean>(() => {
+        try {
+            const session = getCurrentSession();
+            return !!session.user;
+        } catch {
+            return false;
+        }
+    });
+
+    React.useEffect(() => {
+        const unsubscribe = subscribeToSession((session) => {
+            setHasSession(!!session.user);
+        });
+        return unsubscribe;
+    }, []);
+
+    const primaryCtaPath = hasSession ? "/dashboard" : "/auth";
+    const primaryCtaLabel = hasSession ? "Dashboard" : "Get started";
+
     return (
         <section
             id="hero"
             className="mx-auto max-w-6xl px-4 py-10 sm:py-12 md:px-8 md:py-16"
         >
-            {/* 
+            {/*
         Mobile / tablet: vertical (single column)
         Desktop (lg+): horizontal (two columns)
       */}
@@ -38,7 +61,7 @@ const HeroSection: React.FC = () => {
 
                     <div className="flex flex-wrap items-center justify-center gap-3 lg:justify-start">
                         <Button size="lg" asChild>
-                            <Link to="/auth">Get started</Link>
+                            <Link to={primaryCtaPath}>{primaryCtaLabel}</Link>
                         </Button>
                         <Button variant="outline" size="lg" asChild>
                             <a href="#how-it-works">See how it works</a>
@@ -69,7 +92,7 @@ const HeroSection: React.FC = () => {
                         />
                     </div>
 
-                    {/* 
+                    {/*
             Mobile: card appears below image as a normal block.
             Desktop: card floats over the image near the bottom.
           */}

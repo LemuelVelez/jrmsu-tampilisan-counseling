@@ -11,8 +11,31 @@ import {
 } from "@/components/ui/sheet";
 import { PanelLeftIcon } from "lucide-react";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import {
+    getCurrentSession,
+    subscribeToSession,
+} from "@/lib/authentication";
 
 const Header: React.FC = () => {
+    const [hasSession, setHasSession] = React.useState<boolean>(() => {
+        try {
+            const session = getCurrentSession();
+            return !!session.user;
+        } catch {
+            return false;
+        }
+    });
+
+    React.useEffect(() => {
+        const unsubscribe = subscribeToSession((session) => {
+            setHasSession(!!session.user);
+        });
+        return unsubscribe;
+    }, []);
+
+    const authOrDashboardPath = hasSession ? "/dashboard" : "/auth";
+    const authButtonLabel = hasSession ? "Dashboard" : "Sign in";
+
     return (
         <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
             <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-8">
@@ -60,9 +83,9 @@ const Header: React.FC = () => {
 
                 {/* Right side: desktop button + mobile sheet trigger */}
                 <div className="flex items-center gap-2">
-                    {/* Desktop Sign in (unchanged for md and up) */}
+                    {/* Desktop Sign in / Dashboard (depending on session) */}
                     <Button size="sm" asChild className="hidden md:inline-flex">
-                        <Link to="/auth">Sign in</Link>
+                        <Link to={authOrDashboardPath}>{authButtonLabel}</Link>
                     </Button>
 
                     {/* Mobile: Sheet-based nav triggered by a sidebar-style button */}
@@ -139,11 +162,11 @@ const Header: React.FC = () => {
                                     </SheetClose>
                                 </nav>
 
-                                {/* Mobile Sign in button inside sheet */}
+                                {/* Mobile Sign in / Dashboard button inside sheet */}
                                 <div className="mt-auto">
                                     <SheetClose asChild>
                                         <Button className="w-full" size="sm" asChild>
-                                            <Link to="/auth">Sign in</Link>
+                                            <Link to={authOrDashboardPath}>{authButtonLabel}</Link>
                                         </Button>
                                     </SheetClose>
                                 </div>
