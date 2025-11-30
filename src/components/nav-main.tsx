@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard, CalendarClock, LineChart } from "lucide-react";
+import { LayoutDashboard, CalendarClock, ClipboardList } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import {
@@ -24,14 +24,16 @@ const studentNavItems: NavItem[] = [
         icon: LayoutDashboard,
     },
     {
-        title: "My Sessions",
-        to: "/dashboard/student/sessions",
-        icon: CalendarClock,
+        // Counseling Request / Intake
+        title: "Intake",
+        to: "/dashboard/student/intake",
+        icon: ClipboardList,
     },
     {
-        title: "My Progress",
-        to: "/dashboard/student/progress",
-        icon: LineChart,
+        // Appointments & Session History
+        title: "Appointments",
+        to: "/dashboard/student/appointments",
+        icon: CalendarClock,
     },
 ];
 
