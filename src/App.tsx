@@ -10,6 +10,7 @@ import AuthCallbackPage from "./pages/auth/callback";
 import AdminOverview from "./pages/dashboard/admin/overview";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
+import StudentIntake from "./pages/dashboard/student/intake";
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
 import { Toaster } from "./components/ui/sonner";
@@ -59,6 +60,7 @@ function App() {
           <Route path="/dashboard/admin" element={<AdminOverview />} />
           <Route path="/dashboard/counselor" element={<CounselorOverview />} />
           <Route path="/dashboard/student" element={<StudentOverview />} />
+          <Route path="/dashboard/student/intake" element={<StudentIntake />} />
 
           {/* 404 */}
           <Route path="*" element={<NotFoundPage />} />
