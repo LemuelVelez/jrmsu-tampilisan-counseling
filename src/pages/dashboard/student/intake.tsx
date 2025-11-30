@@ -2,15 +2,30 @@ import React from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { submitIntakeRequest } from "@/lib/intake";
+import { Calendar as CalendarIcon } from "lucide-react";
+import { Calendar } from "@/components/ui/calendar";
+import {
+    Popover,
+    PopoverTrigger,
+    PopoverContent,
+} from "@/components/ui/popover";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Label } from "@/components/ui/label";
+import { format } from "date-fns";
 
 type IntakeFormState = {
     concern_type: string;
     urgency: "low" | "medium" | "high";
-    preferred_date: string;
-    preferred_time: string;
+    preferred_date: string; // YYYY-MM-DD
+    preferred_time: string; // e.g. "8:00 AM"
     details: string;
 };
 
@@ -22,9 +37,37 @@ const DEFAULT_FORM: IntakeFormState = {
     details: "",
 };
 
+type TimeOption = {
+    value: string; // what we send to backend
+    label: string; // what we show in the UI, with AM/PM
+};
+
+// 30-minute slots with AM/PM labels
+const TIME_OPTIONS: TimeOption[] = [
+    { value: "08:00 AM", label: "8:00 AM" },
+    { value: "08:30 AM", label: "8:30 AM" },
+    { value: "09:00 AM", label: "9:00 AM" },
+    { value: "09:30 AM", label: "9:30 AM" },
+    { value: "10:00 AM", label: "10:00 AM" },
+    { value: "10:30 AM", label: "10:30 AM" },
+    { value: "11:00 AM", label: "11:00 AM" },
+    { value: "11:30 AM", label: "11:30 AM" },
+    { value: "01:00 PM", label: "1:00 PM" },
+    { value: "01:30 PM", label: "1:30 PM" },
+    { value: "02:00 PM", label: "2:00 PM" },
+    { value: "02:30 PM", label: "2:30 PM" },
+    { value: "03:00 PM", label: "3:00 PM" },
+    { value: "03:30 PM", label: "3:30 PM" },
+    { value: "04:00 PM", label: "4:00 PM" },
+    { value: "04:30 PM", label: "4:30 PM" },
+];
+
 const StudentIntake: React.FC = () => {
     const [form, setForm] = React.useState<IntakeFormState>(DEFAULT_FORM);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [preferredDate, setPreferredDate] = React.useState<Date | undefined>(
+        undefined,
+    );
 
     const handleChange = (
         event: React.ChangeEvent<
@@ -40,6 +83,17 @@ const StudentIntake: React.FC = () => {
 
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
+
+        if (!form.preferred_date) {
+            toast.error("Please select your preferred date.");
+            return;
+        }
+
+        if (!form.preferred_time) {
+            toast.error("Please select your preferred time.");
+            return;
+        }
+
         setIsSubmitting(true);
 
         try {
@@ -58,6 +112,7 @@ const StudentIntake: React.FC = () => {
 
             toast.success(successMessage);
             setForm(DEFAULT_FORM);
+            setPreferredDate(undefined);
         } catch (error) {
             const message =
                 error instanceof Error
@@ -91,12 +146,12 @@ const StudentIntake: React.FC = () => {
                         <form className="space-y-4" onSubmit={handleSubmit}>
                             {/* Concern type */}
                             <div className="space-y-1.5">
-                                <label
+                                <Label
                                     htmlFor="concern_type"
                                     className="text-xs font-medium text-amber-900"
                                 >
                                     Main concern
-                                </label>
+                                </Label>
                                 <select
                                     id="concern_type"
                                     name="concern_type"
@@ -117,12 +172,12 @@ const StudentIntake: React.FC = () => {
 
                             {/* Urgency */}
                             <div className="space-y-1.5">
-                                <label
+                                <Label
                                     htmlFor="urgency"
                                     className="text-xs font-medium text-amber-900"
                                 >
                                     How urgent is this?
-                                </label>
+                                </Label>
                                 <select
                                     id="urgency"
                                     name="urgency"
@@ -141,53 +196,93 @@ const StudentIntake: React.FC = () => {
                                 </p>
                             </div>
 
-                            {/* Preferred date & time */}
+                            {/* Preferred date & time (shadcn UI) */}
                             <div className="grid gap-4 sm:grid-cols-2">
+                                {/* Date */}
                                 <div className="space-y-1.5">
-                                    <label
+                                    <Label
                                         htmlFor="preferred_date"
                                         className="text-xs font-medium text-amber-900"
                                     >
                                         Preferred date
-                                    </label>
-                                    <Input
-                                        id="preferred_date"
-                                        name="preferred_date"
-                                        type="date"
-                                        value={form.preferred_date}
-                                        onChange={handleChange}
-                                        required
-                                        className="h-9"
-                                    />
+                                    </Label>
+                                    <Popover>
+                                        <PopoverTrigger asChild>
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                className={`w-full justify-start text-left font-normal ${!preferredDate ? "text-muted-foreground" : ""
+                                                    }`}
+                                            >
+                                                <CalendarIcon className="mr-2 h-4 w-4" />
+                                                {preferredDate ? (
+                                                    format(preferredDate, "PPP")
+                                                ) : (
+                                                    <span>Select date</span>
+                                                )}
+                                            </Button>
+                                        </PopoverTrigger>
+                                        <PopoverContent className="w-auto p-0" align="start">
+                                            <Calendar
+                                                mode="single"
+                                                selected={preferredDate}
+                                                onSelect={(date) => {
+                                                    setPreferredDate(date ?? undefined);
+                                                    setForm((prev) => ({
+                                                        ...prev,
+                                                        preferred_date: date
+                                                            ? format(date, "yyyy-MM-dd")
+                                                            : "",
+                                                    }));
+                                                }}
+                                                initialFocus
+                                            />
+                                        </PopoverContent>
+                                    </Popover>
                                 </div>
 
+                                {/* Time (AM/PM) */}
                                 <div className="space-y-1.5">
-                                    <label
+                                    <Label
                                         htmlFor="preferred_time"
                                         className="text-xs font-medium text-amber-900"
                                     >
                                         Preferred time
-                                    </label>
-                                    <Input
-                                        id="preferred_time"
-                                        name="preferred_time"
-                                        type="time"
+                                    </Label>
+                                    <Select
                                         value={form.preferred_time}
-                                        onChange={handleChange}
-                                        required
-                                        className="h-9"
-                                    />
+                                        onValueChange={(value) =>
+                                            setForm((prev) => ({
+                                                ...prev,
+                                                preferred_time: value,
+                                            }))
+                                        }
+                                    >
+                                        <SelectTrigger
+                                            id="preferred_time"
+                                            className="h-9 w-full text-left"
+                                        >
+                                            <SelectValue placeholder="Select time" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {TIME_OPTIONS.map((slot) => (
+                                                <SelectItem key={slot.value} value={slot.value}>
+                                                    {slot.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
 
                             {/* Details */}
                             <div className="space-y-1.5">
-                                <label
+                                <Label
                                     htmlFor="details"
                                     className="text-xs font-medium text-amber-900"
                                 >
                                     Brief description of your concern
-                                </label>
+                                </Label>
                                 <textarea
                                     id="details"
                                     name="details"
