@@ -1,15 +1,29 @@
 import React from "react";
-import { Bell } from "lucide-react";
+import { useLocation } from "react-router-dom";
 
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 
 interface DashboardHeaderProps extends React.HTMLAttributes<HTMLDivElement> {
     title?: string;
     description?: string;
     actions?: React.ReactNode;
+}
+
+function getDashboardTitleForPath(pathname: string): string {
+    if (pathname.startsWith("/dashboard/admin")) {
+        return "Admin Dashboard";
+    }
+
+    if (pathname.startsWith("/dashboard/counselor")) {
+        return "Counselor Dashboard";
+    }
+
+    if (pathname.startsWith("/dashboard/student")) {
+        return "Student Dashboard";
+    }
+
+    return "Dashboard";
 }
 
 const DashboardHeader: React.FC<DashboardHeaderProps> = ({
@@ -19,6 +33,13 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
     className,
     ...props
 }) => {
+    const location = useLocation();
+
+    // If a custom title is provided, use it.
+    // Otherwise, derive the title based on the current dashboard path (role).
+    const resolvedTitle =
+        title === "Dashboard" ? getDashboardTitleForPath(location.pathname) : title;
+
     return (
         <header
             className={cn(
@@ -31,7 +52,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                 <SidebarTrigger className="-ml-1" />
                 <div className="flex flex-col gap-0.5">
                     <h1 className="text-base font-semibold leading-tight md:text-lg">
-                        {title}
+                        {resolvedTitle}
                     </h1>
                     {description && (
                         <p className="text-xs text-muted-foreground md:text-sm">
@@ -41,26 +62,11 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                 </div>
             </div>
 
-            <div className="ml-auto flex items-center gap-2">
-                <div className="hidden w-full max-w-xs items-center md:flex">
-                    <Input
-                        type="search"
-                        placeholder="Search…"
-                        className="h-8 bg-muted/60 text-xs md:text-sm"
-                    />
+            {actions && (
+                <div className="ml-auto flex items-center gap-2">
+                    {actions}
                 </div>
-
-                <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8"
-                    aria-label="Notifications"
-                >
-                    <Bell className="h-4 w-4" />
-                </Button>
-
-                {actions}
-            </div>
+            )}
         </header>
     );
 };

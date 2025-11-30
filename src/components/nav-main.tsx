@@ -1,5 +1,5 @@
 import React from "react";
-import { LayoutDashboard } from "lucide-react";
+import { LayoutDashboard, CalendarClock, LineChart } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import {
@@ -23,7 +23,16 @@ const studentNavItems: NavItem[] = [
         to: "/dashboard/student",
         icon: LayoutDashboard,
     },
-    // You can add more items here later, e.g. appointments, resources, etc.
+    {
+        title: "My Sessions",
+        to: "/dashboard/student/sessions",
+        icon: CalendarClock,
+    },
+    {
+        title: "My Progress",
+        to: "/dashboard/student/progress",
+        icon: LineChart,
+    },
 ];
 
 export const NavMain: React.FC = () => {
