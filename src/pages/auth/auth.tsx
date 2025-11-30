@@ -23,6 +23,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
 import { registerAccount, type RegisterPayload } from "@/lib/authentication";
 import { toast } from "sonner";
+import { resolveDashboardPathForRole } from "@/lib/role";
 
 const YEAR_LEVELS = ["1st", "2nd", "3rd", "4th", "5th"] as const;
 type YearLevel = (typeof YEAR_LEVELS)[number];
@@ -62,23 +63,6 @@ const COLLEGE_ACRONYM: Record<string, string> = {
 };
 
 type AuthMode = "login" | "signup";
-
-const resolveDashboardPathForRole = (
-    role: string | null | undefined,
-): string => {
-    const normalized = (role ?? "").toString().toLowerCase();
-
-    if (normalized.includes("admin")) {
-        return "/dashboard/admin";
-    }
-
-    if (normalized.includes("counselor") || normalized.includes("counsellor")) {
-        return "/dashboard/counselor";
-    }
-
-    // Default to student dashboard for unknown roles.
-    return "/dashboard/student";
-};
 
 interface AuthFormProps extends React.HTMLAttributes<HTMLDivElement> {
     onSwitchMode: () => void;

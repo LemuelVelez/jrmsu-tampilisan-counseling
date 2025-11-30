@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 
 import LandingPage from "./pages/landing";
 import AuthPage from "./pages/auth/auth";
@@ -13,6 +13,29 @@ import StudentOverview from "./pages/dashboard/student/overview";
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
 import { Toaster } from "./components/ui/sonner";
+import { getCurrentSession } from "@/lib/authentication";
+import { resolveDashboardPathForRole } from "@/lib/role";
+
+function DashboardIndexRoute() {
+  const session = getCurrentSession();
+  const user = session.user;
+
+  // No active session → send user to auth page
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  const rawRole =
+    typeof user.role === "string"
+      ? user.role
+      : user.role != null
+        ? String(user.role)
+        : null;
+
+  const dashboardPath = resolveDashboardPathForRole(rawRole);
+
+  return <Navigate to={dashboardPath} replace />;
+}
 
 function App() {
   return (
@@ -28,6 +51,9 @@ function App() {
           <Route path="/auth/reset-password" element={<ResetPasswordPage />} />
           <Route path="/auth/verify-email" element={<VerifyEmailPage />} />
           <Route path="/auth/callback" element={<AuthCallbackPage />} />
+
+          {/* Dashboard index – used by the "Dashboard" button */}
+          <Route path="/dashboard" element={<DashboardIndexRoute />} />
 
           {/* Dashboards (do not modify actual page files) */}
           <Route path="/dashboard/admin" element={<AdminOverview />} />
