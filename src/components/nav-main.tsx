@@ -10,6 +10,7 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { cn } from "@/lib/utils";
 
 type NavItem = {
     title: string;
@@ -51,7 +52,16 @@ export const NavMain: React.FC = () => {
 
                         return (
                             <SidebarMenuItem key={item.to}>
-                                <SidebarMenuButton asChild isActive={isActive}>
+                                <SidebarMenuButton
+                                    asChild
+                                    isActive={isActive}
+                                    className={cn(
+                                        "transition-colors",
+                                        isActive
+                                            ? "border-l-2 border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary shadow-xs"
+                                            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
+                                    )}
+                                >
                                     <Link to={item.to}>
                                         <Icon />
                                         <span>{item.title}</span>
