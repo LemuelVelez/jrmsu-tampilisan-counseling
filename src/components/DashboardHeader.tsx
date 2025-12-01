@@ -43,12 +43,15 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
     return (
         <header
             className={cn(
-                "flex h-16 items-center gap-3 border-b bg-background/80 px-4 backdrop-blur md:px-6",
+                // Mobile: vertical, auto height, comfortable padding
+                // Desktop (md+): same as original - row, fixed height, same gaps & padding
+                "flex flex-col gap-2 border-b bg-background/80 px-4 py-2 backdrop-blur md:h-16 md:flex-row md:items-center md:gap-3 md:px-6 md:py-0",
                 className,
             )}
             {...props}
         >
-            <div className="flex flex-1 items-center gap-3">
+            {/* Title + description block */}
+            <div className="flex items-start gap-2 md:flex-1 md:items-center md:gap-3">
                 <SidebarTrigger className="-ml-1" />
                 <div className="flex flex-col gap-0.5">
                     <h1 className="text-base font-semibold leading-tight md:text-lg">
@@ -62,8 +65,9 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                 </div>
             </div>
 
+            {/* Actions block */}
             {actions && (
-                <div className="ml-auto flex items-center gap-2">
+                <div className="flex flex-wrap items-center justify-end gap-2 md:ml-auto">
                     {actions}
                 </div>
             )}
