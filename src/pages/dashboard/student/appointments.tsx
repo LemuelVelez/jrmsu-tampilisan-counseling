@@ -222,7 +222,7 @@ const StudentAppointments: React.FC = () => {
     return (
         <DashboardLayout
             title="Appointments"
-            description="See your upcoming counseling sessions and your past requests."
+            description="View appointments and session history in one place."
         >
             <div className="flex w-full justify-center">
                 <Card className="w-full max-w-4xl border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">

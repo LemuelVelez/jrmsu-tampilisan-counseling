@@ -4,7 +4,7 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
-import { submitIntakeRequest } from "@/lib/intake";
+import { submitIntakeRequest, submitIntakeAssessment } from "@/lib/intake";
 import { Calendar as CalendarIcon } from "lucide-react";
 import { Calendar } from "@/components/ui/calendar";
 import {
@@ -192,6 +192,7 @@ const StudentIntake: React.FC = () => {
     const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
 
+        // Step 1–3 validations (assessment part)
         if (!form.consent) {
             toast.error(
                 "Please read and accept the consent statement before submitting.",
@@ -229,6 +230,7 @@ const StudentIntake: React.FC = () => {
             return;
         }
 
+        // Step 4 validations (request / scheduling)
         if (!form.preferred_date) {
             toast.error("Please select your preferred date.");
             return;
@@ -330,12 +332,8 @@ const StudentIntake: React.FC = () => {
 
             const payloadDetails = lines.join("\n");
 
-            const payload = {
-                concern_type: form.concern_type,
-                urgency: form.urgency,
-                preferred_date: form.preferred_date,
-                preferred_time: form.preferred_time,
-                details: payloadDetails.trim(),
+            // 1) Submit Step 1–3 to the assessment table
+            const assessmentPayload = {
                 consent: form.consent,
                 student_name: form.student_name.trim() || undefined,
                 age: form.age ? Number(form.age) : undefined,
@@ -357,10 +355,26 @@ const StudentIntake: React.FC = () => {
                 mh_self_harm: form.mh_self_harm || undefined,
             };
 
-            const response = await submitIntakeRequest(payload);
+            const assessmentResponse = await submitIntakeAssessment(
+                assessmentPayload,
+            );
+
+            // 2) Submit Step 4 (main concern & preferred schedule) to the
+            //    main intake_requests / appointments table
+            const requestPayload = {
+                concern_type: form.concern_type,
+                urgency: form.urgency,
+                preferred_date: form.preferred_date,
+                preferred_time: form.preferred_time,
+                details: payloadDetails.trim(),
+            };
+
+            const requestResponse = await submitIntakeRequest(requestPayload);
 
             const successMessage =
-                response?.message || "Your counseling request has been submitted.";
+                requestResponse?.message ||
+                assessmentResponse?.message ||
+                "Your counseling request has been submitted.";
 
             toast.success(successMessage);
             setForm(() => buildInitialFormFromSession());
@@ -956,7 +970,9 @@ const StudentIntake: React.FC = () => {
                                                 <Button
                                                     type="button"
                                                     variant="outline"
-                                                    className={`w-full justify-start text-left font-normal ${!preferredDate ? "text-muted-foreground" : ""
+                                                    className={`w-full justify-start text-left font-normal ${!preferredDate
+                                                        ? "text-muted-foreground"
+                                                        : ""
                                                         }`}
                                                 >
                                                     <CalendarIcon className="mr-2 h-4 w-4" />

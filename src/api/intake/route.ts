@@ -7,19 +7,37 @@ export type MentalFrequencyApi =
     | "more_than_half"
     | "nearly_every_day";
 
+/**
+ * DTO for the main intake request (concern + preferred schedule).
+ * Backed by the `intake_requests` table.
+ */
 export interface IntakeRequestDto {
     id: number;
     user_id: number | string;
 
     // Core scheduling + status
-    concern_type: string;
-    urgency: "low" | "medium" | "high" | string;
-    preferred_date: string; // ISO date string (YYYY-MM-DD)
-    preferred_time: string; // e.g. "14:30"
+    concern_type: string | null;
+    urgency: "low" | "medium" | "high" | string | null;
+    preferred_date: string | null; // ISO date string (YYYY-MM-DD)
+    preferred_time: string | null; // e.g. "14:30" or "8:00 AM"
     details: string;
     status: string;
 
-    // Snapshot of demographic info at time of request
+    created_at?: string;
+    updated_at?: string;
+    [key: string]: unknown;
+}
+
+/**
+ * DTO for the assessment (Steps 1–3 – consent + demographics + MH status).
+ * Backed by the `intake_assessments` table.
+ */
+export interface IntakeAssessmentDto {
+    id: number;
+    user_id: number | string;
+
+    // Consent & demographic snapshot
+    consent: boolean;
     student_name?: string | null;
     age?: number | null;
     gender?: string | null;
@@ -28,7 +46,6 @@ export interface IntakeRequestDto {
     living_situation_other?: string | null;
 
     // Mental health questionnaire fields
-    consent?: boolean;
     mh_little_interest?: MentalFrequencyApi | null;
     mh_feeling_down?: MentalFrequencyApi | null;
     mh_sleep?: MentalFrequencyApi | null;
@@ -44,6 +61,9 @@ export interface IntakeRequestDto {
     [key: string]: unknown;
 }
 
+/**
+ * Payload for creating a new intake request (Step 4 only).
+ */
 export interface CreateIntakeRequestPayload {
     // Core required fields
     concern_type: string;
@@ -51,7 +71,12 @@ export interface CreateIntakeRequestPayload {
     preferred_date: string;
     preferred_time: string;
     details: string;
+}
 
+/**
+ * Payload for creating a new assessment record (Steps 1–3).
+ */
+export interface CreateIntakeAssessmentPayload {
     // Consent (required on backend)
     consent: boolean;
 
@@ -77,6 +102,11 @@ export interface CreateIntakeRequestPayload {
 export interface CreateIntakeRequestResponseDto {
     message?: string;
     intake: IntakeRequestDto;
+}
+
+export interface CreateIntakeAssessmentResponseDto {
+    message?: string;
+    assessment: IntakeAssessmentDto;
 }
 
 export interface IntakeApiError extends Error {
@@ -146,6 +176,11 @@ async function intakeApiFetch<T>(
     return data as T;
 }
 
+/**
+ * Create a new counseling intake request (Step 4).
+ *
+ * POST /student/intake
+ */
 export async function createIntakeRequestApi(
     payload: CreateIntakeRequestPayload,
 ): Promise<CreateIntakeRequestResponseDto> {
@@ -153,4 +188,21 @@ export async function createIntakeRequestApi(
         method: "POST",
         body: JSON.stringify(payload),
     });
+}
+
+/**
+ * Create a new assessment record (Steps 1–3).
+ *
+ * POST /student/intake/assessment
+ */
+export async function createIntakeAssessmentApi(
+    payload: CreateIntakeAssessmentPayload,
+): Promise<CreateIntakeAssessmentResponseDto> {
+    return intakeApiFetch<CreateIntakeAssessmentResponseDto>(
+        "/student/intake/assessment",
+        {
+            method: "POST",
+            body: JSON.stringify(payload),
+        },
+    );
 }
