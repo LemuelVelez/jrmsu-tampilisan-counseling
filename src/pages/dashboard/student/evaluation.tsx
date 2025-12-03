@@ -15,7 +15,7 @@ import {
     fetchStudentAppointments,
     updateAppointmentDetails,
     type StudentAppointment,
-} from "@/lib/appointments";
+} from "@/lib/evaluation";
 import {
     fetchStudentAssessments,
     type StudentAssessment,

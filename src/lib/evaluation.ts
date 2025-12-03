@@ -4,7 +4,7 @@ import {
     type GetStudentAppointmentsResponseDto,
     updateStudentAppointmentDetailsApi,
     type UpdateStudentAppointmentDetailsPayload,
-} from "@/api/appointments/route";
+} from "@/api/evaluation/route";
 
 export type StudentAppointment = IntakeRequestDto;
 
