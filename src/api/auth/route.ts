@@ -12,6 +12,7 @@ export interface AuthenticatedUserDto {
     name?: string | null;
     email: string;
     role?: string | null;
+    gender?: string | null;
     // Allow additional metadata from your API (e.g. student fields, etc.)
     [key: string]: unknown;
 }

@@ -17,6 +17,7 @@ export interface AuthUser {
     name?: string | null;
     email: string;
     role?: Role | null;
+    gender?: string | null;
     // Allow arbitrary extra properties from the API (student metadata, etc.)
     [key: string]: unknown;
 }
@@ -36,7 +37,7 @@ export interface LoginResult extends AuthSession {
 }
 
 export interface RegisterPayload {
-    // 👈 NEW: include name so signup can send it
+    // 👈 include name so signup can send it
     name: string;
     email: string;
     password: string;
@@ -141,12 +142,18 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
             ? `${anyDto.first_name} ${anyDto.last_name}`
             : null);
 
+    const gender =
+        (typeof anyDto.gender === "string" && anyDto.gender.length > 0
+            ? String(anyDto.gender)
+            : null);
+
     return {
         ...dto,
         id: dto.id,
         name,
         email: dto.email,
         role: (role as Role | null) ?? null,
+        gender,
     };
 }
 
