@@ -12,10 +12,10 @@ import { toast } from "sonner";
 import { CalendarClock, Loader2, AlertCircle } from "lucide-react";
 import { format, parseISO, startOfToday } from "date-fns";
 import {
-    fetchStudentAppointments,
-    updateAppointmentDetails,
-    type StudentAppointment,
+    fetchStudentEvaluations,
+    updateEvaluationDetails,
 } from "@/lib/evaluation";
+import type { StudentEvaluation as StudentEvaluationEntry } from "@/lib/evaluation";
 import {
     fetchStudentAssessments,
     type StudentAssessment,
@@ -54,22 +54,21 @@ function StatusBadge({ status }: { status: string }) {
     return <Badge className={className}>{label}</Badge>;
 }
 
-function formatPreferredDateTime(appointment: StudentAppointment): string {
-    if (!appointment.preferred_date) {
+function formatPreferredDateTime(evaluation: StudentEvaluationEntry): string {
+    if (!evaluation.preferred_date) {
         return "To be scheduled";
     }
 
     try {
-        const date = parseISO(appointment.preferred_date);
+        const date = parseISO(evaluation.preferred_date);
         const dateText = format(date, "MMM d, yyyy");
-        const timeText = appointment.preferred_time || "time to be confirmed";
+        const timeText = evaluation.preferred_time || "time to be confirmed";
 
         return `${dateText} · ${timeText}`;
     } catch {
         // Fallback to raw values if parsing fails
-        return `${appointment.preferred_date}${
-            appointment.preferred_time ? ` · ${appointment.preferred_time}` : ""
-        }`;
+        return `${evaluation.preferred_date}${evaluation.preferred_time ? ` · ${evaluation.preferred_time}` : ""
+            }`;
     }
 }
 
@@ -84,11 +83,11 @@ function formatDateDisplay(dateString?: string | null): string {
     }
 }
 
-function isUpcoming(appointment: StudentAppointment): boolean {
-    if (!appointment.preferred_date) return false;
+function isUpcoming(evaluation: StudentEvaluationEntry): boolean {
+    if (!evaluation.preferred_date) return false;
 
     try {
-        const date = parseISO(appointment.preferred_date);
+        const date = parseISO(evaluation.preferred_date);
         const today = startOfToday();
         return date >= today;
     } catch {
@@ -99,15 +98,15 @@ function isUpcoming(appointment: StudentAppointment): boolean {
 /**
  * Only allow editing for pending / in_review requests.
  */
-function canEditAppointment(appointment: StudentAppointment): boolean {
-    const normalized = (appointment.status ?? "").toLowerCase();
+function canEditEvaluation(evaluation: StudentEvaluationEntry): boolean {
+    const normalized = (evaluation.status ?? "").toLowerCase();
     if (!normalized) return true;
     return normalized === "pending" || normalized === "in_review";
 }
 
 /**
  * Small helper component to show a short preview of the student's
- * concern details on each appointment card.
+ * concern details on each evaluation card.
  */
 function DetailsPreview({
     details,
@@ -155,7 +154,7 @@ function formatAssessmentSummary(assessment: StudentAssessment): string {
 }
 
 const StudentEvaluation: React.FC = () => {
-    const [appointments, setAppointments] = React.useState<StudentAppointment[]>(
+    const [evaluations, setEvaluations] = React.useState<StudentEvaluationEntry[]>(
         [],
     );
     const [assessments, setAssessments] = React.useState<StudentAssessment[]>(
@@ -176,13 +175,14 @@ const StudentEvaluation: React.FC = () => {
         setError(null);
 
         try {
-            const [appointmentsResponse, assessmentsResponse] =
+            const [evaluationsResponse, assessmentsResponse] =
                 await Promise.all([
-                    fetchStudentAppointments(),
+                    fetchStudentEvaluations(),
                     fetchStudentAssessments(),
                 ]);
 
-            setAppointments(appointmentsResponse.appointments ?? []);
+            // Backend still uses `appointments` in the response payload.
+            setEvaluations(evaluationsResponse.appointments ?? []);
             setAssessments(assessmentsResponse.assessments ?? []);
         } catch (err) {
             const message =
@@ -200,23 +200,23 @@ const StudentEvaluation: React.FC = () => {
         void loadData();
     }, [loadData]);
 
-    const upcomingAppointments = appointments.filter(isUpcoming);
-    const pastAppointments = appointments.filter(
-        (appointment) => !isUpcoming(appointment),
+    const upcomingEvaluations = evaluations.filter(isUpcoming);
+    const pastEvaluations = evaluations.filter(
+        (evaluation) => !isUpcoming(evaluation),
     );
 
-    const handleEditClick = (appointment: StudentAppointment) => {
-        if (!canEditAppointment(appointment)) return;
+    const handleEditClick = (evaluation: StudentEvaluationEntry) => {
+        if (!canEditEvaluation(evaluation)) return;
 
         // clicking again closes the editor
-        if (editingId === appointment.id) {
+        if (editingId === evaluation.id) {
             setEditingId(null);
             setEditingDetails("");
             return;
         }
 
-        setEditingId(appointment.id as unknown as string | number);
-        setEditingDetails(appointment.details ?? "");
+        setEditingId(evaluation.id as unknown as string | number);
+        setEditingDetails(evaluation.details ?? "");
     };
 
     const handleCancelEdit = () => {
@@ -224,7 +224,7 @@ const StudentEvaluation: React.FC = () => {
         setEditingDetails("");
     };
 
-    const handleSaveDetails = async (appointment: StudentAppointment) => {
+    const handleSaveDetails = async (evaluation: StudentEvaluationEntry) => {
         if (!editingDetails.trim()) {
             toast.error("Details cannot be empty.");
             return;
@@ -232,15 +232,15 @@ const StudentEvaluation: React.FC = () => {
 
         setIsSaving(true);
         try {
-            const updated = await updateAppointmentDetails(
-                appointment.id as unknown as string | number,
+            const updated = await updateEvaluationDetails(
+                evaluation.id as unknown as string | number,
                 {
                     details: editingDetails.trim(),
                 },
             );
 
-            setAppointments((prev) =>
-                prev.map((a) => (a.id === updated.id ? updated : a)),
+            setEvaluations((prev) =>
+                prev.map((e) => (e.id === updated.id ? updated : e)),
             );
 
             toast.success("Your details have been updated.");
@@ -259,12 +259,12 @@ const StudentEvaluation: React.FC = () => {
     };
 
     const hasAnyData =
-        appointments.length > 0 || assessments.length > 0;
+        evaluations.length > 0 || assessments.length > 0;
 
     return (
         <DashboardLayout
             title="Evaluation"
-            description="See your counseling requests (appointments) and mental health assessment history in one place."
+            description="Review your evaluation records: mental health assessments and counseling requests in one place."
         >
             <div className="flex w-full justify-center">
                 <Card className="w-full max-w-4xl border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -403,64 +403,64 @@ const StudentEvaluation: React.FC = () => {
                                             </p>
                                         </div>
 
-                                        {upcomingAppointments.length === 0 ? (
+                                        {upcomingEvaluations.length === 0 ? (
                                             <p className="text-[0.7rem] text-muted-foreground">
-                                                No upcoming appointments yet. Once a counselor
+                                                No upcoming sessions yet. Once a counselor
                                                 schedules a session, it will appear here.
                                             </p>
                                         ) : (
                                             <div className="space-y-2 text-xs">
-                                                {upcomingAppointments.map((appointment) => (
+                                                {upcomingEvaluations.map((evaluation) => (
                                                     <div
-                                                        key={appointment.id}
+                                                        key={evaluation.id}
                                                         className="flex flex-col gap-1 rounded-md border border-amber-100 bg-amber-50/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                                                     >
                                                         <div className="space-y-0.5">
                                                             <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
                                                                 <p className="font-medium text-amber-900">
-                                                                    {appointment.concern_type ||
+                                                                    {evaluation.concern_type ||
                                                                         "Counseling request"}
                                                                 </p>
                                                                 <StatusBadge
                                                                     status={
-                                                                        appointment.status ??
+                                                                        evaluation.status ??
                                                                         "pending"
                                                                     }
                                                                 />
-                                                                {canEditAppointment(
-                                                                    appointment,
+                                                                {canEditEvaluation(
+                                                                    evaluation,
                                                                 ) && (
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
-                                                                        className="h-6 px-2 text-[0.65rem]"
-                                                                        type="button"
-                                                                        onClick={() =>
-                                                                            handleEditClick(
-                                                                                appointment,
-                                                                            )
-                                                                        }
-                                                                        disabled={
-                                                                            isSaving &&
-                                                                            editingId ===
-                                                                                appointment.id
-                                                                        }
-                                                                    >
-                                                                        {editingId ===
-                                                                        appointment.id
-                                                                            ? "Close editor"
-                                                                            : "Edit details"}
-                                                                    </Button>
-                                                                )}
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            className="h-6 px-2 text-[0.65rem]"
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                handleEditClick(
+                                                                                    evaluation,
+                                                                                )
+                                                                            }
+                                                                            disabled={
+                                                                                isSaving &&
+                                                                                editingId ===
+                                                                                evaluation.id
+                                                                            }
+                                                                        >
+                                                                            {editingId ===
+                                                                                evaluation.id
+                                                                                ? "Close editor"
+                                                                                : "Edit details"}
+                                                                        </Button>
+                                                                    )}
                                                             </div>
                                                             <p className="text-[0.7rem] text-muted-foreground">
                                                                 {formatPreferredDateTime(
-                                                                    appointment,
+                                                                    evaluation,
                                                                 )}
                                                             </p>
 
                                                             {editingId ===
-                                                            appointment.id ? (
+                                                                evaluation.id ? (
                                                                 <div className="mt-1 space-y-1">
                                                                     <textarea
                                                                         className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500/60"
@@ -492,7 +492,7 @@ const StudentEvaluation: React.FC = () => {
                                                                             type="button"
                                                                             onClick={() =>
                                                                                 void handleSaveDetails(
-                                                                                    appointment,
+                                                                                    evaluation,
                                                                                 )
                                                                             }
                                                                             disabled={
@@ -503,8 +503,8 @@ const StudentEvaluation: React.FC = () => {
                                                                             }
                                                                         >
                                                                             {isSaving &&
-                                                                            editingId ===
-                                                                                appointment.id ? (
+                                                                                editingId ===
+                                                                                evaluation.id ? (
                                                                                 <>
                                                                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                                                                                     Saving…
@@ -518,7 +518,7 @@ const StudentEvaluation: React.FC = () => {
                                                             ) : (
                                                                 <DetailsPreview
                                                                     details={
-                                                                        appointment.details
+                                                                        evaluation.details
                                                                     }
                                                                 />
                                                             )}
@@ -528,7 +528,7 @@ const StudentEvaluation: React.FC = () => {
                                                             <p>
                                                                 Urgency:{" "}
                                                                 <span className="font-medium capitalize">
-                                                                    {appointment.urgency ??
+                                                                    {evaluation.urgency ??
                                                                         "medium"}
                                                                 </span>
                                                             </p>
@@ -536,7 +536,7 @@ const StudentEvaluation: React.FC = () => {
                                                                 Requested on:{" "}
                                                                 <span className="font-medium">
                                                                     {formatDateDisplay(
-                                                                        appointment.created_at,
+                                                                        evaluation.created_at,
                                                                     )}
                                                                 </span>
                                                             </p>
@@ -559,63 +559,63 @@ const StudentEvaluation: React.FC = () => {
                                             </p>
                                         </div>
 
-                                        {pastAppointments.length === 0 ? (
+                                        {pastEvaluations.length === 0 ? (
                                             <p className="text-[0.7rem] text-muted-foreground">
                                                 You don’t have any past requests yet.
                                             </p>
                                         ) : (
                                             <div className="space-y-2 text-xs">
-                                                {pastAppointments.map((appointment) => (
+                                                {pastEvaluations.map((evaluation) => (
                                                     <div
-                                                        key={appointment.id}
+                                                        key={evaluation.id}
                                                         className="flex flex-col gap-1 rounded-md border border-slate-100 bg-slate-50/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                                                     >
                                                         <div className="space-y-0.5">
                                                             <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
                                                                 <p className="font-medium text-slate-900">
-                                                                    {appointment.concern_type ||
+                                                                    {evaluation.concern_type ||
                                                                         "Counseling request"}
                                                                 </p>
                                                                 <StatusBadge
                                                                     status={
-                                                                        appointment.status ??
+                                                                        evaluation.status ??
                                                                         "pending"
                                                                     }
                                                                 />
-                                                                {canEditAppointment(
-                                                                    appointment,
+                                                                {canEditEvaluation(
+                                                                    evaluation,
                                                                 ) && (
-                                                                    <Button
-                                                                        variant="ghost"
-                                                                        size="sm"
-                                                                        className="h-6 px-2 text-[0.65rem]"
-                                                                        type="button"
-                                                                        onClick={() =>
-                                                                            handleEditClick(
-                                                                                appointment,
-                                                                            )
-                                                                        }
-                                                                        disabled={
-                                                                            isSaving &&
-                                                                            editingId ===
-                                                                                appointment.id
-                                                                        }
-                                                                    >
-                                                                        {editingId ===
-                                                                        appointment.id
-                                                                            ? "Close editor"
-                                                                            : "Edit details"}
-                                                                    </Button>
-                                                                )}
+                                                                        <Button
+                                                                            variant="ghost"
+                                                                            size="sm"
+                                                                            className="h-6 px-2 text-[0.65rem]"
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                handleEditClick(
+                                                                                    evaluation,
+                                                                                )
+                                                                            }
+                                                                            disabled={
+                                                                                isSaving &&
+                                                                                editingId ===
+                                                                                evaluation.id
+                                                                            }
+                                                                        >
+                                                                            {editingId ===
+                                                                                evaluation.id
+                                                                                ? "Close editor"
+                                                                                : "Edit details"}
+                                                                        </Button>
+                                                                    )}
                                                             </div>
                                                             <p className="text-[0.7rem] text-muted-foreground">
                                                                 {formatPreferredDateTime(
-                                                                    appointment,
+                                                                    evaluation,
                                                                 )}
                                                             </p>
 
                                                             {editingId ===
-                                                            appointment.id ? (
+                                                                evaluation.id ? (
                                                                 <div className="mt-1 space-y-1">
                                                                     <textarea
                                                                         className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-400/60"
@@ -647,7 +647,7 @@ const StudentEvaluation: React.FC = () => {
                                                                             type="button"
                                                                             onClick={() =>
                                                                                 void handleSaveDetails(
-                                                                                    appointment,
+                                                                                    evaluation,
                                                                                 )
                                                                             }
                                                                             disabled={
@@ -658,8 +658,8 @@ const StudentEvaluation: React.FC = () => {
                                                                             }
                                                                         >
                                                                             {isSaving &&
-                                                                            editingId ===
-                                                                                appointment.id ? (
+                                                                                editingId ===
+                                                                                evaluation.id ? (
                                                                                 <>
                                                                                     <Loader2 className="mr-1 h-3 w-3 animate-spin" />
                                                                                     Saving…
@@ -673,7 +673,7 @@ const StudentEvaluation: React.FC = () => {
                                                             ) : (
                                                                 <DetailsPreview
                                                                     details={
-                                                                        appointment.details
+                                                                        evaluation.details
                                                                     }
                                                                 />
                                                             )}
@@ -683,7 +683,7 @@ const StudentEvaluation: React.FC = () => {
                                                             <p>
                                                                 Urgency:{" "}
                                                                 <span className="font-medium capitalize">
-                                                                    {appointment.urgency ??
+                                                                    {evaluation.urgency ??
                                                                         "medium"}
                                                                 </span>
                                                             </p>
@@ -691,7 +691,7 @@ const StudentEvaluation: React.FC = () => {
                                                                 Requested on:{" "}
                                                                 <span className="font-medium">
                                                                     {formatDateDisplay(
-                                                                        appointment.created_at,
+                                                                        evaluation.created_at,
                                                                     )}
                                                                 </span>
                                                             </p>

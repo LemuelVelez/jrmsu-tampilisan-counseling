@@ -1,31 +1,39 @@
 import type { IntakeRequestDto } from "@/api/intake/route";
 import {
-    getStudentAppointmentsApi,
-    type GetStudentAppointmentsResponseDto,
-    updateStudentAppointmentDetailsApi,
-    type UpdateStudentAppointmentDetailsPayload,
+    getStudentEvaluationsApi,
+    type GetStudentEvaluationsResponseDto,
+    updateStudentEvaluationDetailsApi,
+    type UpdateStudentEvaluationDetailsPayload,
 } from "@/api/evaluation/route";
 
-export type StudentAppointment = IntakeRequestDto;
-
-export type UpdateAppointmentDetailsPayload =
-    UpdateStudentAppointmentDetailsPayload;
+/**
+ * Frontend type for a single evaluation entry.
+ * (Backed by the `intake_requests` table.)
+ */
+export type StudentEvaluation = IntakeRequestDto;
 
 /**
- * High-level helper used by the React appointments page.
+ * Payload when updating the `details` field of an evaluation.
+ */
+export type UpdateEvaluationDetailsPayload =
+    UpdateStudentEvaluationDetailsPayload;
+
+/**
+ * High-level helper used by the React Evaluation page.
  * Wraps the lower-level API function.
  */
-export async function fetchStudentAppointments(): Promise<GetStudentAppointmentsResponseDto> {
-    return getStudentAppointmentsApi();
+export async function fetchStudentEvaluations(): Promise<GetStudentEvaluationsResponseDto> {
+    return getStudentEvaluationsApi();
 }
 
 /**
- * Update only the `details` field of a single appointment.
+ * Update only the `details` field of a single evaluation.
  */
-export async function updateAppointmentDetails(
+export async function updateEvaluationDetails(
     id: number | string,
-    payload: UpdateAppointmentDetailsPayload,
-): Promise<StudentAppointment> {
-    const response = await updateStudentAppointmentDetailsApi(id, payload);
+    payload: UpdateEvaluationDetailsPayload,
+): Promise<StudentEvaluation> {
+    const response = await updateStudentEvaluationDetailsApi(id, payload);
+    // Backend still returns { appointment: ... } for backwards compatibility.
     return response.appointment;
 }

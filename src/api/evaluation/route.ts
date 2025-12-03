@@ -2,26 +2,40 @@
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
 import type { IntakeRequestDto } from "@/api/intake/route";
 
-export interface GetStudentAppointmentsResponseDto {
+/**
+ * Response DTO for fetching a student's evaluation records
+ * (counseling intake requests).
+ *
+ * NOTE: The backend currently returns `{ appointments: [...] }`.
+ */
+export interface GetStudentEvaluationsResponseDto {
     message?: string;
     appointments: IntakeRequestDto[];
 }
 
-export interface UpdateStudentAppointmentDetailsPayload {
+/**
+ * Payload for updating the `details` field of a single evaluation.
+ */
+export interface UpdateStudentEvaluationDetailsPayload {
     details: string;
 }
 
-export interface UpdateStudentAppointmentDetailsResponseDto {
+/**
+ * Response DTO when updating a single evaluation.
+ *
+ * NOTE: The backend currently returns `{ appointment: ... }`.
+ */
+export interface UpdateStudentEvaluationDetailsResponseDto {
     message?: string;
     appointment: IntakeRequestDto;
 }
 
-export interface AppointmentsApiError extends Error {
+export interface EvaluationApiError extends Error {
     status?: number;
     data?: unknown;
 }
 
-function resolveAppointmentsApiUrl(path: string): string {
+function resolveEvaluationApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
         throw new Error(
             "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
@@ -32,11 +46,11 @@ function resolveAppointmentsApiUrl(path: string): string {
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
-async function appointmentsApiFetch<T>(
+async function evaluationApiFetch<T>(
     path: string,
     init: RequestInit = {},
 ): Promise<T> {
-    const url = resolveAppointmentsApiUrl(path);
+    const url = resolveEvaluationApiUrl(path);
 
     const response = await fetch(url, {
         ...init,
@@ -74,7 +88,7 @@ async function appointmentsApiFetch<T>(
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
-        const error = new Error(message) as AppointmentsApiError;
+        const error = new Error(message) as EvaluationApiError;
         error.status = response.status;
         error.data = body ?? text;
         throw error;
@@ -84,13 +98,14 @@ async function appointmentsApiFetch<T>(
 }
 
 /**
- * Fetch all counseling-related appointments (intake requests) for
+ * Fetch all counseling-related evaluations (intake requests) for
  * the currently authenticated student.
  *
- * GET /student/appointments
+ * Backend endpoint:
+ *   GET /student/appointments
  */
-export async function getStudentAppointmentsApi(): Promise<GetStudentAppointmentsResponseDto> {
-    return appointmentsApiFetch<GetStudentAppointmentsResponseDto>(
+export async function getStudentEvaluationsApi(): Promise<GetStudentEvaluationsResponseDto> {
+    return evaluationApiFetch<GetStudentEvaluationsResponseDto>(
         "/student/appointments",
         {
             method: "GET",
@@ -99,15 +114,16 @@ export async function getStudentAppointmentsApi(): Promise<GetStudentAppointment
 }
 
 /**
- * Update only the `details` field of a single appointment.
+ * Update only the `details` field of a single evaluation.
  *
- * PUT /student/appointments/{id}
+ * Backend endpoint:
+ *   PUT /student/appointments/{id}
  */
-export async function updateStudentAppointmentDetailsApi(
+export async function updateStudentEvaluationDetailsApi(
     id: number | string,
-    payload: UpdateStudentAppointmentDetailsPayload,
-): Promise<UpdateStudentAppointmentDetailsResponseDto> {
-    return appointmentsApiFetch<UpdateStudentAppointmentDetailsResponseDto>(
+    payload: UpdateStudentEvaluationDetailsPayload,
+): Promise<UpdateStudentEvaluationDetailsResponseDto> {
+    return evaluationApiFetch<UpdateStudentEvaluationDetailsResponseDto>(
         `/student/appointments/${id}`,
         {
             method: "PUT",
