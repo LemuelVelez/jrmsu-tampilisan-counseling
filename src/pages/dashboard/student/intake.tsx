@@ -153,9 +153,7 @@ const StudentIntake: React.FC = () => {
     );
 
     const handleChange = (
-        event: React.ChangeEvent<
-            HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement
-        >,
+        event: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>,
     ) => {
         const { name, value } = event.target;
         setForm((prev) => ({
@@ -271,8 +269,7 @@ const StudentIntake: React.FC = () => {
             else if (form.living_situation === "with_friends")
                 livingLabel = "With friends";
             else if (form.living_situation === "other")
-                livingLabel = `Other (${form.living_situation_other || "not specified"
-                    })`;
+                livingLabel = `Other (${form.living_situation_other || "not specified"})`;
 
             lines.push(`Living situation: ${livingLabel}`);
             lines.push("");
@@ -870,49 +867,74 @@ const StudentIntake: React.FC = () => {
                                 {/* Concern type */}
                                 <div className="space-y-1.5">
                                     <Label
-                                        htmlFor="concern_type"
+                                        id="concern_type_label"
                                         className="text-xs font-medium text-amber-900"
                                     >
                                         Main concern
                                     </Label>
-                                    <select
-                                        id="concern_type"
-                                        name="concern_type"
+                                    <Select
                                         value={form.concern_type}
-                                        onChange={handleChange}
-                                        required
-                                        className="h-9 w-full rounded-md border border-amber-100 bg-white/90 px-3 text-sm shadow-inner shadow-amber-50/70 outline-none ring-0 transition focus-visible:border-amber-300 focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1 focus-visible:ring-offset-amber-50"
+                                        onValueChange={(value) =>
+                                            setForm((prev) => ({
+                                                ...prev,
+                                                concern_type: value,
+                                            }))
+                                        }
                                     >
-                                        <option value="">Select a concern...</option>
-                                        <option value="academic">Academic</option>
-                                        <option value="personal">Personal / emotional</option>
-                                        <option value="family">Family</option>
-                                        <option value="mental_health">Mental health</option>
-                                        <option value="career">Career / future</option>
-                                        <option value="other">Other</option>
-                                    </select>
+                                        <SelectTrigger
+                                            aria-labelledby="concern_type_label"
+                                            className="h-9 w-full text-left"
+                                        >
+                                            <SelectValue placeholder="Select a concern..." />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="academic">Academic</SelectItem>
+                                            <SelectItem value="personal">
+                                                Personal / emotional
+                                            </SelectItem>
+                                            <SelectItem value="family">Family</SelectItem>
+                                            <SelectItem value="mental_health">
+                                                Mental health
+                                            </SelectItem>
+                                            <SelectItem value="career">Career / future</SelectItem>
+                                            <SelectItem value="other">Other</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
 
                                 {/* Urgency */}
                                 <div className="space-y-1.5">
                                     <Label
-                                        htmlFor="urgency"
+                                        id="urgency_label"
                                         className="text-xs font-medium text-amber-900"
                                     >
                                         How urgent is this?
                                     </Label>
-                                    <select
-                                        id="urgency"
-                                        name="urgency"
+                                    <Select
                                         value={form.urgency}
-                                        onChange={handleChange}
-                                        className="h-9 w-full rounded-md border border-amber-100 bg-white/90 px-3 text-sm shadow-inner shadow-amber-50/70 outline-none ring-0 transition focus-visible:border-amber-300 focus-visible:ring-2 focus-visible:ring-amber-400 focus-visible:ring-offset-1 focus-visible:ring-offset-amber-50"
-                                        required
+                                        onValueChange={(value) =>
+                                            setForm((prev) => ({
+                                                ...prev,
+                                                urgency: value as IntakeFormState["urgency"],
+                                            }))
+                                        }
                                     >
-                                        <option value="low">Not urgent</option>
-                                        <option value="medium">Soon (within 1–2 weeks)</option>
-                                        <option value="high">Urgent (as soon as possible)</option>
-                                    </select>
+                                        <SelectTrigger
+                                            aria-labelledby="urgency_label"
+                                            className="h-9 w-full text-left"
+                                        >
+                                            <SelectValue placeholder="Select urgency" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="low">Not urgent</SelectItem>
+                                            <SelectItem value="medium">
+                                                Soon (within 1–2 weeks)
+                                            </SelectItem>
+                                            <SelectItem value="high">
+                                                Urgent (as soon as possible)
+                                            </SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                     <p className="text-[0.7rem] text-muted-foreground">
                                         If you are in immediate danger, please contact emergency
                                         services or campus security right away.
