@@ -154,7 +154,7 @@ function formatAssessmentSummary(assessment: StudentAssessment): string {
     return bits.join(" • ");
 }
 
-const StudentAppointments: React.FC = () => {
+const StudentEvaluation: React.FC = () => {
     const [appointments, setAppointments] = React.useState<StudentAppointment[]>(
         [],
     );
@@ -711,4 +711,4 @@ const StudentAppointments: React.FC = () => {
     );
 };
 
-export default StudentAppointments;
+export default StudentEvaluation;

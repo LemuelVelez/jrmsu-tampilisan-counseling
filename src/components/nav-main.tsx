@@ -33,7 +33,7 @@ const studentNavItems: NavItem[] = [
     {
         // Evaluation (Appointments & Assessment history)
         title: "Evaluation",
-        to: "/dashboard/student/appointments",
+        to: "/dashboard/student/evaluation",
         icon: CalendarClock,
     },
 ];
