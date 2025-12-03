@@ -31,8 +31,8 @@ const studentNavItems: NavItem[] = [
         icon: ClipboardList,
     },
     {
-        // Appointments & Session History
-        title: "Appointments",
+        // Evaluation (Appointments & Assessment history)
+        title: "Evaluation",
         to: "/dashboard/student/appointments",
         icon: CalendarClock,
     },

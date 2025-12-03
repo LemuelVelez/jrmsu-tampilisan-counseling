@@ -338,7 +338,7 @@ const StudentIntake: React.FC = () => {
     return (
         <DashboardLayout
             title="Intake"
-            description="Submit a counseling request and/or complete a short mental health needs assessment."
+            description="Submit a counseling request and/or complete a short mental health needs assessment. You can review your submissions on the Evaluation page."
         >
             <div className="flex w-full justify-center">
                 <div className="w-full max-w-3xl space-y-4">
@@ -351,7 +351,8 @@ const StudentIntake: React.FC = () => {
                             <p className="text-xs text-muted-foreground">
                                 This assessment helps the Guidance &amp; Counseling Office
                                 understand your overall well-being. You can submit this even
-                                without sending a counseling request.
+                                without sending a counseling request. A record of your
+                                assessments will appear on the Evaluation page.
                             </p>
                         </CardHeader>
 
@@ -829,7 +830,8 @@ const StudentIntake: React.FC = () => {
 
                                     <p className="text-[0.7rem] text-muted-foreground sm:text-right">
                                         This assessment can be submitted on its own and is stored
-                                        securely by the Guidance &amp; Counseling Office.
+                                        securely by the Guidance &amp; Counseling Office. You can
+                                        see your assessment history on the Evaluation page.
                                     </p>
                                 </div>
                             </form>
@@ -844,7 +846,8 @@ const StudentIntake: React.FC = () => {
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
                                 Use this form to request a counseling appointment. You can send a
-                                request with or without completing the assessment above.
+                                request with or without completing the assessment above. You can
+                                track the status of your requests on the Evaluation page.
                             </p>
                         </CardHeader>
 
@@ -948,8 +951,11 @@ const StudentIntake: React.FC = () => {
                                                     <Button
                                                         type="button"
                                                         variant="outline"
-                                                        className={`w-full justify-start text-left font-normal ${!preferredDate ? "text-muted-foreground" : ""
-                                                            }`}
+                                                        className={`w-full justify-start text-left font-normal ${
+                                                            !preferredDate
+                                                                ? "text-muted-foreground"
+                                                                : ""
+                                                        }`}
                                                     >
                                                         <CalendarIcon className="mr-2 h-4 w-4" />
                                                         {preferredDate ? (
@@ -1050,7 +1056,8 @@ const StudentIntake: React.FC = () => {
 
                                     <p className="text-[0.7rem] text-muted-foreground sm:text-right">
                                         Your request will be linked to your JRMSU account and kept
-                                        private within the Guidance &amp; Counseling Office.
+                                        private within the Guidance &amp; Counseling Office. You
+                                        can track your requests and sessions on the Evaluation page.
                                     </p>
                                 </div>
                             </form>

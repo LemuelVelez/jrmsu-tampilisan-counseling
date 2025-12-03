@@ -16,6 +16,10 @@ import {
     updateAppointmentDetails,
     type StudentAppointment,
 } from "@/lib/appointments";
+import {
+    fetchStudentAssessments,
+    type StudentAssessment,
+} from "@/lib/intake";
 
 function StatusBadge({ status }: { status: string }) {
     const normalized = status.toLowerCase();
@@ -63,19 +67,20 @@ function formatPreferredDateTime(appointment: StudentAppointment): string {
         return `${dateText} · ${timeText}`;
     } catch {
         // Fallback to raw values if parsing fails
-        return `${appointment.preferred_date}${appointment.preferred_time ? ` · ${appointment.preferred_time}` : ""
-            }`;
+        return `${appointment.preferred_date}${
+            appointment.preferred_time ? ` · ${appointment.preferred_time}` : ""
+        }`;
     }
 }
 
-function formatCreatedAt(appointment: StudentAppointment): string {
-    if (!appointment.created_at) return "—";
+function formatDateDisplay(dateString?: string | null): string {
+    if (!dateString) return "—";
 
     try {
-        const date = parseISO(appointment.created_at);
+        const date = parseISO(dateString);
         return format(date, "MMM d, yyyy");
     } catch {
-        return appointment.created_at;
+        return dateString;
     }
 }
 
@@ -124,8 +129,36 @@ function DetailsPreview({
     );
 }
 
+/**
+ * Helper: format a short label for an assessment's basic snapshot.
+ */
+function formatAssessmentSummary(assessment: StudentAssessment): string {
+    const bits: string[] = [];
+
+    if (assessment.age != null) {
+        bits.push(`Age: ${assessment.age}`);
+    }
+
+    if (assessment.gender) {
+        bits.push(`Gender: ${assessment.gender}`);
+    }
+
+    if (assessment.occupation) {
+        bits.push(`Occupation: ${assessment.occupation}`);
+    }
+
+    if (!bits.length) {
+        return "Consent & questionnaire snapshot";
+    }
+
+    return bits.join(" • ");
+}
+
 const StudentAppointments: React.FC = () => {
     const [appointments, setAppointments] = React.useState<StudentAppointment[]>(
+        [],
+    );
+    const [assessments, setAssessments] = React.useState<StudentAssessment[]>(
         [],
     );
     const [isLoading, setIsLoading] = React.useState<boolean>(false);
@@ -138,18 +171,24 @@ const StudentAppointments: React.FC = () => {
     const [editingDetails, setEditingDetails] = React.useState<string>("");
     const [isSaving, setIsSaving] = React.useState<boolean>(false);
 
-    const loadAppointments = React.useCallback(async () => {
+    const loadData = React.useCallback(async () => {
         setIsLoading(true);
         setError(null);
 
         try {
-            const response = await fetchStudentAppointments();
-            setAppointments(response.appointments ?? []);
+            const [appointmentsResponse, assessmentsResponse] =
+                await Promise.all([
+                    fetchStudentAppointments(),
+                    fetchStudentAssessments(),
+                ]);
+
+            setAppointments(appointmentsResponse.appointments ?? []);
+            setAssessments(assessmentsResponse.assessments ?? []);
         } catch (err) {
             const message =
                 err instanceof Error
                     ? err.message
-                    : "Failed to load your appointments.";
+                    : "Failed to load your evaluation data.";
             setError(message);
             toast.error(message);
         } finally {
@@ -158,8 +197,8 @@ const StudentAppointments: React.FC = () => {
     }, []);
 
     React.useEffect(() => {
-        void loadAppointments();
-    }, [loadAppointments]);
+        void loadData();
+    }, [loadData]);
 
     const upcomingAppointments = appointments.filter(isUpcoming);
     const pastAppointments = appointments.filter(
@@ -219,10 +258,13 @@ const StudentAppointments: React.FC = () => {
         }
     };
 
+    const hasAnyData =
+        appointments.length > 0 || assessments.length > 0;
+
     return (
         <DashboardLayout
-            title="Appointments"
-            description="View appointments and session history in one place."
+            title="Evaluation"
+            description="See your counseling requests (appointments) and mental health assessment history in one place."
         >
             <div className="flex w-full justify-center">
                 <Card className="w-full max-w-4xl border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -230,13 +272,12 @@ const StudentAppointments: React.FC = () => {
                         <div className="space-y-1.5">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold text-amber-900">
                                 <CalendarClock className="h-4 w-4" />
-                                <span>Appointments & counseling history</span>
+                                <span>Evaluation – assessments & counseling history</span>
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
-                                This list shows the counseling requests you’ve submitted and
-                                their current status. When a counselor schedules a session, the
-                                date and time will appear here. You can fix typos in the
-                                details for pending requests.
+                                This page shows your submitted mental health assessments
+                                (Steps 1–3) and your counseling requests with their current
+                                status. You can correct details for pending requests.
                             </p>
                         </div>
 
@@ -244,7 +285,7 @@ const StudentAppointments: React.FC = () => {
                             <Button
                                 variant="outline"
                                 size="sm"
-                                onClick={() => void loadAppointments()}
+                                onClick={() => void loadData()}
                                 disabled={isLoading}
                             >
                                 {isLoading ? (
@@ -263,7 +304,7 @@ const StudentAppointments: React.FC = () => {
                         {isLoading && (
                             <div className="flex items-center justify-center py-10 text-xs text-muted-foreground">
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Loading your appointments…
+                                Loading your evaluation data…
                             </div>
                         )}
 
@@ -271,15 +312,17 @@ const StudentAppointments: React.FC = () => {
                             <div className="flex items-start gap-2 rounded-md border border-red-100 bg-red-50/70 px-3 py-2 text-xs text-red-800">
                                 <AlertCircle className="mt-px h-4 w-4 shrink-0" />
                                 <div>
-                                    <p className="font-medium">Unable to load appointments</p>
+                                    <p className="font-medium">
+                                        Unable to load evaluation data
+                                    </p>
                                     <p className="mt-0.5">{error}</p>
                                 </div>
                             </div>
                         )}
 
-                        {!isLoading && !error && appointments.length === 0 && (
+                        {!isLoading && !error && !hasAnyData && (
                             <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-6 text-center text-xs text-amber-900">
-                                You haven’t submitted any counseling requests yet.
+                                You haven’t submitted any assessments or counseling requests yet.
                                 <br />
                                 <span className="mt-1 inline-block">
                                     Start by filling out the{" "}
@@ -289,123 +332,54 @@ const StudentAppointments: React.FC = () => {
                             </div>
                         )}
 
-                        {!isLoading && !error && appointments.length > 0 && (
-                            <div className="space-y-5">
-                                {/* Upcoming */}
+                        {!isLoading && !error && hasAnyData && (
+                            <div className="space-y-6">
+                                {/* Assessment history */}
                                 <section className="space-y-2">
                                     <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
                                         <h2 className="text-xs font-semibold text-amber-900">
-                                            Upcoming / active
+                                            Assessment history (Steps 1–3)
                                         </h2>
                                         <p className="text-[0.7rem] text-muted-foreground">
-                                            These are requests with a preferred date today or later.
+                                            These records come from the Mental Health Needs Assessment
+                                            you submit on the Intake page.
                                         </p>
                                     </div>
 
-                                    {upcomingAppointments.length === 0 ? (
+                                    {assessments.length === 0 ? (
                                         <p className="text-[0.7rem] text-muted-foreground">
-                                            No upcoming appointments yet. Once a counselor schedules a
-                                            session, it will appear here.
+                                            You haven’t submitted any assessments yet.
                                         </p>
                                     ) : (
                                         <div className="space-y-2 text-xs">
-                                            {upcomingAppointments.map((appointment) => (
+                                            {assessments.map((assessment) => (
                                                 <div
-                                                    key={appointment.id}
-                                                    className="flex flex-col gap-1 rounded-md border border-amber-100 bg-amber-50/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                                    key={assessment.id}
+                                                    className="flex flex-col gap-1 rounded-md border border-emerald-100 bg-emerald-50/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
                                                 >
                                                     <div className="space-y-0.5">
-                                                        <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                                                            <p className="font-medium text-amber-900">
-                                                                {appointment.concern_type ||
-                                                                    "Counseling request"}
-                                                            </p>
-                                                            <StatusBadge
-                                                                status={appointment.status ?? "pending"}
-                                                            />
-                                                            {canEditAppointment(appointment) && (
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="sm"
-                                                                    className="h-6 px-2 text-[0.65rem]"
-                                                                    type="button"
-                                                                    onClick={() => handleEditClick(appointment)}
-                                                                    disabled={
-                                                                        isSaving && editingId === appointment.id
-                                                                    }
-                                                                >
-                                                                    {editingId === appointment.id
-                                                                        ? "Close editor"
-                                                                        : "Edit details"}
-                                                                </Button>
-                                                            )}
-                                                        </div>
-                                                        <p className="text-[0.7rem] text-muted-foreground">
-                                                            {formatPreferredDateTime(appointment)}
+                                                        <p className="font-medium text-emerald-900">
+                                                            Assessment submitted
                                                         </p>
-
-                                                        {editingId === appointment.id ? (
-                                                            <div className="mt-1 space-y-1">
-                                                                <textarea
-                                                                    className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500/60"
-                                                                    rows={3}
-                                                                    value={editingDetails}
-                                                                    onChange={(e) =>
-                                                                        setEditingDetails(e.target.value)
-                                                                    }
-                                                                    disabled={isSaving}
-                                                                />
-                                                                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
-                                                                    <Button
-                                                                        variant="outline"
-                                                                        size="sm"
-                                                                        className="h-7 px-2 text-[0.7rem]"
-                                                                        type="button"
-                                                                        onClick={handleCancelEdit}
-                                                                        disabled={isSaving}
-                                                                    >
-                                                                        Cancel
-                                                                    </Button>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        className="h-7 px-3 text-[0.7rem]"
-                                                                        type="button"
-                                                                        onClick={() =>
-                                                                            void handleSaveDetails(appointment)
-                                                                        }
-                                                                        disabled={
-                                                                            isSaving ||
-                                                                            !editingDetails.trim().length
-                                                                        }
-                                                                    >
-                                                                        {isSaving &&
-                                                                            editingId === appointment.id ? (
-                                                                            <>
-                                                                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                                                                Saving…
-                                                                            </>
-                                                                        ) : (
-                                                                            "Save changes"
-                                                                        )}
-                                                                    </Button>
-                                                                </div>
-                                                            </div>
-                                                        ) : (
-                                                            <DetailsPreview details={appointment.details} />
-                                                        )}
-                                                    </div>
-
-                                                    <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:mt-0 sm:items-end">
-                                                        <p>
-                                                            Urgency:{" "}
-                                                            <span className="font-medium capitalize">
-                                                                {appointment.urgency ?? "medium"}
+                                                        <p className="text-[0.7rem] text-muted-foreground">
+                                                            Submitted on{" "}
+                                                            <span className="font-medium">
+                                                                {formatDateDisplay(
+                                                                    assessment.created_at,
+                                                                )}
                                                             </span>
                                                         </p>
+                                                        <p className="text-[0.7rem] text-slate-700">
+                                                            {formatAssessmentSummary(assessment)}
+                                                        </p>
+                                                    </div>
+                                                    <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:mt-0 sm:items-end">
                                                         <p>
-                                                            Requested on:{" "}
+                                                            Consent given:{" "}
                                                             <span className="font-medium">
-                                                                {formatCreatedAt(appointment)}
+                                                                {assessment.consent
+                                                                    ? "Yes"
+                                                                    : "No"}
                                                             </span>
                                                         </p>
                                                     </div>
@@ -415,128 +389,318 @@ const StudentAppointments: React.FC = () => {
                                     )}
                                 </section>
 
-                                {/* History / past */}
-                                <section className="space-y-2">
-                                    <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
-                                        <h2 className="text-xs font-semibold text-amber-900">
-                                            Past requests
-                                        </h2>
-                                        <p className="text-[0.7rem] text-muted-foreground">
-                                            Older requests and sessions are kept here for your
-                                            reference.
-                                        </p>
-                                    </div>
+                                {/* Counseling requests & sessions */}
+                                <section className="space-y-5">
+                                    {/* Upcoming */}
+                                    <section className="space-y-2">
+                                        <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                                            <h2 className="text-xs font-semibold text-amber-900">
+                                                Upcoming / active requests
+                                            </h2>
+                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                These are counseling requests with a preferred date
+                                                today or later.
+                                            </p>
+                                        </div>
 
-                                    {pastAppointments.length === 0 ? (
-                                        <p className="text-[0.7rem] text-muted-foreground">
-                                            You don’t have any past requests yet.
-                                        </p>
-                                    ) : (
-                                        <div className="space-y-2 text-xs">
-                                            {pastAppointments.map((appointment) => (
-                                                <div
-                                                    key={appointment.id}
-                                                    className="flex flex-col gap-1 rounded-md border border-slate-100 bg-slate-50/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
-                                                >
-                                                    <div className="space-y-0.5">
-                                                        <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
-                                                            <p className="font-medium text-slate-900">
-                                                                {appointment.concern_type ||
-                                                                    "Counseling request"}
-                                                            </p>
-                                                            <StatusBadge
-                                                                status={appointment.status ?? "pending"}
-                                                            />
-                                                            {canEditAppointment(appointment) && (
-                                                                <Button
-                                                                    variant="ghost"
-                                                                    size="sm"
-                                                                    className="h-6 px-2 text-[0.65rem]"
-                                                                    type="button"
-                                                                    onClick={() => handleEditClick(appointment)}
-                                                                    disabled={
-                                                                        isSaving && editingId === appointment.id
+                                        {upcomingAppointments.length === 0 ? (
+                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                No upcoming appointments yet. Once a counselor
+                                                schedules a session, it will appear here.
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-2 text-xs">
+                                                {upcomingAppointments.map((appointment) => (
+                                                    <div
+                                                        key={appointment.id}
+                                                        className="flex flex-col gap-1 rounded-md border border-amber-100 bg-amber-50/50 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                                    >
+                                                        <div className="space-y-0.5">
+                                                            <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                                                                <p className="font-medium text-amber-900">
+                                                                    {appointment.concern_type ||
+                                                                        "Counseling request"}
+                                                                </p>
+                                                                <StatusBadge
+                                                                    status={
+                                                                        appointment.status ??
+                                                                        "pending"
                                                                     }
-                                                                >
-                                                                    {editingId === appointment.id
-                                                                        ? "Close editor"
-                                                                        : "Edit details"}
-                                                                </Button>
-                                                            )}
-                                                        </div>
-                                                        <p className="text-[0.7rem] text-muted-foreground">
-                                                            {formatPreferredDateTime(appointment)}
-                                                        </p>
-
-                                                        {editingId === appointment.id ? (
-                                                            <div className="mt-1 space-y-1">
-                                                                <textarea
-                                                                    className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-400/60"
-                                                                    rows={3}
-                                                                    value={editingDetails}
-                                                                    onChange={(e) =>
-                                                                        setEditingDetails(e.target.value)
-                                                                    }
-                                                                    disabled={isSaving}
                                                                 />
-                                                                <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                                                {canEditAppointment(
+                                                                    appointment,
+                                                                ) && (
                                                                     <Button
-                                                                        variant="outline"
+                                                                        variant="ghost"
                                                                         size="sm"
-                                                                        className="h-7 px-2 text-[0.7rem]"
-                                                                        type="button"
-                                                                        onClick={handleCancelEdit}
-                                                                        disabled={isSaving}
-                                                                    >
-                                                                        Cancel
-                                                                    </Button>
-                                                                    <Button
-                                                                        size="sm"
-                                                                        className="h-7 px-3 text-[0.7rem]"
+                                                                        className="h-6 px-2 text-[0.65rem]"
                                                                         type="button"
                                                                         onClick={() =>
-                                                                            void handleSaveDetails(appointment)
+                                                                            handleEditClick(
+                                                                                appointment,
+                                                                            )
                                                                         }
                                                                         disabled={
-                                                                            isSaving ||
-                                                                            !editingDetails.trim().length
+                                                                            isSaving &&
+                                                                            editingId ===
+                                                                                appointment.id
                                                                         }
                                                                     >
-                                                                        {isSaving &&
-                                                                            editingId === appointment.id ? (
-                                                                            <>
-                                                                                <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                                                                                Saving…
-                                                                            </>
-                                                                        ) : (
-                                                                            "Save changes"
-                                                                        )}
+                                                                        {editingId ===
+                                                                        appointment.id
+                                                                            ? "Close editor"
+                                                                            : "Edit details"}
                                                                     </Button>
-                                                                </div>
+                                                                )}
                                                             </div>
-                                                        ) : (
-                                                            <DetailsPreview details={appointment.details} />
-                                                        )}
-                                                    </div>
+                                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                                {formatPreferredDateTime(
+                                                                    appointment,
+                                                                )}
+                                                            </p>
 
-                                                    <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:mt-0 sm:items-end">
-                                                        <p>
-                                                            Urgency:{" "}
-                                                            <span className="font-medium capitalize">
-                                                                {appointment.urgency ?? "medium"}
-                                                            </span>
-                                                        </p>
-                                                        <p>
-                                                            Requested on:{" "}
-                                                            <span className="font-medium">
-                                                                {formatCreatedAt(appointment)}
-                                                            </span>
-                                                        </p>
+                                                            {editingId ===
+                                                            appointment.id ? (
+                                                                <div className="mt-1 space-y-1">
+                                                                    <textarea
+                                                                        className="w-full rounded border border-amber-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-amber-500/60"
+                                                                        rows={3}
+                                                                        value={editingDetails}
+                                                                        onChange={(e) =>
+                                                                            setEditingDetails(
+                                                                                e.target.value,
+                                                                            )
+                                                                        }
+                                                                        disabled={isSaving}
+                                                                    />
+                                                                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            className="h-7 px-2 text-[0.7rem]"
+                                                                            type="button"
+                                                                            onClick={
+                                                                                handleCancelEdit
+                                                                            }
+                                                                            disabled={isSaving}
+                                                                        >
+                                                                            Cancel
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="h-7 px-3 text-[0.7rem]"
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                void handleSaveDetails(
+                                                                                    appointment,
+                                                                                )
+                                                                            }
+                                                                            disabled={
+                                                                                isSaving ||
+                                                                                !editingDetails
+                                                                                    .trim()
+                                                                                    .length
+                                                                            }
+                                                                        >
+                                                                            {isSaving &&
+                                                                            editingId ===
+                                                                                appointment.id ? (
+                                                                                <>
+                                                                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                                                    Saving…
+                                                                                </>
+                                                                            ) : (
+                                                                                "Save changes"
+                                                                            )}
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <DetailsPreview
+                                                                    details={
+                                                                        appointment.details
+                                                                    }
+                                                                />
+                                                            )}
+                                                        </div>
+
+                                                        <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:mt-0 sm:items-end">
+                                                            <p>
+                                                                Urgency:{" "}
+                                                                <span className="font-medium capitalize">
+                                                                    {appointment.urgency ??
+                                                                        "medium"}
+                                                                </span>
+                                                            </p>
+                                                            <p>
+                                                                Requested on:{" "}
+                                                                <span className="font-medium">
+                                                                    {formatDateDisplay(
+                                                                        appointment.created_at,
+                                                                    )}
+                                                                </span>
+                                                            </p>
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
+                                        )}
+                                    </section>
+
+                                    {/* History / past */}
+                                    <section className="space-y-2">
+                                        <div className="flex flex-col gap-1.5 sm:flex-row sm:items-center sm:justify-between">
+                                            <h2 className="text-xs font-semibold text-amber-900">
+                                                Past requests
+                                            </h2>
+                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                Older requests and sessions are kept here for your
+                                                reference.
+                                            </p>
                                         </div>
-                                    )}
+
+                                        {pastAppointments.length === 0 ? (
+                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                You don’t have any past requests yet.
+                                            </p>
+                                        ) : (
+                                            <div className="space-y-2 text-xs">
+                                                {pastAppointments.map((appointment) => (
+                                                    <div
+                                                        key={appointment.id}
+                                                        className="flex flex-col gap-1 rounded-md border border-slate-100 bg-slate-50/60 px-3 py-2 sm:flex-row sm:items-center sm:justify-between"
+                                                    >
+                                                        <div className="space-y-0.5">
+                                                            <div className="flex flex-col gap-1.5 sm:flex-row sm:flex-wrap sm:items-center sm:gap-2">
+                                                                <p className="font-medium text-slate-900">
+                                                                    {appointment.concern_type ||
+                                                                        "Counseling request"}
+                                                                </p>
+                                                                <StatusBadge
+                                                                    status={
+                                                                        appointment.status ??
+                                                                        "pending"
+                                                                    }
+                                                                />
+                                                                {canEditAppointment(
+                                                                    appointment,
+                                                                ) && (
+                                                                    <Button
+                                                                        variant="ghost"
+                                                                        size="sm"
+                                                                        className="h-6 px-2 text-[0.65rem]"
+                                                                        type="button"
+                                                                        onClick={() =>
+                                                                            handleEditClick(
+                                                                                appointment,
+                                                                            )
+                                                                        }
+                                                                        disabled={
+                                                                            isSaving &&
+                                                                            editingId ===
+                                                                                appointment.id
+                                                                        }
+                                                                    >
+                                                                        {editingId ===
+                                                                        appointment.id
+                                                                            ? "Close editor"
+                                                                            : "Edit details"}
+                                                                    </Button>
+                                                                )}
+                                                            </div>
+                                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                                {formatPreferredDateTime(
+                                                                    appointment,
+                                                                )}
+                                                            </p>
+
+                                                            {editingId ===
+                                                            appointment.id ? (
+                                                                <div className="mt-1 space-y-1">
+                                                                    <textarea
+                                                                        className="w-full rounded border border-slate-200 bg-white px-2 py-1 text-[0.7rem] text-slate-900 shadow-sm focus:outline-none focus:ring-2 focus:ring-slate-400/60"
+                                                                        rows={3}
+                                                                        value={editingDetails}
+                                                                        onChange={(e) =>
+                                                                            setEditingDetails(
+                                                                                e.target.value,
+                                                                            )
+                                                                        }
+                                                                        disabled={isSaving}
+                                                                    />
+                                                                    <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                                                                        <Button
+                                                                            variant="outline"
+                                                                            size="sm"
+                                                                            className="h-7 px-2 text-[0.7rem]"
+                                                                            type="button"
+                                                                            onClick={
+                                                                                handleCancelEdit
+                                                                            }
+                                                                            disabled={isSaving}
+                                                                        >
+                                                                            Cancel
+                                                                        </Button>
+                                                                        <Button
+                                                                            size="sm"
+                                                                            className="h-7 px-3 text-[0.7rem]"
+                                                                            type="button"
+                                                                            onClick={() =>
+                                                                                void handleSaveDetails(
+                                                                                    appointment,
+                                                                                )
+                                                                            }
+                                                                            disabled={
+                                                                                isSaving ||
+                                                                                !editingDetails
+                                                                                    .trim()
+                                                                                    .length
+                                                                            }
+                                                                        >
+                                                                            {isSaving &&
+                                                                            editingId ===
+                                                                                appointment.id ? (
+                                                                                <>
+                                                                                    <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+                                                                                    Saving…
+                                                                                </>
+                                                                            ) : (
+                                                                                "Save changes"
+                                                                            )}
+                                                                        </Button>
+                                                                    </div>
+                                                                </div>
+                                                            ) : (
+                                                                <DetailsPreview
+                                                                    details={
+                                                                        appointment.details
+                                                                    }
+                                                                />
+                                                            )}
+                                                        </div>
+
+                                                        <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:mt-0 sm:items-end">
+                                                            <p>
+                                                                Urgency:{" "}
+                                                                <span className="font-medium capitalize">
+                                                                    {appointment.urgency ??
+                                                                        "medium"}
+                                                                </span>
+                                                            </p>
+                                                            <p>
+                                                                Requested on:{" "}
+                                                                <span className="font-medium">
+                                                                    {formatDateDisplay(
+                                                                        appointment.created_at,
+                                                                    )}
+                                                                </span>
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </section>
                                 </section>
                             </div>
                         )}

@@ -109,6 +109,14 @@ export interface CreateIntakeAssessmentResponseDto {
     assessment: IntakeAssessmentDto;
 }
 
+/**
+ * Response DTO for fetching a student's assessment history.
+ */
+export interface GetStudentAssessmentsResponseDto {
+    message?: string;
+    assessments: IntakeAssessmentDto[];
+}
+
 export interface IntakeApiError extends Error {
     status?: number;
     data?: unknown;
@@ -203,6 +211,20 @@ export async function createIntakeAssessmentApi(
         {
             method: "POST",
             body: JSON.stringify(payload),
+        },
+    );
+}
+
+/**
+ * Fetch all assessment records (Steps 1–3) for the current student.
+ *
+ * GET /student/intake/assessments
+ */
+export async function getStudentAssessmentsApi(): Promise<GetStudentAssessmentsResponseDto> {
+    return intakeApiFetch<GetStudentAssessmentsResponseDto>(
+        "/student/intake/assessments",
+        {
+            method: "GET",
         },
     );
 }

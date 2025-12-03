@@ -1,10 +1,13 @@
 import {
     createIntakeRequestApi,
     createIntakeAssessmentApi,
+    getStudentAssessmentsApi,
     type CreateIntakeRequestPayload,
     type CreateIntakeRequestResponseDto,
     type CreateIntakeAssessmentPayload,
     type CreateIntakeAssessmentResponseDto,
+    type GetStudentAssessmentsResponseDto,
+    type IntakeAssessmentDto,
 } from "@/api/intake/route";
 
 /**
@@ -21,6 +24,12 @@ export type IntakeFormPayload = IntakeRequestFormPayload;
  * Payload for the assessment (Steps 1–3 – consent, demographics, MH status).
  */
 export type IntakeAssessmentFormPayload = CreateIntakeAssessmentPayload;
+
+/**
+ * Convenience types for the student's assessment history.
+ */
+export type StudentAssessment = IntakeAssessmentDto;
+export type GetStudentAssessmentsResult = GetStudentAssessmentsResponseDto;
 
 /**
  * High-level helper used by the React intake page to submit the main
@@ -40,4 +49,12 @@ export async function submitIntakeAssessment(
     payload: IntakeAssessmentFormPayload,
 ): Promise<CreateIntakeAssessmentResponseDto> {
     return createIntakeAssessmentApi(payload);
+}
+
+/**
+ * High-level helper to fetch the student's assessment history.
+ * Used by the Evaluation page to show past assessments.
+ */
+export async function fetchStudentAssessments(): Promise<GetStudentAssessmentsResponseDto> {
+    return getStudentAssessmentsApi();
 }
