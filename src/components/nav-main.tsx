@@ -4,6 +4,7 @@ import {
     CalendarClock,
     ClipboardList,
     MessageCircle,
+    Settings,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -46,6 +47,12 @@ const studentNavItems: NavItem[] = [
         title: "Evaluation",
         to: "/dashboard/student/evaluation",
         icon: CalendarClock,
+    },
+    {
+        // Account settings: password + avatar
+        title: "Settings",
+        to: "/dashboard/student/settings",
+        icon: Settings,
     },
 ];
 

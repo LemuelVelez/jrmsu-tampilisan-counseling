@@ -13,6 +13,7 @@ import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
 import StudentMessages from "./pages/dashboard/student/messages";
+import StudentSettings from "./pages/dashboard/student/settings";
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
 import { Toaster } from "./components/ui/sonner";
@@ -70,6 +71,10 @@ function App() {
           <Route
             path="/dashboard/student/evaluation"
             element={<StudentEvaluation />}
+          />
+          <Route
+            path="/dashboard/student/settings"
+            element={<StudentSettings />}
           />
 
           {/* 404 */}
