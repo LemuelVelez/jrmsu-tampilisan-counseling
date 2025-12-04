@@ -5,15 +5,16 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { format } from "date-fns";
 import { getCurrentSession } from "@/lib/authentication";
+import { toast } from "sonner";
+import {
+    fetchStudentMessages,
+    sendStudentMessage,
+    markStudentMessagesAsRead,
+    type StudentMessage,
+} from "@/lib/messages";
 
-/**
- * Simple, front-end only message model.
- * This keeps everything in memory for now so the page works
- * even without a dedicated backend endpoint yet.
- * You can later replace this with real API calls.
- */
-type SimpleMessage = {
-    id: string;
+type UiMessage = {
+    id: number | string;
     sender: "student" | "counselor" | "system";
     senderName: string;
     content: string;
@@ -30,63 +31,184 @@ const formatTimestamp = (isoString: string): string => {
     return format(date, "MMM d, yyyy • h:mm a");
 };
 
-const buildInitialMessages = (): SimpleMessage[] => {
-    const session = getCurrentSession();
-    const studentName =
-        (session?.user && (session.user as any).name) ? String((session.user as any).name) : "you";
-
-    return [
-        {
-            id: "welcome",
-            sender: "system",
-            senderName: "Guidance & Counseling Office",
-            content:
-                "Welcome to your eCounseling messages. This is where updates about your counseling requests and follow-ups from your counselor will appear.",
-            createdAt: new Date().toISOString(),
-            isUnread: false,
-        },
-        {
-            id: "intro",
-            sender: "counselor",
-            senderName: "Guidance Counselor",
-            content: `Hi ${studentName}. If you have questions about your intake form, schedule, or evaluations, you can send them here and we’ll respond as soon as we can.`,
-            createdAt: new Date().toISOString(),
-            isUnread: true,
-        },
-    ];
+const normaliseSender = (
+    sender: StudentMessage["sender"],
+): UiMessage["sender"] => {
+    if (sender === "student" || sender === "counselor" || sender === "system") {
+        return sender;
+    }
+    // Any unknown value from the backend → treat as system/office message
+    return "system";
 };
 
+const mapDtoToUiMessage = (
+    dto: StudentMessage,
+    studentNameFallback: string,
+): UiMessage => {
+    const sender = normaliseSender(dto.sender);
+    let senderName = dto.sender_name ?? "";
+
+    if (!senderName) {
+        if (sender === "student") {
+            senderName = studentNameFallback;
+        } else if (sender === "counselor") {
+            senderName = "Guidance Counselor";
+        } else {
+            senderName = "Guidance & Counseling Office";
+        }
+    }
+
+    return {
+        id: dto.id ?? dto.created_at ?? Math.random().toString(36).slice(2),
+        sender,
+        senderName,
+        content: dto.content ?? "",
+        createdAt: dto.created_at ?? new Date().toISOString(),
+        isUnread: dto.is_read === false || dto.is_read === 0,
+    };
+};
+
+const buildInitialMessages = (studentName: string): UiMessage[] => [
+    {
+        id: "welcome",
+        sender: "system",
+        senderName: "Guidance & Counseling Office",
+        content:
+            "Welcome to your eCounseling messages. This is where updates about your counseling requests and follow-ups from your counselor will appear.",
+        createdAt: new Date().toISOString(),
+        isUnread: false,
+    },
+    {
+        id: "intro",
+        sender: "counselor",
+        senderName: "Guidance Counselor",
+        content: `Hi ${studentName}. If you have questions about your intake form, schedule, or evaluations, you can send them here and we’ll respond as soon as we can.`,
+        createdAt: new Date().toISOString(),
+        isUnread: true,
+    },
+];
+
 const StudentMessages: React.FC = () => {
-    const [messages, setMessages] = React.useState<SimpleMessage[]>(() =>
-        buildInitialMessages(),
-    );
-    const [draft, setDraft] = React.useState("");
     const session = getCurrentSession();
     const studentName =
-        (session?.user && (session.user as any).name) ? String((session.user as any).name) : "You";
+        (session?.user && (session.user as any).name)
+            ? String((session.user as any).name)
+            : "You";
+
+    const [messages, setMessages] = React.useState<UiMessage[]>([]);
+    const [draft, setDraft] = React.useState("");
+    const [isLoading, setIsLoading] = React.useState(true);
+    const [isSending, setIsSending] = React.useState(false);
+    const [isMarkingRead, setIsMarkingRead] = React.useState(false);
+
+    React.useEffect(() => {
+        let isMounted = true;
+
+        const loadMessages = async () => {
+            try {
+                const result = await fetchStudentMessages();
+                const rawMessages = result.messages ?? [];
+
+                if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+                    if (isMounted) {
+                        setMessages(buildInitialMessages(studentName));
+                    }
+                    return;
+                }
+
+                const uiMessages = rawMessages.map((m) =>
+                    mapDtoToUiMessage(m, studentName),
+                );
+
+                if (isMounted) {
+                    setMessages(uiMessages);
+                }
+            } catch (error) {
+                const message =
+                    error instanceof Error
+                        ? error.message
+                        : "Failed to load your messages.";
+                toast.error(message);
+
+                if (isMounted) {
+                    setMessages(buildInitialMessages(studentName));
+                }
+            } finally {
+                if (isMounted) {
+                    setIsLoading(false);
+                }
+            }
+        };
+
+        loadMessages();
+
+        return () => {
+            isMounted = false;
+        };
+    }, [studentName]);
 
     const hasUnread = messages.some((m) => m.isUnread);
 
-    const handleSend = (event: React.FormEvent<HTMLFormElement>) => {
+    const handleSend = async (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const trimmed = draft.trim();
         if (!trimmed) return;
 
-        const newMessage: SimpleMessage = {
-            id: String(Date.now()),
-            sender: "student",
-            senderName: studentName,
-            content: trimmed,
-            createdAt: new Date().toISOString(),
-            isUnread: false,
-        };
+        setIsSending(true);
 
-        setMessages((prev) => [...prev, newMessage]);
-        setDraft("");
+        try {
+            const response = await sendStudentMessage(trimmed);
+            const dto = response.messageRecord;
+
+            const newMessage: UiMessage = dto
+                ? mapDtoToUiMessage(dto, studentName)
+                : {
+                    id: Date.now(),
+                    sender: "student",
+                    senderName: studentName,
+                    content: trimmed,
+                    createdAt: new Date().toISOString(),
+                    isUnread: false,
+                };
+
+            setMessages((prev) => [...prev, newMessage]);
+            setDraft("");
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to send your message.";
+            toast.error(message);
+        } finally {
+            setIsSending(false);
+        }
     };
 
-    const markAllAsRead = () => {
-        setMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
+    const markAllAsRead = async () => {
+        if (!messages.length || !hasUnread) return;
+
+        setIsMarkingRead(true);
+
+        try {
+            const idsToMark = messages
+                .filter((m) => m.isUnread)
+                .map((m) => m.id)
+                .filter((id) => id != null) as Array<number | string>;
+
+            if (idsToMark.length > 0) {
+                await markStudentMessagesAsRead(idsToMark);
+            }
+
+            setMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
+        } catch (error) {
+            const message =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to mark messages as read.";
+            toast.error(message);
+        } finally {
+            setIsMarkingRead(false);
+        }
     };
 
     return (
@@ -112,23 +234,30 @@ const StudentMessages: React.FC = () => {
                             {/* Status row */}
                             <div className="flex items-center justify-between gap-2">
                                 <p className="text-[0.75rem] text-muted-foreground">
-                                    {hasUnread
-                                        ? "You have unread messages from the Guidance & Counseling Office."
-                                        : "All messages are currently marked as read."}
+                                    {isLoading
+                                        ? "Loading messages..."
+                                        : hasUnread
+                                            ? "You have unread messages from the Guidance & Counseling Office."
+                                            : "All messages are currently marked as read."}
                                 </p>
                                 <Button
                                     type="button"
                                     variant="outline"
                                     className="h-7 px-2 text-[0.7rem]"
                                     onClick={markAllAsRead}
+                                    disabled={isLoading || isMarkingRead || !hasUnread}
                                 >
-                                    Mark all as read
+                                    {isMarkingRead ? "Marking..." : "Mark all as read"}
                                 </Button>
                             </div>
 
                             {/* Message list */}
                             <div className="max-h-[420px] space-y-3 overflow-y-auto rounded-md border border-amber-50 bg-amber-50/40 p-3">
-                                {messages.length === 0 ? (
+                                {isLoading ? (
+                                    <p className="py-8 text-center text-xs text-muted-foreground">
+                                        Loading your messages&hellip;
+                                    </p>
+                                ) : messages.length === 0 ? (
                                     <p className="py-8 text-center text-xs text-muted-foreground">
                                         You don&apos;t have any messages yet. After you submit an intake request or
                                         evaluation, updates from the Guidance &amp; Counseling Office will appear here.
@@ -194,9 +323,9 @@ const StudentMessages: React.FC = () => {
                                     <Button
                                         type="submit"
                                         className="w-full sm:w-auto"
-                                        disabled={!draft.trim()}
+                                        disabled={!draft.trim() || isSending}
                                     >
-                                        Send message
+                                        {isSending ? "Sending..." : "Send message"}
                                     </Button>
                                     <p className="text-[0.7rem] text-muted-foreground sm:text-right">
                                         Messages are linked to your JRMSU account and are visible to the Guidance
