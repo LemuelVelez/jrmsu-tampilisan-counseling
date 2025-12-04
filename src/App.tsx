@@ -12,6 +12,7 @@ import CounselorOverview from "./pages/dashboard/counselor/overview";
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
+import StudentMessages from "./pages/dashboard/student/messages";
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
 import { Toaster } from "./components/ui/sonner";
@@ -62,6 +63,10 @@ function App() {
           <Route path="/dashboard/counselor" element={<CounselorOverview />} />
           <Route path="/dashboard/student" element={<StudentOverview />} />
           <Route path="/dashboard/student/intake" element={<StudentIntake />} />
+          <Route
+            path="/dashboard/student/messages"
+            element={<StudentMessages />}
+          />
           <Route
             path="/dashboard/student/evaluation"
             element={<StudentEvaluation />}

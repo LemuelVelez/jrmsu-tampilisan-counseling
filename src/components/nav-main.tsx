@@ -1,5 +1,10 @@
 import React from "react";
-import { LayoutDashboard, CalendarClock, ClipboardList } from "lucide-react";
+import {
+    LayoutDashboard,
+    CalendarClock,
+    ClipboardList,
+    MessageCircle,
+} from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
 import {
@@ -29,6 +34,12 @@ const studentNavItems: NavItem[] = [
         title: "Intake",
         to: "/dashboard/student/intake",
         icon: ClipboardList,
+    },
+    {
+        // Messages between student & Guidance Office
+        title: "Messages",
+        to: "/dashboard/student/messages",
+        icon: MessageCircle,
     },
     {
         // Evaluation (Appointments & Assessment history)
