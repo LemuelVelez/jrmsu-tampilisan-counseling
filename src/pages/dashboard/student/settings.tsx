@@ -19,7 +19,12 @@ import {
 } from "@/components/ui/avatar";
 import { Separator } from "@/components/ui/separator";
 import { toast } from "sonner";
-import { getCurrentSession } from "@/lib/authentication";
+import {
+    getCurrentSession,
+    subscribeToSession,
+    uploadCurrentUserAvatar,
+    type AuthSession,
+} from "@/lib/authentication";
 import {
     Loader2,
     UploadCloud,
@@ -41,7 +46,8 @@ const getInitials = (name?: string | null): string => {
 };
 
 const StudentSettings: React.FC = () => {
-    const session = getCurrentSession();
+    // Keep session reactive so avatar_url changes are reflected immediately.
+    const [session, setSession] = React.useState<AuthSession>(getCurrentSession());
     const user = session.user;
 
     const [currentPassword, setCurrentPassword] = React.useState("");
@@ -61,7 +67,15 @@ const StudentSettings: React.FC = () => {
     );
     const [isUploadingAvatar, setIsUploadingAvatar] = React.useState(false);
 
-    // If backend later returns an avatar URL, you can read it here:
+    // Subscribe to global session updates (e.g. after avatar upload, meApi, etc.)
+    React.useEffect(() => {
+        const unsubscribe = subscribeToSession((nextSession) => {
+            setSession(nextSession);
+        });
+        return unsubscribe;
+    }, []);
+
+    // If backend returns an avatar URL, read it from the user object.
     const existingAvatarUrl =
         (user as any)?.avatar_url && typeof (user as any).avatar_url === "string"
             ? ((user as any).avatar_url as string)
@@ -115,22 +129,17 @@ const StudentSettings: React.FC = () => {
         setIsUploadingAvatar(true);
 
         try {
-            /**
-             * NOTE:
-             * For now, this is FRONTEND-ONLY.
-             *
-             * Later, the backend will:
-             *   - Receive this file (via a POST /student/profile/avatar endpoint)
-             *   - Use AWS_REGION, S3_BUCKET_NAME, AWS_ACCESS_KEY_ID,
-             *     and AWS_SECRET_ACCESS_KEY (server-side only) to upload to S3.
-             *
-             * On this frontend, we'll just simulate a successful upload.
-             */
+            const result = await uploadCurrentUserAvatar(avatarFile);
 
-            await new Promise((resolve) => setTimeout(resolve, 800));
+            // Clean up local preview; avatar will now come from user.avatar_url
+            if (avatarPreviewUrl) {
+                URL.revokeObjectURL(avatarPreviewUrl);
+            }
+            setAvatarPreviewUrl(null);
+            setAvatarFile(null);
 
             toast.success(
-                "Avatar updated (simulated). Once the backend is wired to S3, this will persist.",
+                result.raw.message ?? "Your profile picture has been updated.",
             );
         } catch (error) {
             const message =
@@ -175,7 +184,8 @@ const StudentSettings: React.FC = () => {
 
         try {
             /**
-             * FRONTEND-ONLY for now.
+             * NOTE:
+             * This is still frontend-only.
              *
              * Later you can:
              *   - Add an endpoint (e.g. POST /auth/change-password)
@@ -249,8 +259,7 @@ const StudentSettings: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
                                 Upload a clear photo of yourself to help counselors recognize
-                                your account. This will be stored securely by the backend
-                                using AWS S3 (configured later).
+                                your account. The backend will store this securely in AWS S3.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
@@ -273,8 +282,8 @@ const StudentSettings: React.FC = () => {
                                         <p>Supported formats: JPG, PNG.</p>
                                         <p>Maximum size: {MAX_AVATAR_SIZE_MB} MB.</p>
                                         <p>
-                                            Your actual upload to AWS S3 will be handled by the
-                                            Laravel backend once configured.
+                                            Images are uploaded to the server and stored in AWS S3
+                                            using credentials configured on the backend.
                                         </p>
                                     </div>
 
@@ -324,8 +333,9 @@ const StudentSettings: React.FC = () => {
                                 </Button>
                             </div>
                             <p className="text-[0.7rem] text-muted-foreground">
-                                This is currently a visual preview only. The real upload to S3
-                                will be wired up once backend endpoints are ready.
+                                Your profile picture is stored securely by the Guidance Office
+                                system. You may need to refresh the page if you change devices
+                                or browsers.
                             </p>
                         </CardFooter>
                     </Card>
@@ -488,9 +498,8 @@ const StudentSettings: React.FC = () => {
                                         )}
                                     </Button>
                                     <p className="text-[0.7rem] text-muted-foreground sm:text-right">
-                                        Password changes are handled via the Laravel backend. This
-                                        form will call the secure endpoint once it&apos;s
-                                        implemented.
+                                        Password changes will later be handled via a secure Laravel
+                                        endpoint. For now this form only validates your input.
                                     </p>
                                 </div>
                             </form>

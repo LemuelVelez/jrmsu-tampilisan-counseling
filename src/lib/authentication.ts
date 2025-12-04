@@ -4,6 +4,7 @@ import {
     registerApi,
     logoutApi,
     meApi,
+    AUTH_API_BASE_URL,
     type LoginResponseDto,
     type RegisterResponseDto,
     type AuthenticatedUserDto,
@@ -18,6 +19,7 @@ export interface AuthUser {
     email: string;
     role?: Role | null;
     gender?: string | null;
+    avatar_url?: string | null;
     // Allow arbitrary extra properties from the API (student metadata, etc.)
     [key: string]: unknown;
 }
@@ -143,9 +145,9 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
             : null);
 
     const gender =
-        (typeof anyDto.gender === "string" && anyDto.gender.length > 0
+        typeof anyDto.gender === "string" && anyDto.gender.length > 0
             ? String(anyDto.gender)
-            : null);
+            : null;
 
     return {
         ...dto,
@@ -155,6 +157,17 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
         role: (role as Role | null) ?? null,
         gender,
     };
+}
+
+function resolveStudentApiUrl(path: string): string {
+    if (!AUTH_API_BASE_URL) {
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
+        );
+    }
+
+    const trimmedPath = path.replace(/^\/+/, "");
+    return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
 /**
@@ -314,4 +327,98 @@ export async function fetchCurrentUserFromServer(): Promise<AuthSession | null> 
         clearSession();
         return null;
     }
+}
+
+/**
+ * Upload the current user's avatar to the Laravel backend.
+ *
+ * Endpoint: POST /student/profile/avatar (multipart/form-data)
+ * Backend uses:
+ *   - AWS_REGION
+ *   - S3_BUCKET_NAME
+ *   - AWS_ACCESS_KEY_ID
+ *   - AWS_SECRET_ACCESS_KEY
+ * to store the image in S3.
+ *
+ * On success, this also updates the in-memory session with the new user data.
+ */
+export interface UploadAvatarResponseDto {
+    message?: string;
+    avatar_url?: string;
+    user: AuthenticatedUserDto;
+    [key: string]: unknown;
+}
+
+export async function uploadCurrentUserAvatar(
+    file: File,
+): Promise<{ avatarUrl: string; raw: UploadAvatarResponseDto }> {
+    const url = resolveStudentApiUrl("/student/profile/avatar");
+
+    const formData = new FormData();
+    formData.append("avatar", file);
+
+    const response = await fetch(url, {
+        method: "POST",
+        body: formData,
+        credentials: "include",
+        headers: {
+            // Let the browser set the multipart boundary;
+            // we only declare that we expect JSON back.
+            Accept: "application/json",
+        },
+    });
+
+    const text = await response.text();
+    let data: unknown = null;
+
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch {
+            data = text;
+        }
+    }
+
+    if (!response.ok) {
+        const body = data as any;
+
+        const firstErrorFromLaravel =
+            body?.errors && typeof body.errors === "object"
+                ? (Object.values(body.errors)[0] as any)?.[0]
+                : undefined;
+
+        const message =
+            body?.message ||
+            body?.error ||
+            firstErrorFromLaravel ||
+            response.statusText ||
+            "An unknown error occurred while uploading your avatar.";
+
+        const error = new Error(message);
+        (error as any).status = response.status;
+        (error as any).data = body ?? text;
+        throw error;
+    }
+
+    const body = data as UploadAvatarResponseDto;
+
+    if (!body || !body.user) {
+        throw new Error("Invalid avatar upload response from server.");
+    }
+
+    const user = normaliseUser(body.user);
+    const token = currentSession.token ?? null;
+
+    const nextSession: AuthSession = {
+        user,
+        token,
+    };
+
+    // Persist and notify listeners (e.g. Settings page, nav avatar)
+    setSession(nextSession);
+
+    return {
+        avatarUrl: body.avatar_url ?? "",
+        raw: body,
+    };
 }
