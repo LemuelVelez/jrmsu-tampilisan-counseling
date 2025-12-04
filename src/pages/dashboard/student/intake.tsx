@@ -109,6 +109,21 @@ const TIME_OPTIONS: TimeOption[] = [
     { value: "04:30 PM", label: "4:30 PM" },
 ];
 
+// Shared options & labels for Step 3
+const MENTAL_FREQUENCY_VALUES: MentalFrequency[] = [
+    "not_at_all",
+    "several_days",
+    "more_than_half",
+    "nearly_every_day",
+];
+
+const MENTAL_FREQUENCY_LABELS: Record<MentalFrequency, string> = {
+    not_at_all: "Not at all",
+    several_days: "Several days",
+    more_than_half: "More than half the days",
+    nearly_every_day: "Nearly every day",
+};
+
 const normaliseGenderFromSession = (
     rawGender: unknown,
 ): IntakeFormState["gender"] => {
@@ -569,249 +584,241 @@ const StudentIntake: React.FC = () => {
                                         </p>
                                     </div>
 
-                                    {/* Frequency legend (columns) */}
-                                    <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md bg-amber-50/80 px-3 py-2 text-[0.65rem] font-medium text-amber-900">
+                                    {/* Frequency legend – desktop/tablet only */}
+                                    <div className="hidden items-center gap-2 rounded-md bg-amber-50/80 px-3 py-2 text-[0.65rem] font-medium text-amber-900 sm:grid sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                         <div>Question</div>
-                                        <div className="text-center">Not at all</div>
-                                        <div className="text-center">Several days</div>
-                                        <div className="text-center">More than half the days</div>
-                                        <div className="text-center">Nearly every day</div>
+                                        {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                            <div key={value} className="text-center">
+                                                {MENTAL_FREQUENCY_LABELS[value]}
+                                            </div>
+                                        ))}
                                     </div>
 
                                     {/* Each question mirrors the paper form */}
                                     <div className="space-y-2 text-[0.7rem] text-muted-foreground">
                                         {/* 1 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Little interest or pleasure in doing things
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_little_interest"
                                                         value={value}
                                                         checked={form.mh_little_interest === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 2 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Feeling down, depressed, or hopeless
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_feeling_down"
                                                         value={value}
                                                         checked={form.mh_feeling_down === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 3 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Trouble falling or staying asleep, or sleeping too much
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_sleep"
                                                         value={value}
                                                         checked={form.mh_sleep === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 4 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Feeling tired or having little energy
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_energy"
                                                         value={value}
                                                         checked={form.mh_energy === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 5 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">Poor appetite or overeating</div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_appetite"
                                                         value={value}
                                                         checked={form.mh_appetite === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 6 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Feeling bad about yourself—or that you are a failure or
                                                 have let yourself or your family down
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_self_esteem"
                                                         value={value}
                                                         checked={form.mh_self_esteem === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 7 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Trouble concentrating on things, such as reading the
                                                 newspaper or watching television
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_concentration"
                                                         value={value}
                                                         checked={form.mh_concentration === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 8 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2">
                                                 Moving or speaking so slowly that other people could have
                                                 noticed? Or the opposite—being so fidgety or restless that
                                                 you have been moving around a lot more than usual
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_motor"
                                                         value={value}
                                                         checked={form.mh_motor === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
 
                                         {/* 9 */}
-                                        <div className="grid grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))] items-center gap-2 rounded-md border border-amber-50 px-3 py-2">
+                                        <div className="grid grid-cols-1 items-center gap-2 rounded-md border border-amber-50 px-3 py-2 sm:grid-cols-[minmax(0,1.4fr)_repeat(4,minmax(0,1fr))]">
                                             <div className="pr-2 font-medium text-amber-900">
                                                 Thoughts that you would be better off dead or of hurting
                                                 yourself in some way
                                             </div>
-                                            {(
-                                                [
-                                                    "not_at_all",
-                                                    "several_days",
-                                                    "more_than_half",
-                                                    "nearly_every_day",
-                                                ] as MentalFrequency[]
-                                            ).map((value) => (
-                                                <div key={value} className="flex justify-center">
+                                            {MENTAL_FREQUENCY_VALUES.map((value) => (
+                                                <div
+                                                    key={value}
+                                                    className="flex w-full items-center justify-between sm:justify-center"
+                                                >
+                                                    <span className="text-[0.65rem] text-muted-foreground sm:hidden">
+                                                        {MENTAL_FREQUENCY_LABELS[value]}
+                                                    </span>
                                                     <input
                                                         type="radio"
                                                         name="mh_self_harm"
                                                         value={value}
                                                         checked={form.mh_self_harm === value}
                                                         onChange={handleChange}
-                                                        className="h-3.5 w-3.5 border-amber-300"
+                                                        className="ml-2 h-3.5 w-3.5 border-amber-300"
                                                     />
                                                 </div>
                                             ))}
