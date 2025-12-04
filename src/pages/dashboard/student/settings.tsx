@@ -223,20 +223,23 @@ const StudentSettings: React.FC = () => {
                 <div className="w-full max-w-3xl space-y-6">
                     {/* PROFILE HEADER */}
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
-                        <CardHeader className="flex flex-row items-center gap-4">
-                            <Avatar className="h-16 w-16 border border-amber-100 bg-amber-50">
-                                {displayAvatarUrl ? (
-                                    <AvatarImage
-                                        src={displayAvatarUrl}
-                                        alt={user?.name ?? "Profile picture"}
-                                    />
-                                ) : (
-                                    <AvatarFallback className="bg-amber-100 text-sm font-semibold text-amber-900">
-                                        {initials}
-                                    </AvatarFallback>
-                                )}
-                            </Avatar>
-                            <div className="space-y-1">
+                        <CardHeader className="flex flex-col gap-4 sm:flex-row sm:items-center">
+                            <div className="flex w-full justify-center sm:w-auto sm:justify-start">
+                                <Avatar className="h-16 w-16 border border-amber-100 bg-amber-50">
+                                    {displayAvatarUrl ? (
+                                        <AvatarImage
+                                            src={displayAvatarUrl}
+                                            alt={user?.name ?? "Profile picture"}
+                                            className="object-cover"
+                                        />
+                                    ) : (
+                                        <AvatarFallback className="bg-amber-100 text-sm font-semibold text-amber-900">
+                                            {initials}
+                                        </AvatarFallback>
+                                    )}
+                                </Avatar>
+                            </div>
+                            <div className="space-y-1 text-center sm:text-left">
                                 <CardTitle className="text-base font-semibold text-amber-900">
                                     {user?.name ?? "Your account"}
                                 </CardTitle>
@@ -259,16 +262,17 @@ const StudentSettings: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
                                 Upload a clear photo of yourself to help counselors recognize
-                                your account. The backend will store this securely in AWS S3.
+                                your account.
                             </CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div className="flex items-center gap-4">
+                            <div className="flex flex-col items-center gap-4 sm:flex-row sm:items-center">
                                 <Avatar className="h-16 w-16 border border-amber-100 bg-amber-50">
                                     {displayAvatarUrl ? (
                                         <AvatarImage
                                             src={displayAvatarUrl}
                                             alt={user?.name ?? "Profile picture"}
+                                            className="object-cover"
                                         />
                                     ) : (
                                         <AvatarFallback className="bg-amber-100 text-sm font-semibold text-amber-900">
@@ -277,14 +281,10 @@ const StudentSettings: React.FC = () => {
                                     )}
                                 </Avatar>
 
-                                <div className="flex-1 space-y-2">
+                                <div className="flex-1 space-y-2 text-center sm:text-left">
                                     <div className="space-y-1 text-xs text-muted-foreground">
                                         <p>Supported formats: JPG, PNG.</p>
                                         <p>Maximum size: {MAX_AVATAR_SIZE_MB} MB.</p>
-                                        <p>
-                                            Images are uploaded to the server and stored in AWS S3
-                                            using credentials configured on the backend.
-                                        </p>
                                     </div>
 
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
@@ -300,11 +300,11 @@ const StudentSettings: React.FC = () => {
                             </div>
                         </CardContent>
                         <CardFooter className="flex flex-col items-start gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex gap-2">
+                            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row">
                                 <Button
                                     type="button"
                                     size="sm"
-                                    className="gap-1"
+                                    className="w-full gap-1 sm:w-auto"
                                     onClick={handleUploadAvatar}
                                     disabled={!avatarFile || isUploadingAvatar}
                                 >
@@ -324,7 +324,7 @@ const StudentSettings: React.FC = () => {
                                     type="button"
                                     size="sm"
                                     variant="outline"
-                                    className="gap-1"
+                                    className="w-full gap-1 sm:w-auto"
                                     onClick={handleClearAvatar}
                                     disabled={!avatarFile && !avatarPreviewUrl}
                                 >
@@ -332,11 +332,6 @@ const StudentSettings: React.FC = () => {
                                     <span>Clear selection</span>
                                 </Button>
                             </div>
-                            <p className="text-[0.7rem] text-muted-foreground">
-                                Your profile picture is stored securely by the Guidance Office
-                                system. You may need to refresh the page if you change devices
-                                or browsers.
-                            </p>
                         </CardFooter>
                     </Card>
 
@@ -350,8 +345,7 @@ const StudentSettings: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
                                 Use a strong, unique password to protect your eCounseling
-                                account. This form is wired for validation; actual password
-                                change will be connected to the backend later.
+                                account.
                             </CardDescription>
                         </CardHeader>
                         <CardContent>
@@ -497,10 +491,6 @@ const StudentSettings: React.FC = () => {
                                             "Change password"
                                         )}
                                     </Button>
-                                    <p className="text-[0.7rem] text-muted-foreground sm:text-right">
-                                        Password changes will later be handled via a secure Laravel
-                                        endpoint. For now this form only validates your input.
-                                    </p>
                                 </div>
                             </form>
                         </CardContent>
