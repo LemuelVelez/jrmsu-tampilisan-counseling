@@ -12,6 +12,7 @@ import {
     markStudentMessagesAsRead,
     type StudentMessage,
 } from "@/lib/messages";
+import { markStudentMessageReadByIdApi } from "@/api/messages/[id]/route";
 
 type UiMessage = {
     id: number | string;
@@ -184,21 +185,21 @@ const StudentMessages: React.FC = () => {
         }
     };
 
+    /**
+     * Mark all messages as read.
+     * Calls the backend endpoint with NO IDs so it can mark everything
+     * belonging to the current student, which avoids the
+     * "message_ids.0 must be an integer" validation issue.
+     */
     const markAllAsRead = async () => {
         if (!messages.length || !hasUnread) return;
 
         setIsMarkingRead(true);
 
         try {
-            const idsToMark = messages
-                .filter((m) => m.isUnread)
-                .map((m) => m.id)
-                .filter((id) => id != null) as Array<number | string>;
+            await markStudentMessagesAsRead();
 
-            if (idsToMark.length > 0) {
-                await markStudentMessagesAsRead(idsToMark);
-            }
-
+            // Optimistically update local UI state
             setMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
         } catch (error) {
             const message =
@@ -208,6 +209,42 @@ const StudentMessages: React.FC = () => {
             toast.error(message);
         } finally {
             setIsMarkingRead(false);
+        }
+    };
+
+    /**
+     * Mark a single message as read when the user clicks the "NEW" badge.
+     * Uses the dynamic [id] API helper, which converts IDs to integers
+     * before sending them to Laravel.
+     */
+    const handleMarkSingleAsRead = async (message: UiMessage) => {
+        if (!message.isUnread) return;
+
+        // If the message has a non-numeric ID (like the local "intro" message),
+        // just update UI state without calling the backend.
+        if (typeof message.id !== "number") {
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === message.id ? { ...m, isUnread: false } : m,
+                ),
+            );
+            return;
+        }
+
+        try {
+            await markStudentMessageReadByIdApi(message.id);
+
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.id === message.id ? { ...m, isUnread: false } : m,
+                ),
+            );
+        } catch (error) {
+            const msg =
+                error instanceof Error
+                    ? error.message
+                    : "Failed to mark message as read.";
+            toast.error(msg);
         }
     };
 
@@ -286,9 +323,15 @@ const StudentMessages: React.FC = () => {
                                                     <span aria-hidden="true">•</span>
                                                     <span>{formatTimestamp(message.createdAt)}</span>
                                                     {message.isUnread && (
-                                                        <span className="rounded-full bg-amber-100 px-2 py-px text-[0.6rem] font-semibold text-amber-900">
+                                                        <button
+                                                            type="button"
+                                                            onClick={() =>
+                                                                handleMarkSingleAsRead(message)
+                                                            }
+                                                            className="rounded-full bg-amber-100 px-2 py-px text-[0.6rem] font-semibold text-amber-900 hover:bg-amber-200 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                                        >
                                                             NEW
-                                                        </span>
+                                                        </button>
                                                     )}
                                                 </div>
                                                 <div
