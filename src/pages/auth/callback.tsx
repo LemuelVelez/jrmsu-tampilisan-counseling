@@ -62,17 +62,17 @@ const AuthCallbackPage: React.FC = () => {
                     setStatus("success");
                     setMessage(
                         explicitMessage ??
-                        (intent === "email-verification"
-                            ? "Your email has been verified. Redirecting you to your dashboard..."
-                            : "Sign-in completed. Redirecting you to your dashboard..."),
+                            (intent === "email-verification"
+                                ? "Your email has been verified. Redirecting you to your dashboard..."
+                                : "Sign-in completed. Redirecting you to your dashboard..."),
                     );
 
                     const roleValue =
                         typeof session.user.role === "string"
                             ? session.user.role
                             : session.user.role != null
-                                ? String(session.user.role)
-                                : "";
+                            ? String(session.user.role)
+                            : "";
 
                     const defaultDashboardPath =
                         resolveDashboardPathForRole(roleValue);
@@ -92,14 +92,17 @@ const AuthCallbackPage: React.FC = () => {
                     setStatus("error");
                     setMessage(
                         explicitMessage ??
-                        (explicitStatus === "error"
-                            ? "We couldn't complete the sign-in process. Please try signing in again."
-                            : "We couldn't find an active session after returning from the authentication provider. Please sign in again."),
+                            (explicitStatus === "error"
+                                ? "We couldn't complete the sign-in process. Please try signing in again."
+                                : "We couldn't find an active session after returning from the authentication provider. Please sign in again."),
                     );
                 }
             } catch (error) {
                 if (!isMounted) return;
-                console.error("[auth-callback] Failed to finish auth callback", error);
+                console.error(
+                    "[auth-callback] Failed to finish auth callback",
+                    error,
+                );
                 const fallbackMessage =
                     error instanceof Error && error.message
                         ? error.message
@@ -129,12 +132,11 @@ const AuthCallbackPage: React.FC = () => {
         if (status === "success") {
             toast.success(
                 message ??
-                "You're all set. Redirecting you to your dashboard.",
+                    "You're all set. Redirecting you to your dashboard.",
             );
         } else if (status === "error") {
             toast.error(
-                message ??
-                "We couldn't finish sign-in. Please try again.",
+                message ?? "We couldn't finish sign-in. Please try again.",
             );
         }
     }, [status, message]);
@@ -143,29 +145,32 @@ const AuthCallbackPage: React.FC = () => {
         status === "success"
             ? "You're all set"
             : status === "error"
-                ? "We couldn't finish sign-in"
-                : "Finishing sign-in";
+            ? "We couldn't finish sign-in"
+            : "Finishing sign-in";
 
     const description =
         message ??
         (status === "processing"
             ? "Please wait while we verify your information and complete your eCounseling sign-in. This should only take a moment."
             : status === "success"
-                ? "We've successfully verified your account. Redirecting you to your dashboard."
-                : "Something went wrong while finishing sign-in. You can safely return to the sign-in page and try again.");
+            ? "We've successfully verified your account. Redirecting you to your dashboard."
+            : "Something went wrong while finishing sign-in. You can safely return to the sign-in page and try again.");
 
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
                 {/* Header with logo (clickable back to landing page) */}
-                <div className="flex items-center justify-between gap-2">
-                    <Link to="/" className="flex items-center gap-3">
+                <div className="flex flex-col items-center justify-center gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <Link
+                        to="/"
+                        className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
+                    >
                         <img
                             src={ecounselingLogo}
                             alt="eCounseling logo"
                             className="h-8 w-auto"
                         />
-                        <div className="flex flex-col">
+                        <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
                                 eCounseling Portal
                             </h1>
