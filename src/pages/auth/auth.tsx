@@ -144,16 +144,8 @@ const LoginForm: React.FC<AuthFormProps> = ({
                             </Field>
 
                             <Field>
-                                <div className="flex items-center">
-                                    <FieldLabel htmlFor="login-password">Password</FieldLabel>
-                                    <Link
-                                        to="/auth/forgot-password"
-                                        className="ml-auto text-xs underline-offset-2 hover:text-amber-900 hover:underline"
-                                    >
-                                        Forgot your password?
-                                    </Link>
-                                </div>
-                                <div className="relative">
+                                <FieldLabel htmlFor="login-password">Password</FieldLabel>
+                                <div className="relative mt-1">
                                     <Input
                                         id="login-password"
                                         name="password"
@@ -179,6 +171,14 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                             <Eye className="h-4 w-4 text-muted-foreground" />
                                         )}
                                     </Button>
+                                </div>
+                                <div className="mt-1 flex justify-end">
+                                    <Link
+                                        to="/auth/forgot-password"
+                                        className="text-xs underline-offset-2 hover:text-amber-900 hover:underline"
+                                    >
+                                        Forgot your password?
+                                    </Link>
                                 </div>
                             </Field>
 
@@ -791,14 +791,17 @@ const AuthPage: React.FC = () => {
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
                 {/* Header with logo (clickable back to landing page) */}
-                <div className="flex items-center justify-between gap-2">
-                    <Link to="/" className="flex items-center gap-3">
+                <div className="flex flex-col items-center justify-center gap-2 sm:flex-row sm:items-center sm:justify-between">
+                    <Link
+                        to="/"
+                        className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
+                    >
                         <img
                             src={ecounselingLogo}
                             alt="eCounseling logo"
                             className="h-8 w-auto"
                         />
-                        <div className="flex flex-col">
+                        <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
                                 eCounseling Portal
                             </h1>
