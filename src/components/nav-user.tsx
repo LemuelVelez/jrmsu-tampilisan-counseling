@@ -1,5 +1,7 @@
+// src/components/nav-user.tsx
 import React from "react";
 import { ChevronDown, LogOut } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 
 import { SidebarMenuButton } from "@/components/ui/sidebar";
 import {
@@ -27,6 +29,7 @@ import { toast } from "sonner";
 
 export const NavUser: React.FC = () => {
     const { session, signOut } = useSession();
+    const navigate = useNavigate();
     const user = session?.user;
 
     const name = (user?.name || user?.email || "Student").toString();
@@ -49,11 +52,14 @@ export const NavUser: React.FC = () => {
 
             await signOut();
             toast.success("Signed out successfully.");
+
+            // Redirect to login page after successful sign out
+            navigate("/auth", { replace: true });
         } catch (error) {
             console.error("[nav-user] Sign out failed", error);
             toast.error("Sign out failed. Please try again.");
         }
-    }, [signOut]);
+    }, [signOut, navigate]);
 
     return (
         <AlertDialog>
