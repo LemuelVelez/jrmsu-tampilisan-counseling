@@ -1,4 +1,4 @@
-// src/components/nav-user.tsx
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { ChevronDown, LogOut } from "lucide-react";
 import { useNavigate } from "react-router-dom";
@@ -12,7 +12,11 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+    Avatar,
+    AvatarFallback,
+    AvatarImage,
+} from "@/components/ui/avatar";
 import { useSession } from "@/hooks/use-session";
 import {
     AlertDialog,
@@ -44,6 +48,14 @@ export const NavUser: React.FC = () => {
         return (first + second || first).toUpperCase();
     }, [name]);
 
+    // Read avatar URL from user object if backend provides it
+    const avatarUrl =
+        user &&
+            (user as any).avatar_url &&
+            typeof (user as any).avatar_url === "string"
+            ? ((user as any).avatar_url as string)
+            : null;
+
     const handleSignOut = React.useCallback(async () => {
         try {
             if (!signOut) {
@@ -61,6 +73,16 @@ export const NavUser: React.FC = () => {
         }
     }, [signOut, navigate]);
 
+    const handleOpenSettings = React.useCallback(() => {
+        // Route students to their specific settings page.
+        // You can adjust the fallback path for other roles as needed.
+        if (role.toLowerCase() === "student") {
+            navigate("/dashboard/student/settings");
+        } else {
+            navigate("/dashboard/settings");
+        }
+    }, [navigate, role]);
+
     return (
         <AlertDialog>
             <DropdownMenu>
@@ -70,9 +92,17 @@ export const NavUser: React.FC = () => {
                         className="group w-full justify-start gap-3 data-[state=open]:bg-sidebar-accent/80"
                     >
                         <Avatar className="h-7 w-7">
-                            <AvatarFallback className="text-[0.65rem]">
-                                {initials}
-                            </AvatarFallback>
+                            {avatarUrl ? (
+                                <AvatarImage
+                                    src={avatarUrl}
+                                    alt={name}
+                                    className="object-cover"
+                                />
+                            ) : (
+                                <AvatarFallback className="text-[0.65rem]">
+                                    {initials}
+                                </AvatarFallback>
+                            )}
                         </Avatar>
 
                         <div className="flex min-w-0 flex-1 flex-col text-left leading-tight">
@@ -117,7 +147,10 @@ export const NavUser: React.FC = () => {
 
                     <DropdownMenuSeparator />
 
-                    <DropdownMenuItem className="text-xs">
+                    <DropdownMenuItem
+                        className="text-xs"
+                        onSelect={handleOpenSettings}
+                    >
                         Settings
                     </DropdownMenuItem>
 
