@@ -9,14 +9,13 @@ import {
     FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import heroIllustration from "@/assets/images/hero.png";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
-import {
-    resetPasswordApi,
-    type ApiError,
-} from "@/api/auth/route";
+import { toast } from "sonner";
+import { resetPasswordApi, type ApiError } from "@/api/auth/route";
 
 const ResetPasswordPage: React.FC = () => {
     const [showPassword, setShowPassword] = React.useState(false);
@@ -42,22 +41,27 @@ const ResetPasswordPage: React.FC = () => {
         event.preventDefault();
 
         if (!hasValidToken) {
-            setError(
-                "This reset link is invalid or missing information. Please request a new one.",
-            );
+            const message =
+                "This reset link is invalid or missing information. Please request a new one.";
+            setError(message);
             setSuccessMessage(null);
+            toast.error(message);
             return;
         }
 
         if (!password || !confirmPassword) {
-            setError("Please fill in both password fields.");
+            const message = "Please fill in both password fields.";
+            setError(message);
             setSuccessMessage(null);
+            toast.error(message);
             return;
         }
 
         if (password !== confirmPassword) {
-            setError("Passwords do not match.");
+            const message = "Passwords do not match.";
+            setError(message);
             setSuccessMessage(null);
+            toast.error(message);
             return;
         }
 
@@ -73,10 +77,12 @@ const ResetPasswordPage: React.FC = () => {
                 password_confirmation: confirmPassword,
             });
 
-            setSuccessMessage(
+            const message =
                 response.message ||
-                "Your password has been reset. Redirecting to sign in…",
-            );
+                "Your password has been reset. Redirecting to sign in…";
+
+            setSuccessMessage(message);
+            toast.success("Your password has been reset. You can now sign in.");
 
             // Redirect back to sign-in after a short moment
             setTimeout(() => {
@@ -84,10 +90,12 @@ const ResetPasswordPage: React.FC = () => {
             }, 1500);
         } catch (err) {
             const apiError = err as ApiError;
-            setError(
+            const message =
                 apiError.message ||
-                "We couldn’t reset your password right now. Please try again.",
-            );
+                "We couldn’t reset your password right now. Please try again.";
+
+            setError(message);
+            toast.error(message);
         } finally {
             setIsSubmitting(false);
         }
@@ -144,6 +152,48 @@ const ResetPasswordPage: React.FC = () => {
                                             </p>
                                         )}
                                     </div>
+
+                                    {/* Invalid/expired link alert */}
+                                    {!hasValidToken && (
+                                        <Alert
+                                            variant="destructive"
+                                            className="text-left"
+                                        >
+                                            <AlertCircle className="h-4 w-4" />
+                                            <AlertTitle>
+                                                Invalid or expired link
+                                            </AlertTitle>
+                                            <AlertDescription>
+                                                This reset link is invalid or has expired. Please
+                                                request a new password reset from the
+                                                &quot;Forgot password&quot; page.
+                                            </AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    {/* Dynamic error/success alerts */}
+                                    {error && (
+                                        <Alert
+                                            variant="destructive"
+                                            className="text-left"
+                                        >
+                                            <AlertCircle className="h-4 w-4" />
+                                            <AlertTitle>Something went wrong</AlertTitle>
+                                            <AlertDescription>{error}</AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    {successMessage && (
+                                        <Alert className="border-emerald-200 bg-emerald-50/80 text-left">
+                                            <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                                            <AlertTitle className="text-emerald-800">
+                                                Password updated
+                                            </AlertTitle>
+                                            <AlertDescription className="text-emerald-800/90">
+                                                {successMessage}
+                                            </AlertDescription>
+                                        </Alert>
+                                    )}
 
                                     <Field>
                                         <FieldLabel htmlFor="reset-password">
@@ -239,26 +289,6 @@ const ResetPasswordPage: React.FC = () => {
                                                 : "Save new password"}
                                         </Button>
                                     </Field>
-
-                                    {!hasValidToken && (
-                                        <FieldDescription className="text-center text-xs text-red-600">
-                                            This reset link is invalid or has expired. Please
-                                            request a new password reset from the &quot;Forgot
-                                            password&quot; page.
-                                        </FieldDescription>
-                                    )}
-
-                                    {error && (
-                                        <FieldDescription className="text-center text-xs text-red-600">
-                                            {error}
-                                        </FieldDescription>
-                                    )}
-
-                                    {successMessage && (
-                                        <FieldDescription className="text-center text-xs text-emerald-600">
-                                            {successMessage}
-                                        </FieldDescription>
-                                    )}
 
                                     <FieldDescription className="text-center text-xs flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
                                         <span>Remembered your password?</span>

@@ -9,13 +9,13 @@ import {
     FieldLabel,
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import heroIllustration from "@/assets/images/hero.png";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Link } from "react-router-dom";
-import {
-    forgotPasswordApi,
-    type ApiError,
-} from "@/api/auth/route";
+import { AlertCircle, CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
+import { forgotPasswordApi, type ApiError } from "@/api/auth/route";
 
 const ForgotPasswordPage: React.FC = () => {
     const [email, setEmail] = React.useState("");
@@ -30,8 +30,10 @@ const ForgotPasswordPage: React.FC = () => {
 
         const trimmedEmail = email.trim();
         if (!trimmedEmail) {
-            setError("Please enter your email address.");
+            const message = "Please enter your email address.";
+            setError(message);
             setSuccessMessage(null);
+            toast.error(message);
             return;
         }
 
@@ -42,16 +44,20 @@ const ForgotPasswordPage: React.FC = () => {
         try {
             const response = await forgotPasswordApi({ email: trimmedEmail });
 
-            setSuccessMessage(
+            const message =
                 response.message ||
-                "If an account exists for this email, we have sent a password reset link.",
-            );
+                "If an account exists for this email, we have sent a password reset link.";
+
+            setSuccessMessage(message);
+            toast.success(message);
         } catch (err) {
             const apiError = err as ApiError;
-            setError(
+            const message =
                 apiError.message ||
-                "We couldn’t send a reset link right now. Please try again.",
-            );
+                "We couldn’t send a reset link right now. Please try again.";
+
+            setError(message);
+            toast.error(message);
         } finally {
             setIsSubmitting(false);
         }
@@ -100,8 +106,36 @@ const ForgotPasswordPage: React.FC = () => {
                                         </p>
                                     </div>
 
+                                    {/* Inline alerts */}
+                                    {error && (
+                                        <Alert
+                                            variant="destructive"
+                                            className="text-left"
+                                        >
+                                            <AlertCircle className="h-4 w-4" />
+                                            <AlertTitle>
+                                                Something went wrong
+                                            </AlertTitle>
+                                            <AlertDescription>{error}</AlertDescription>
+                                        </Alert>
+                                    )}
+
+                                    {successMessage && (
+                                        <Alert className="border-emerald-200 bg-emerald-50/80 text-left">
+                                            <CheckCircle2 className="h-4 w-4 text-emerald-700" />
+                                            <AlertTitle className="text-emerald-800">
+                                                Reset link sent
+                                            </AlertTitle>
+                                            <AlertDescription className="text-emerald-800/90">
+                                                {successMessage}
+                                            </AlertDescription>
+                                        </Alert>
+                                    )}
+
                                     <Field>
-                                        <FieldLabel htmlFor="forgot-email">Email</FieldLabel>
+                                        <FieldLabel htmlFor="forgot-email">
+                                            Email
+                                        </FieldLabel>
                                         <Input
                                             id="forgot-email"
                                             name="email"
@@ -112,6 +146,7 @@ const ForgotPasswordPage: React.FC = () => {
                                             onChange={(event) =>
                                                 setEmail(event.target.value)
                                             }
+                                            disabled={isSubmitting}
                                         />
                                         <FieldDescription>
                                             Make sure this is the same email you used when creating
@@ -130,18 +165,6 @@ const ForgotPasswordPage: React.FC = () => {
                                                 : "Send reset link"}
                                         </Button>
                                     </Field>
-
-                                    {error && (
-                                        <FieldDescription className="text-center text-xs text-red-600">
-                                            {error}
-                                        </FieldDescription>
-                                    )}
-
-                                    {successMessage && (
-                                        <FieldDescription className="text-center text-xs text-emerald-600">
-                                            {successMessage}
-                                        </FieldDescription>
-                                    )}
 
                                     <FieldDescription className="text-center text-xs flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
                                         <span>Remember your password?</span>
