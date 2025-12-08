@@ -12,8 +12,51 @@ import { Input } from "@/components/ui/input";
 import heroIllustration from "@/assets/images/hero.png";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Link } from "react-router-dom";
+import {
+    forgotPasswordApi,
+    type ApiError,
+} from "@/api/auth/route";
 
 const ForgotPasswordPage: React.FC = () => {
+    const [email, setEmail] = React.useState("");
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = React.useState<string | null>(
+        null,
+    );
+
+    async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        const trimmedEmail = email.trim();
+        if (!trimmedEmail) {
+            setError("Please enter your email address.");
+            setSuccessMessage(null);
+            return;
+        }
+
+        setIsSubmitting(true);
+        setError(null);
+        setSuccessMessage(null);
+
+        try {
+            const response = await forgotPasswordApi({ email: trimmedEmail });
+
+            setSuccessMessage(
+                response.message ||
+                "If an account exists for this email, we have sent a password reset link.",
+            );
+        } catch (err) {
+            const apiError = err as ApiError;
+            setError(
+                apiError.message ||
+                "We couldn’t send a reset link right now. Please try again.",
+            );
+        } finally {
+            setIsSubmitting(false);
+        }
+    }
+
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
@@ -44,10 +87,7 @@ const ForgotPasswordPage: React.FC = () => {
                         <CardContent className="grid p-0 md:grid-cols-2">
                             <form
                                 className="p-6 md:p-8"
-                                onSubmit={(event) => {
-                                    event.preventDefault();
-                                    // TODO: hook up to real forgot-password endpoint
-                                }}
+                                onSubmit={handleSubmit}
                             >
                                 <FieldGroup>
                                     <div className="flex flex-col items-center gap-2 text-center">
@@ -64,9 +104,14 @@ const ForgotPasswordPage: React.FC = () => {
                                         <FieldLabel htmlFor="forgot-email">Email</FieldLabel>
                                         <Input
                                             id="forgot-email"
+                                            name="email"
                                             type="email"
                                             placeholder="you@example.com"
                                             required
+                                            value={email}
+                                            onChange={(event) =>
+                                                setEmail(event.target.value)
+                                            }
                                         />
                                         <FieldDescription>
                                             Make sure this is the same email you used when creating
@@ -75,10 +120,28 @@ const ForgotPasswordPage: React.FC = () => {
                                     </Field>
 
                                     <Field>
-                                        <Button type="submit" className="w-full">
-                                            Send reset link
+                                        <Button
+                                            type="submit"
+                                            className="w-full"
+                                            disabled={isSubmitting}
+                                        >
+                                            {isSubmitting
+                                                ? "Sending reset link..."
+                                                : "Send reset link"}
                                         </Button>
                                     </Field>
+
+                                    {error && (
+                                        <FieldDescription className="text-center text-xs text-red-600">
+                                            {error}
+                                        </FieldDescription>
+                                    )}
+
+                                    {successMessage && (
+                                        <FieldDescription className="text-center text-xs text-emerald-600">
+                                            {successMessage}
+                                        </FieldDescription>
+                                    )}
 
                                     <FieldDescription className="text-center text-xs flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
                                         <span>Remember your password?</span>

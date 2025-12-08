@@ -54,6 +54,30 @@ export interface ApiError extends Error {
     data?: unknown;
 }
 
+/**
+ * Forgot-password & reset-password DTOs
+ */
+export interface ForgotPasswordRequestDto {
+    email: string;
+}
+
+export interface ForgotPasswordResponseDto {
+    message: string;
+    [key: string]: unknown;
+}
+
+export interface ResetPasswordRequestDto {
+    token: string;
+    email: string;
+    password: string;
+    password_confirmation: string;
+}
+
+export interface ResetPasswordResponseDto {
+    message: string;
+    [key: string]: unknown;
+}
+
 // Base URL comes from your Vite env (e.g. http://localhost:8000/api)
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as
     | string
@@ -156,4 +180,32 @@ export async function meApi(): Promise<AuthenticatedUserDto> {
         method: "GET",
     });
     return payload.user;
+}
+
+/**
+ * Request a password reset link.
+ *
+ * Endpoint: POST /auth/password/forgot
+ */
+export async function forgotPasswordApi(
+    payload: ForgotPasswordRequestDto,
+): Promise<ForgotPasswordResponseDto> {
+    return apiFetch<ForgotPasswordResponseDto>("/auth/password/forgot", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+/**
+ * Submit a new password using a reset token.
+ *
+ * Endpoint: POST /auth/password/reset
+ */
+export async function resetPasswordApi(
+    payload: ResetPasswordRequestDto,
+): Promise<ResetPasswordResponseDto> {
+    return apiFetch<ResetPasswordResponseDto>("/auth/password/reset", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
 }
