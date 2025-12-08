@@ -12,11 +12,86 @@ import { Input } from "@/components/ui/input";
 import heroIllustration from "@/assets/images/hero.png";
 import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Eye, EyeOff } from "lucide-react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate, useSearchParams } from "react-router-dom";
+import {
+    resetPasswordApi,
+    type ApiError,
+} from "@/api/auth/route";
 
 const ResetPasswordPage: React.FC = () => {
     const [showPassword, setShowPassword] = React.useState(false);
     const [showConfirmPassword, setShowConfirmPassword] = React.useState(false);
+
+    const [password, setPassword] = React.useState("");
+    const [confirmPassword, setConfirmPassword] = React.useState("");
+    const [isSubmitting, setIsSubmitting] = React.useState(false);
+    const [error, setError] = React.useState<string | null>(null);
+    const [successMessage, setSuccessMessage] = React.useState<string | null>(
+        null,
+    );
+
+    const [searchParams] = useSearchParams();
+    const navigate = useNavigate();
+
+    const token = searchParams.get("token") ?? "";
+    const email = searchParams.get("email") ?? "";
+
+    const hasValidToken = Boolean(token && email);
+
+    async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+        event.preventDefault();
+
+        if (!hasValidToken) {
+            setError(
+                "This reset link is invalid or missing information. Please request a new one.",
+            );
+            setSuccessMessage(null);
+            return;
+        }
+
+        if (!password || !confirmPassword) {
+            setError("Please fill in both password fields.");
+            setSuccessMessage(null);
+            return;
+        }
+
+        if (password !== confirmPassword) {
+            setError("Passwords do not match.");
+            setSuccessMessage(null);
+            return;
+        }
+
+        setIsSubmitting(true);
+        setError(null);
+        setSuccessMessage(null);
+
+        try {
+            const response = await resetPasswordApi({
+                token,
+                email,
+                password,
+                password_confirmation: confirmPassword,
+            });
+
+            setSuccessMessage(
+                response.message ||
+                "Your password has been reset. Redirecting to sign in…",
+            );
+
+            // Redirect back to sign-in after a short moment
+            setTimeout(() => {
+                navigate("/auth");
+            }, 1500);
+        } catch (err) {
+            const apiError = err as ApiError;
+            setError(
+                apiError.message ||
+                "We couldn’t reset your password right now. Please try again.",
+            );
+        } finally {
+            setIsSubmitting(false);
+        }
+    }
 
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
@@ -48,10 +123,7 @@ const ResetPasswordPage: React.FC = () => {
                         <CardContent className="grid p-0 md:grid-cols-2">
                             <form
                                 className="p-6 md:p-8"
-                                onSubmit={(event) => {
-                                    event.preventDefault();
-                                    // TODO: hook up to real reset-password endpoint (with token/identifier)
-                                }}
+                                onSubmit={handleSubmit}
                             >
                                 <FieldGroup>
                                     <div className="flex flex-col items-center gap-2 text-center">
@@ -63,6 +135,14 @@ const ResetPasswordPage: React.FC = () => {
                                             sure it&apos;s something secure and easy for you to
                                             remember.
                                         </p>
+                                        {email && (
+                                            <p className="text-xs text-muted-foreground">
+                                                Resetting password for{" "}
+                                                <span className="font-medium text-amber-900">
+                                                    {email}
+                                                </span>
+                                            </p>
+                                        )}
                                     </div>
 
                                     <Field>
@@ -76,16 +156,24 @@ const ResetPasswordPage: React.FC = () => {
                                                 placeholder="Create a new password"
                                                 required
                                                 className="pr-10"
+                                                value={password}
+                                                onChange={(event) =>
+                                                    setPassword(event.target.value)
+                                                }
+                                                disabled={!hasValidToken || isSubmitting}
                                             />
                                             <Button
                                                 type="button"
                                                 variant="ghost"
                                                 size="icon"
                                                 className="absolute inset-y-0 right-0 flex items-center justify-center hover:bg-transparent"
-                                                onClick={() => setShowPassword((prev) => !prev)}
+                                                onClick={() =>
+                                                    setShowPassword((prev) => !prev)
+                                                }
                                                 aria-label={
                                                     showPassword ? "Hide password" : "Show password"
                                                 }
+                                                tabIndex={-1}
                                             >
                                                 {showPassword ? (
                                                     <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -107,6 +195,11 @@ const ResetPasswordPage: React.FC = () => {
                                                 placeholder="Re-enter your new password"
                                                 required
                                                 className="pr-10"
+                                                value={confirmPassword}
+                                                onChange={(event) =>
+                                                    setConfirmPassword(event.target.value)
+                                                }
+                                                disabled={!hasValidToken || isSubmitting}
                                             />
                                             <Button
                                                 type="button"
@@ -121,6 +214,7 @@ const ResetPasswordPage: React.FC = () => {
                                                         ? "Hide password"
                                                         : "Show password"
                                                 }
+                                                tabIndex={-1}
                                             >
                                                 {showConfirmPassword ? (
                                                     <EyeOff className="h-4 w-4 text-muted-foreground" />
@@ -135,10 +229,36 @@ const ResetPasswordPage: React.FC = () => {
                                     </Field>
 
                                     <Field>
-                                        <Button type="submit" className="w-full">
-                                            Save new password
+                                        <Button
+                                            type="submit"
+                                            className="w-full"
+                                            disabled={!hasValidToken || isSubmitting}
+                                        >
+                                            {isSubmitting
+                                                ? "Saving new password..."
+                                                : "Save new password"}
                                         </Button>
                                     </Field>
+
+                                    {!hasValidToken && (
+                                        <FieldDescription className="text-center text-xs text-red-600">
+                                            This reset link is invalid or has expired. Please
+                                            request a new password reset from the &quot;Forgot
+                                            password&quot; page.
+                                        </FieldDescription>
+                                    )}
+
+                                    {error && (
+                                        <FieldDescription className="text-center text-xs text-red-600">
+                                            {error}
+                                        </FieldDescription>
+                                    )}
+
+                                    {successMessage && (
+                                        <FieldDescription className="text-center text-xs text-emerald-600">
+                                            {successMessage}
+                                        </FieldDescription>
+                                    )}
 
                                     <FieldDescription className="text-center text-xs flex flex-col items-center gap-1 sm:flex-row sm:justify-center">
                                         <span>Remembered your password?</span>
