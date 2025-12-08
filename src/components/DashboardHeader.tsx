@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// src/components/DashboardHeader.tsx
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ChevronDown, LogOut } from "lucide-react";
@@ -110,12 +109,10 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
     }, [signOut, navigate]);
 
     const handleOpenSettings = React.useCallback(() => {
-        if (role.toLowerCase() === "student") {
-            navigate("/dashboard/student/settings");
-        } else {
-            navigate("/dashboard/settings");
-        }
-    }, [navigate, role]);
+        // Currently, the only settings page route is the student settings page.
+        // Route all roles to this existing settings page to avoid 404s.
+        navigate("/dashboard/student/settings");
+    }, [navigate]);
 
     const isTitleLong = resolvedTitle.length > 24;
     const isDescriptionLong = (description?.length ?? 0) > 60;
@@ -206,9 +203,35 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                                         </DropdownMenu>
                                     </div>
                                 ) : (
-                                    <p className="max-w-full truncate text-[0.65rem] text-muted-foreground md:max-w-xl md:text-sm">
-                                        {description}
-                                    </p>
+                                    // SHORT DESCRIPTION:
+                                    // - Mobile: hide the inline text, show ONLY the "More" trigger.
+                                    // - Desktop: keep showing the text (no More trigger), same as before.
+                                    <div className="flex max-w-full items-center gap-1 md:max-w-xl">
+                                        {/* Desktop text (unchanged) */}
+                                        <p className="hidden max-w-full truncate text-[0.65rem] text-muted-foreground md:block md:max-w-xl md:text-sm">
+                                            {description}
+                                        </p>
+
+                                        {/* Mobile-only "More" dropdown */}
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <button
+                                                    type="button"
+                                                    className="shrink-0 rounded-full border px-1.5 py-0.5 text-[0.65rem] text-muted-foreground hover:bg-muted md:hidden"
+                                                >
+                                                    More
+                                                </button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent
+                                                align="start"
+                                                className="w-40 md:hidden"
+                                            >
+                                                <DropdownMenuLabel className="whitespace-normal text-xs font-normal">
+                                                    {description}
+                                                </DropdownMenuLabel>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
                                 )
                             )}
                         </div>
@@ -296,7 +319,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                     </div>
                 )}
 
-                {/* DESKTOP: Actions + avatar (unchanged behavior) */}
+                {/* DESKTOP: Actions + avatar (unchanged behavior, but chevron animated) */}
                 <div className="hidden w-full items-center justify-between gap-2 md:ml-auto md:flex md:w-auto md:justify-end">
                     {actions && (
                         <div className="flex max-w-[60%] flex-wrap items-center gap-2 md:max-w-none md:justify-end">
@@ -309,7 +332,7 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                         <DropdownMenuTrigger asChild>
                             <button
                                 type="button"
-                                className="flex max-w-[55%] items-center gap-2 overflow-hidden rounded-full border bg-background px-2 py-1 text-[0.7rem] shadow-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 md:max-w-none md:text-xs"
+                                className="group flex max-w-[55%] items-center gap-2 overflow-hidden rounded-full border bg-background px-2 py-1 text-[0.7rem] shadow-sm hover:bg-muted focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 md:max-w-none md:text-xs"
                             >
                                 <Avatar className="h-7 w-7 shrink-0">
                                     {avatarUrl ? (
@@ -336,7 +359,8 @@ const DashboardHeader: React.FC<DashboardHeaderProps> = ({
                                     )}
                                 </div>
 
-                                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60" />
+                                {/* Animated Chevron on desktop trigger */}
+                                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-60 transition-transform duration-200 group-data-[state=open]:rotate-180" />
                             </button>
                         </DropdownMenuTrigger>
 

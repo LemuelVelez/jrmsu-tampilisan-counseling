@@ -74,14 +74,10 @@ export const NavUser: React.FC = () => {
     }, [signOut, navigate]);
 
     const handleOpenSettings = React.useCallback(() => {
-        // Route students to their specific settings page.
-        // You can adjust the fallback path for other roles as needed.
-        if (role.toLowerCase() === "student") {
-            navigate("/dashboard/student/settings");
-        } else {
-            navigate("/dashboard/settings");
-        }
-    }, [navigate, role]);
+        // Currently, the only settings page route is the student settings page.
+        // Route all roles to this existing settings page to avoid 404s.
+        navigate("/dashboard/student/settings");
+    }, [navigate]);
 
     return (
         <AlertDialog>

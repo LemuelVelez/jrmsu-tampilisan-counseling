@@ -41,6 +41,35 @@ function DashboardIndexRoute() {
   return <Navigate to={dashboardPath} replace />;
 }
 
+// Centralized settings redirection based on role
+function SettingsIndexRoute() {
+  const session = getCurrentSession();
+  const user = session.user;
+
+  // No active session → send user to auth page
+  if (!user) {
+    return <Navigate to="/auth" replace />;
+  }
+
+  const rawRole =
+    typeof user.role === "string"
+      ? user.role
+      : user.role != null
+        ? String(user.role)
+        : null;
+
+  const normalizedRole = rawRole?.toLowerCase() ?? null;
+
+  // Currently only student has a dedicated settings page
+  if (normalizedRole === "student") {
+    return <Navigate to="/dashboard/student/settings" replace />;
+  }
+
+  // Fallback: send other roles back to their dashboard home
+  const dashboardPath = resolveDashboardPathForRole(rawRole);
+  return <Navigate to={dashboardPath} replace />;
+}
+
 function App() {
   return (
     <BrowserRouter>
@@ -58,6 +87,9 @@ function App() {
 
           {/* Dashboard index – used by the "Dashboard" button */}
           <Route path="/dashboard" element={<DashboardIndexRoute />} />
+
+          {/* Centralized settings entry point */}
+          <Route path="/dashboard/settings" element={<SettingsIndexRoute />} />
 
           {/* Dashboards (do not modify actual page files) */}
           <Route path="/dashboard/admin" element={<AdminOverview />} />
