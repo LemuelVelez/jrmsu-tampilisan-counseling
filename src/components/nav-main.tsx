@@ -7,7 +7,6 @@ import {
     Settings,
     Users,
     GraduationCap,
-    BarChart3,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 
@@ -87,6 +86,12 @@ const studentNavItems: NavItem[] = [
 
 /**
  * COUNSELOR NAV ITEMS
+ *
+ * Based on the student flows, counselors need:
+ * - Intake: to review student intake forms & assessments
+ * - Appointments: to manage evaluation requests / schedules
+ * - Messages: to handle student conversations
+ * Other utilities (Students, Reports, Settings) remain available.
  */
 const counselorNavItems: NavItem[] = [
     {
@@ -96,24 +101,28 @@ const counselorNavItems: NavItem[] = [
         exact: true, // 👈 only active on /dashboard/counselor
     },
     {
+        // Review student intake forms & assessment responses
+        title: "Intake",
+        to: "/dashboard/counselor/intake",
+        icon: ClipboardList,
+    },
+    {
+        // Manage counseling appointments / evaluations
         title: "Appointments",
         to: "/dashboard/counselor/appointments",
         icon: CalendarClock,
     },
     {
-        title: "Students",
-        to: "/dashboard/counselor/students",
-        icon: GraduationCap,
-    },
-    {
+        // Messages between counselor & students
         title: "Messages",
         to: "/dashboard/counselor/messages",
         icon: MessageCircle,
     },
     {
-        title: "Reports",
-        to: "/dashboard/counselor/reports",
-        icon: BarChart3,
+        // Student directory & profile view
+        title: "Students",
+        to: "/dashboard/counselor/students",
+        icon: GraduationCap,
     },
     {
         title: "Settings",
@@ -136,21 +145,6 @@ const adminNavItems: NavItem[] = [
         title: "Users",
         to: "/dashboard/admin/users",
         icon: Users,
-    },
-    {
-        title: "Counselors",
-        to: "/dashboard/admin/counselors",
-        icon: Users,
-    },
-    {
-        title: "Students",
-        to: "/dashboard/admin/students",
-        icon: GraduationCap,
-    },
-    {
-        title: "Reports",
-        to: "/dashboard/admin/reports",
-        icon: BarChart3,
     },
     {
         title: "Settings",

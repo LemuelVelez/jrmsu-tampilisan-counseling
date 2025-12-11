@@ -91,7 +91,7 @@ function App() {
           {/* Centralized settings entry point */}
           <Route path="/dashboard/settings" element={<SettingsIndexRoute />} />
 
-          {/* Dashboards (do not modify actual page files) */}
+          {/* Dashboards by role */}
           <Route path="/dashboard/admin" element={<AdminOverview />} />
           <Route path="/dashboard/counselor" element={<CounselorOverview />} />
           <Route path="/dashboard/student" element={<StudentOverview />} />
