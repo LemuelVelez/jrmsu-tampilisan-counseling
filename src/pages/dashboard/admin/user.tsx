@@ -2,11 +2,19 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, RefreshCcw, Search, Eye } from "lucide-react";
+import {
+    Loader2,
+    RefreshCcw,
+    Search,
+    Eye,
+    EyeOff,
+    UserPlus,
+} from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
     Card,
     CardHeader,
@@ -89,6 +97,7 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
 
     if (!response.ok) {
         const body = data as any;
+
         const firstErrorFromLaravel =
             body?.errors && typeof body.errors === "object"
                 ? (Object.values(body.errors)[0] as any)?.[0]
@@ -126,6 +135,12 @@ function extractUsers(payload: UsersResponse): AdminUser[] {
     return [];
 }
 
+function extractUserFromCreateResponse(payload: any): AdminUser | null {
+    const candidate = payload?.user ?? payload?.data ?? payload?.created_user ?? null;
+    if (!candidate || candidate.id == null || !candidate.email) return null;
+    return candidate as AdminUser;
+}
+
 function getInitials(name?: string | null, email?: string | null): string {
     const base = (name ?? "").trim();
     if (base) {
@@ -156,6 +171,15 @@ function useAuthSession(): AuthSession {
     return session;
 }
 
+type CreateUserForm = {
+    name: string;
+    email: string;
+    role: string;
+    gender: string;
+    password: string;
+    password_confirmation: string;
+};
+
 const AdminUsersInner: React.FC = () => {
     const [roles, setRoles] = React.useState<string[]>([]);
     const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -169,6 +193,21 @@ const AdminUsersInner: React.FC = () => {
 
     const [avatarOpen, setAvatarOpen] = React.useState(false);
     const [selectedUser, setSelectedUser] = React.useState<AdminUser | null>(null);
+
+    // Add user dialog
+    const [createOpen, setCreateOpen] = React.useState(false);
+    const [isCreating, setIsCreating] = React.useState(false);
+    const [showCreatePassword, setShowCreatePassword] = React.useState(false);
+    const [showCreateConfirmPassword, setShowCreateConfirmPassword] =
+        React.useState(false);
+    const [createForm, setCreateForm] = React.useState<CreateUserForm>({
+        name: "",
+        email: "",
+        role: "student",
+        gender: "",
+        password: "",
+        password_confirmation: "",
+    });
 
     const effectiveRoles = React.useMemo(() => {
         const clean = roles.map((r) => String(r).trim()).filter(Boolean);
@@ -185,6 +224,25 @@ const AdminUsersInner: React.FC = () => {
         }
         return uniq;
     }, [roles]);
+
+    // Keep default create role aligned if roles load later
+    React.useEffect(() => {
+        setCreateForm((prev) => {
+            const prevRoleNorm = normalizeRole(prev.role);
+            const inList = effectiveRoles.some(
+                (r) => normalizeRole(r) === prevRoleNorm,
+            );
+            if (inList) return prev;
+
+            // Prefer student if present, else first role
+            const preferred =
+                effectiveRoles.find((r) => normalizeRole(r) === "student") ??
+                effectiveRoles[0] ??
+                "student";
+
+            return { ...prev, role: preferred };
+        });
+    }, [effectiveRoles]);
 
     const fetchAll = React.useCallback(async () => {
         // NOTE: Adjust these endpoints to match your Laravel routes if needed.
@@ -208,7 +266,8 @@ const AdminUsersInner: React.FC = () => {
             try {
                 await fetchAll();
             } catch (err) {
-                const msg = err instanceof Error ? err.message : "Failed to load users.";
+                const msg =
+                    err instanceof Error ? err.message : "Failed to load users.";
                 toast.error(msg);
             } finally {
                 if (mounted) setIsLoading(false);
@@ -255,7 +314,9 @@ const AdminUsersInner: React.FC = () => {
         partial: Partial<AdminUser>,
     ) => {
         setUsers((prev) =>
-            prev.map((u) => (String(u.id) === String(id) ? { ...u, ...partial } : u)),
+            prev.map((u) =>
+                String(u.id) === String(id) ? { ...u, ...partial } : u,
+            ),
         );
     };
 
@@ -305,10 +366,108 @@ const AdminUsersInner: React.FC = () => {
         }
     };
 
+    const resetCreateForm = () => {
+        const preferredRole =
+            effectiveRoles.find((r) => normalizeRole(r) === "student") ??
+            effectiveRoles[0] ??
+            "student";
+
+        setCreateForm({
+            name: "",
+            email: "",
+            role: preferredRole,
+            gender: "",
+            password: "",
+            password_confirmation: "",
+        });
+        setShowCreatePassword(false);
+        setShowCreateConfirmPassword(false);
+    };
+
+    const openCreateDialog = () => {
+        resetCreateForm();
+        setCreateOpen(true);
+    };
+
+    const handleCreateUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        const name = createForm.name.trim();
+        const email = createForm.email.trim();
+        const role = createForm.role.trim();
+        const gender = createForm.gender.trim();
+        const password = createForm.password;
+        const passwordConfirmation = createForm.password_confirmation;
+
+        if (!name) {
+            toast.error("Please enter the user's full name.");
+            return;
+        }
+        if (!email) {
+            toast.error("Please enter the user's email.");
+            return;
+        }
+        if (!role) {
+            toast.error("Please select a role.");
+            return;
+        }
+        if (!password || password.length < 8) {
+            toast.error("Password must be at least 8 characters.");
+            return;
+        }
+        if (password !== passwordConfirmation) {
+            toast.error("Password confirmation does not match.");
+            return;
+        }
+
+        setIsCreating(true);
+
+        try {
+            /**
+             * NOTE: Adjust endpoint/payload to match your backend.
+             * Suggested:
+             *   POST /admin/users
+             *   body: { name, email, role, password, password_confirmation, gender? }
+             */
+            const res = await apiFetch<any>("/admin/users", {
+                method: "POST",
+                body: JSON.stringify({
+                    name,
+                    email,
+                    role,
+                    password,
+                    password_confirmation: passwordConfirmation,
+                    ...(gender ? { gender } : {}),
+                }),
+            });
+
+            const created = extractUserFromCreateResponse(res);
+
+            if (created) {
+                // Prepend new user for instant feedback
+                setUsers((prev) => [created, ...prev]);
+            } else {
+                // Fallback: reload list if backend doesn't return created user
+                await fetchAll();
+            }
+
+            toast.success(res?.message ?? "User created successfully.");
+            setCreateOpen(false);
+            setSelectedUser(null);
+            resetCreateForm();
+        } catch (err) {
+            const msg =
+                err instanceof Error ? err.message : "Failed to create user.";
+            toast.error(msg);
+        } finally {
+            setIsCreating(false);
+        }
+    };
+
     return (
         <DashboardLayout
             title="Users"
-            description="View all users, check avatars, and update user roles."
+            description="View all users, check avatars, update user roles, and add new users."
         >
             <div className="space-y-6">
                 <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -320,7 +479,9 @@ const AdminUsersInner: React.FC = () => {
                                 </CardTitle>
                                 <CardDescription className="text-xs text-muted-foreground">
                                     Roles available:{" "}
-                                    {effectiveRoles.length > 0 ? effectiveRoles.join(", ") : "—"}
+                                    {effectiveRoles.length > 0
+                                        ? effectiveRoles.join(", ")
+                                        : "—"}
                                 </CardDescription>
                             </div>
 
@@ -335,21 +496,34 @@ const AdminUsersInner: React.FC = () => {
                                     />
                                 </div>
 
-                                <Button
-                                    type="button"
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={onRefresh}
-                                    disabled={isRefreshing || isLoading}
-                                    className="gap-2"
-                                >
-                                    {isRefreshing ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                    ) : (
-                                        <RefreshCcw className="h-4 w-4" />
-                                    )}
-                                    Refresh
-                                </Button>
+                                <div className="flex gap-2">
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        onClick={openCreateDialog}
+                                        className="gap-2"
+                                        disabled={isLoading}
+                                    >
+                                        <UserPlus className="h-4 w-4" />
+                                        Add user
+                                    </Button>
+
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={onRefresh}
+                                        disabled={isRefreshing || isLoading}
+                                        className="gap-2"
+                                    >
+                                        {isRefreshing ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                            <RefreshCcw className="h-4 w-4" />
+                                        )}
+                                        Refresh
+                                    </Button>
+                                </div>
                             </div>
                         </div>
 
@@ -360,7 +534,9 @@ const AdminUsersInner: React.FC = () => {
                                 {filteredUsers.length}
                             </span>{" "}
                             of{" "}
-                            <span className="font-medium text-foreground">{users.length}</span>{" "}
+                            <span className="font-medium text-foreground">
+                                {users.length}
+                            </span>{" "}
                             users
                         </div>
                     </CardHeader>
@@ -402,7 +578,8 @@ const AdminUsersInner: React.FC = () => {
                                                 const isUpdating = updatingIds.has(u.id);
 
                                                 const avatarUrl =
-                                                    typeof u.avatar_url === "string" && u.avatar_url.trim()
+                                                    typeof u.avatar_url === "string" &&
+                                                        u.avatar_url.trim()
                                                         ? u.avatar_url.trim()
                                                         : null;
 
@@ -417,7 +594,8 @@ const AdminUsersInner: React.FC = () => {
                                                     currentRole &&
                                                     !effectiveRoles.some(
                                                         (r) =>
-                                                            normalizeRole(r) === normalizeRole(currentRole),
+                                                            normalizeRole(r) ===
+                                                            normalizeRole(currentRole),
                                                     );
 
                                                 return (
@@ -510,6 +688,7 @@ const AdminUsersInner: React.FC = () => {
                     </CardContent>
                 </Card>
 
+                {/* View avatar dialog */}
                 <Dialog
                     open={avatarOpen}
                     onOpenChange={(open) => {
@@ -523,7 +702,8 @@ const AdminUsersInner: React.FC = () => {
                                 User Avatar
                             </DialogTitle>
                             <DialogDescription className="text-xs text-muted-foreground">
-                                {selectedUser?.name ?? "User"} • {selectedUser?.email ?? ""}
+                                {selectedUser?.name ?? "User"} •{" "}
+                                {selectedUser?.email ?? ""}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -542,10 +722,234 @@ const AdminUsersInner: React.FC = () => {
                                 )}
                             </div>
 
-                            <Button type="button" onClick={() => setAvatarOpen(false)} className="w-full">
+                            <Button
+                                type="button"
+                                onClick={() => setAvatarOpen(false)}
+                                className="w-full"
+                            >
                                 Close
                             </Button>
                         </div>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Add user dialog */}
+                <Dialog
+                    open={createOpen}
+                    onOpenChange={(open) => {
+                        setCreateOpen(open);
+                        if (!open) {
+                            setIsCreating(false);
+                            resetCreateForm();
+                        }
+                    }}
+                >
+                    <DialogContent className="max-w-lg">
+                        <DialogHeader>
+                            <DialogTitle className="text-sm font-semibold text-amber-900">
+                                Add new user
+                            </DialogTitle>
+                            <DialogDescription className="text-xs text-muted-foreground">
+                                Create an account and assign a role. (Endpoint expected:{" "}
+                                <span className="font-medium text-foreground">
+                                    POST /admin/users
+                                </span>
+                                )
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <form className="space-y-4" onSubmit={handleCreateUser}>
+                            <div className="space-y-2">
+                                <Label className="text-xs" htmlFor="create-name">
+                                    Full name
+                                </Label>
+                                <Input
+                                    id="create-name"
+                                    value={createForm.name}
+                                    onChange={(e) =>
+                                        setCreateForm((p) => ({ ...p, name: e.target.value }))
+                                    }
+                                    placeholder="Juan Dela Cruz"
+                                    className="h-9 text-sm"
+                                    autoComplete="name"
+                                    disabled={isCreating}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs" htmlFor="create-email">
+                                    Email
+                                </Label>
+                                <Input
+                                    id="create-email"
+                                    type="email"
+                                    value={createForm.email}
+                                    onChange={(e) =>
+                                        setCreateForm((p) => ({ ...p, email: e.target.value }))
+                                    }
+                                    placeholder="user@example.com"
+                                    className="h-9 text-sm"
+                                    autoComplete="email"
+                                    disabled={isCreating}
+                                />
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="create-role">
+                                        Role
+                                    </Label>
+                                    <select
+                                        id="create-role"
+                                        className="h-9 w-full rounded-md border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-60"
+                                        value={createForm.role}
+                                        onChange={(e) =>
+                                            setCreateForm((p) => ({ ...p, role: e.target.value }))
+                                        }
+                                        disabled={isCreating}
+                                    >
+                                        {effectiveRoles.map((r) => (
+                                            <option key={r} value={r}>
+                                                {r}
+                                            </option>
+                                        ))}
+                                    </select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="create-gender">
+                                        Gender (optional)
+                                    </Label>
+                                    <select
+                                        id="create-gender"
+                                        className="h-9 w-full rounded-md border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-60"
+                                        value={createForm.gender}
+                                        onChange={(e) =>
+                                            setCreateForm((p) => ({
+                                                ...p,
+                                                gender: e.target.value,
+                                            }))
+                                        }
+                                        disabled={isCreating}
+                                    >
+                                        <option value="">—</option>
+                                        <option value="male">Male</option>
+                                        <option value="female">Female</option>
+                                        <option value="nonbinary">Non-binary</option>
+                                        <option value="prefer-not-to-say">Prefer not to say</option>
+                                        <option value="other">Other</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="create-password">
+                                        Password
+                                    </Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="create-password"
+                                            type={showCreatePassword ? "text" : "password"}
+                                            value={createForm.password}
+                                            onChange={(e) =>
+                                                setCreateForm((p) => ({
+                                                    ...p,
+                                                    password: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="At least 8 characters"
+                                            className="h-9 pr-10 text-sm"
+                                            autoComplete="new-password"
+                                            disabled={isCreating}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
+                                            onClick={() =>
+                                                setShowCreatePassword((prev) => !prev)
+                                            }
+                                            aria-label={
+                                                showCreatePassword
+                                                    ? "Hide password"
+                                                    : "Show password"
+                                            }
+                                            disabled={isCreating}
+                                        >
+                                            {showCreatePassword ? (
+                                                <EyeOff className="h-4 w-4" />
+                                            ) : (
+                                                <Eye className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="create-password-confirm">
+                                        Confirm password
+                                    </Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="create-password-confirm"
+                                            type={showCreateConfirmPassword ? "text" : "password"}
+                                            value={createForm.password_confirmation}
+                                            onChange={(e) =>
+                                                setCreateForm((p) => ({
+                                                    ...p,
+                                                    password_confirmation: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="Re-enter password"
+                                            className="h-9 pr-10 text-sm"
+                                            autoComplete="new-password"
+                                            disabled={isCreating}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
+                                            onClick={() =>
+                                                setShowCreateConfirmPassword((prev) => !prev)
+                                            }
+                                            aria-label={
+                                                showCreateConfirmPassword
+                                                    ? "Hide password"
+                                                    : "Show password"
+                                            }
+                                            disabled={isCreating}
+                                        >
+                                            {showCreateConfirmPassword ? (
+                                                <EyeOff className="h-4 w-4" />
+                                            ) : (
+                                                <Eye className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2 pt-2 sm:flex-row sm:justify-end">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setCreateOpen(false)}
+                                    disabled={isCreating}
+                                >
+                                    Cancel
+                                </Button>
+
+                                <Button type="submit" disabled={isCreating}>
+                                    {isCreating ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Creating...
+                                        </>
+                                    ) : (
+                                        "Create user"
+                                    )}
+                                </Button>
+                            </div>
+                        </form>
                     </DialogContent>
                 </Dialog>
             </div>
