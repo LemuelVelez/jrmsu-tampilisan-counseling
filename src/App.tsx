@@ -8,8 +8,9 @@ import ResetPasswordPage from "./pages/auth/reset-password";
 import VerifyEmailPage from "./pages/auth/verify-email";
 import AuthCallbackPage from "./pages/auth/callback";
 import AdminOverview from "./pages/dashboard/admin/overview";
-import AdminUsersPage from "./pages/dashboard/admin/user"; // ✅ ADDED
+import AdminUsersPage from "./pages/dashboard/admin/user";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
+import CounselorIntake from "./pages/dashboard/counselor/intake"; // ✅ ADDED
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
@@ -94,22 +95,16 @@ function App() {
 
           {/* Dashboards by role */}
           <Route path="/dashboard/admin" element={<AdminOverview />} />
-          <Route path="/dashboard/admin/users" element={<AdminUsersPage />} /> {/* ✅ ADDED */}
+          <Route path="/dashboard/admin/users" element={<AdminUsersPage />} />
+
           <Route path="/dashboard/counselor" element={<CounselorOverview />} />
+          <Route path="/dashboard/counselor/intake" element={<CounselorIntake />} /> {/* ✅ ADDED */}
+
           <Route path="/dashboard/student" element={<StudentOverview />} />
           <Route path="/dashboard/student/intake" element={<StudentIntake />} />
-          <Route
-            path="/dashboard/student/messages"
-            element={<StudentMessages />}
-          />
-          <Route
-            path="/dashboard/student/evaluation"
-            element={<StudentEvaluation />}
-          />
-          <Route
-            path="/dashboard/student/settings"
-            element={<StudentSettings />}
-          />
+          <Route path="/dashboard/student/messages" element={<StudentMessages />} />
+          <Route path="/dashboard/student/evaluation" element={<StudentEvaluation />} />
+          <Route path="/dashboard/student/settings" element={<StudentSettings />} />
 
           {/* 404 */}
           <Route path="*" element={<NotFoundPage />} />
