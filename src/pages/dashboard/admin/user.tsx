@@ -2,14 +2,7 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
-import {
-    Loader2,
-    RefreshCcw,
-    Search,
-    Eye,
-    EyeOff,
-    UserPlus,
-} from "lucide-react";
+import { Loader2, RefreshCcw, Search, Eye, EyeOff, UserPlus } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -39,6 +32,13 @@ import {
     TableHeader,
     TableRow,
 } from "@/components/ui/table";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 import { AUTH_API_BASE_URL, type AuthenticatedUserDto } from "@/api/auth/route";
 import {
@@ -159,9 +159,7 @@ const FALLBACK_ROLES = ["admin", "counselor", "student"] as const;
  * Subscribe to global auth session (same approach as NavMain).
  */
 function useAuthSession(): AuthSession {
-    const [session, setSession] = React.useState<AuthSession>(() =>
-        getCurrentSession(),
-    );
+    const [session, setSession] = React.useState<AuthSession>(() => getCurrentSession());
 
     React.useEffect(() => {
         const unsubscribe = subscribeToSession((next) => setSession(next));
@@ -175,7 +173,7 @@ type CreateUserForm = {
     name: string;
     email: string;
     role: string;
-    gender: string;
+    gender: string; // keep as "" when not selected
     password: string;
     password_confirmation: string;
 };
@@ -229,9 +227,7 @@ const AdminUsersInner: React.FC = () => {
     React.useEffect(() => {
         setCreateForm((prev) => {
             const prevRoleNorm = normalizeRole(prev.role);
-            const inList = effectiveRoles.some(
-                (r) => normalizeRole(r) === prevRoleNorm,
-            );
+            const inList = effectiveRoles.some((r) => normalizeRole(r) === prevRoleNorm);
             if (inList) return prev;
 
             // Prefer student if present, else first role
@@ -245,10 +241,6 @@ const AdminUsersInner: React.FC = () => {
     }, [effectiveRoles]);
 
     const fetchAll = React.useCallback(async () => {
-        // NOTE: Adjust these endpoints to match your Laravel routes if needed.
-        // Suggested:
-        //   GET /admin/roles
-        //   GET /admin/users
         const [rolesRes, usersRes] = await Promise.all([
             apiFetch<RolesResponse>("/admin/roles", { method: "GET" }),
             apiFetch<UsersResponse>("/admin/users", { method: "GET" }),
@@ -266,8 +258,7 @@ const AdminUsersInner: React.FC = () => {
             try {
                 await fetchAll();
             } catch (err) {
-                const msg =
-                    err instanceof Error ? err.message : "Failed to load users.";
+                const msg = err instanceof Error ? err.message : "Failed to load users.";
                 toast.error(msg);
             } finally {
                 if (mounted) setIsLoading(false);
@@ -309,14 +300,9 @@ const AdminUsersInner: React.FC = () => {
         setAvatarOpen(true);
     };
 
-    const updateUserInState = (
-        id: string | number,
-        partial: Partial<AdminUser>,
-    ) => {
+    const updateUserInState = (id: string | number, partial: Partial<AdminUser>) => {
         setUsers((prev) =>
-            prev.map((u) =>
-                String(u.id) === String(id) ? { ...u, ...partial } : u,
-            ),
+            prev.map((u) => (String(u.id) === String(id) ? { ...u, ...partial } : u)),
         );
     };
 
@@ -332,9 +318,6 @@ const AdminUsersInner: React.FC = () => {
         setUpdatingIds((prev) => new Set(prev).add(userId));
 
         try {
-            // NOTE: Adjust endpoint/payload to match your backend.
-            // Suggested:
-            //   PATCH /admin/users/:id/role  body: { role: "counselor" }
             const res = await apiFetch<any>(`/admin/users/${userId}/role`, {
                 method: "PATCH",
                 body: JSON.stringify({ role: nextRole }),
@@ -354,8 +337,7 @@ const AdminUsersInner: React.FC = () => {
         } catch (err) {
             // Revert optimistic UI
             updateUserInState(userId, { role: prevRole });
-            const msg =
-                err instanceof Error ? err.message : "Failed to update role.";
+            const msg = err instanceof Error ? err.message : "Failed to update role.";
             toast.error(msg);
         } finally {
             setUpdatingIds((prev) => {
@@ -423,12 +405,6 @@ const AdminUsersInner: React.FC = () => {
         setIsCreating(true);
 
         try {
-            /**
-             * NOTE: Adjust endpoint/payload to match your backend.
-             * Suggested:
-             *   POST /admin/users
-             *   body: { name, email, role, password, password_confirmation, gender? }
-             */
             const res = await apiFetch<any>("/admin/users", {
                 method: "POST",
                 body: JSON.stringify({
@@ -444,10 +420,8 @@ const AdminUsersInner: React.FC = () => {
             const created = extractUserFromCreateResponse(res);
 
             if (created) {
-                // Prepend new user for instant feedback
                 setUsers((prev) => [created, ...prev]);
             } else {
-                // Fallback: reload list if backend doesn't return created user
                 await fetchAll();
             }
 
@@ -456,8 +430,7 @@ const AdminUsersInner: React.FC = () => {
             setSelectedUser(null);
             resetCreateForm();
         } catch (err) {
-            const msg =
-                err instanceof Error ? err.message : "Failed to create user.";
+            const msg = err instanceof Error ? err.message : "Failed to create user.";
             toast.error(msg);
         } finally {
             setIsCreating(false);
@@ -479,9 +452,7 @@ const AdminUsersInner: React.FC = () => {
                                 </CardTitle>
                                 <CardDescription className="text-xs text-muted-foreground">
                                     Roles available:{" "}
-                                    {effectiveRoles.length > 0
-                                        ? effectiveRoles.join(", ")
-                                        : "—"}
+                                    {effectiveRoles.length > 0 ? effectiveRoles.join(", ") : "—"}
                                 </CardDescription>
                             </div>
 
@@ -496,12 +467,13 @@ const AdminUsersInner: React.FC = () => {
                                     />
                                 </div>
 
-                                <div className="flex gap-2">
+                                {/* Mobile: stack buttons vertically. Desktop unchanged (sm:flex-row). */}
+                                <div className="flex flex-col gap-2 sm:flex-row">
                                     <Button
                                         type="button"
                                         size="sm"
                                         onClick={openCreateDialog}
-                                        className="gap-2"
+                                        className="w-full gap-2 sm:w-auto"
                                         disabled={isLoading}
                                     >
                                         <UserPlus className="h-4 w-4" />
@@ -514,7 +486,7 @@ const AdminUsersInner: React.FC = () => {
                                         variant="outline"
                                         onClick={onRefresh}
                                         disabled={isRefreshing || isLoading}
-                                        className="gap-2"
+                                        className="w-full gap-2 sm:w-auto"
                                     >
                                         {isRefreshing ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -534,9 +506,7 @@ const AdminUsersInner: React.FC = () => {
                                 {filteredUsers.length}
                             </span>{" "}
                             of{" "}
-                            <span className="font-medium text-foreground">
-                                {users.length}
-                            </span>{" "}
+                            <span className="font-medium text-foreground">{users.length}</span>{" "}
                             users
                         </div>
                     </CardHeader>
@@ -555,10 +525,7 @@ const AdminUsersInner: React.FC = () => {
                                             <TableHead className="w-[60px]">Avatar</TableHead>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Email</TableHead>
-                                            <TableHead className="w-[180px]">Role</TableHead>
-                                            <TableHead className="w-[140px] text-right">
-                                                View
-                                            </TableHead>
+                                            <TableHead className="w-[220px]">Role</TableHead>
                                         </TableRow>
                                     </TableHeader>
 
@@ -566,7 +533,7 @@ const AdminUsersInner: React.FC = () => {
                                         {filteredUsers.length === 0 ? (
                                             <TableRow>
                                                 <TableCell
-                                                    colSpan={5}
+                                                    colSpan={4}
                                                     className="py-10 text-center text-sm text-muted-foreground"
                                                 >
                                                     No users found.
@@ -588,14 +555,18 @@ const AdminUsersInner: React.FC = () => {
                                                     u.email ?? null,
                                                 );
 
-                                                const currentRole = String(u.role ?? "");
+                                                const currentRoleRaw = String(u.role ?? "").trim();
+                                                const currentRoleValue =
+                                                    currentRoleRaw.length > 0
+                                                        ? currentRoleRaw
+                                                        : undefined;
 
                                                 const roleNotInList =
-                                                    currentRole &&
+                                                    currentRoleRaw &&
                                                     !effectiveRoles.some(
                                                         (r) =>
                                                             normalizeRole(r) ===
-                                                            normalizeRole(currentRole),
+                                                            normalizeRole(currentRoleRaw),
                                                     );
 
                                                 return (
@@ -638,44 +609,35 @@ const AdminUsersInner: React.FC = () => {
 
                                                         <TableCell>
                                                             <div className="flex items-center gap-2">
-                                                                <select
-                                                                    className="h-9 w-full rounded-md border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-60"
-                                                                    value={currentRole}
-                                                                    disabled={isUpdating}
-                                                                    onChange={(e) =>
-                                                                        handleRoleChange(u, e.target.value)
+                                                                <Select
+                                                                    value={currentRoleValue}
+                                                                    onValueChange={(v) =>
+                                                                        handleRoleChange(u, v)
                                                                     }
+                                                                    disabled={isUpdating}
                                                                 >
-                                                                    {roleNotInList ? (
-                                                                        <option value={currentRole}>
-                                                                            {currentRole}
-                                                                        </option>
-                                                                    ) : null}
+                                                                    <SelectTrigger className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300">
+                                                                        <SelectValue placeholder="Select role" />
+                                                                    </SelectTrigger>
+                                                                    <SelectContent>
+                                                                        {roleNotInList ? (
+                                                                            <SelectItem value={currentRoleRaw}>
+                                                                                {currentRoleRaw}
+                                                                            </SelectItem>
+                                                                        ) : null}
 
-                                                                    {effectiveRoles.map((r) => (
-                                                                        <option key={r} value={r}>
-                                                                            {r}
-                                                                        </option>
-                                                                    ))}
-                                                                </select>
+                                                                        {effectiveRoles.map((r) => (
+                                                                            <SelectItem key={r} value={r}>
+                                                                                {r}
+                                                                            </SelectItem>
+                                                                        ))}
+                                                                    </SelectContent>
+                                                                </Select>
 
                                                                 {isUpdating ? (
                                                                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
                                                                 ) : null}
                                                             </div>
-                                                        </TableCell>
-
-                                                        <TableCell className="text-right">
-                                                            <Button
-                                                                type="button"
-                                                                size="sm"
-                                                                variant="outline"
-                                                                className="gap-2"
-                                                                onClick={() => openAvatarDialog(u)}
-                                                            >
-                                                                <Eye className="h-4 w-4" />
-                                                                View
-                                                            </Button>
                                                         </TableCell>
                                                     </TableRow>
                                                 );
@@ -688,7 +650,7 @@ const AdminUsersInner: React.FC = () => {
                     </CardContent>
                 </Card>
 
-                {/* View avatar dialog */}
+                {/* View avatar dialog (with vertical scrollbar) */}
                 <Dialog
                     open={avatarOpen}
                     onOpenChange={(open) => {
@@ -696,19 +658,19 @@ const AdminUsersInner: React.FC = () => {
                         if (!open) setSelectedUser(null);
                     }}
                 >
-                    <DialogContent className="max-w-md">
+                    {/* Mobile: add left/right breathing room via width calc. Desktop unchanged. */}
+                    <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-y-auto sm:w-full">
                         <DialogHeader>
                             <DialogTitle className="text-sm font-semibold text-amber-900">
                                 User Avatar
                             </DialogTitle>
                             <DialogDescription className="text-xs text-muted-foreground">
-                                {selectedUser?.name ?? "User"} •{" "}
-                                {selectedUser?.email ?? ""}
+                                {selectedUser?.name ?? "User"} • {selectedUser?.email ?? ""}
                             </DialogDescription>
                         </DialogHeader>
 
                         <div className="flex flex-col items-center gap-4">
-                            <div className="w-full overflow-hidden rounded-lg border bg-white">
+                            <div className="w-full max-h-[60vh] overflow-y-auto rounded-lg border bg-white pr-1">
                                 {selectedUser?.avatar_url ? (
                                     <img
                                         src={selectedUser.avatar_url}
@@ -744,17 +706,14 @@ const AdminUsersInner: React.FC = () => {
                         }
                     }}
                 >
-                    <DialogContent className="max-w-lg">
+                    {/* Mobile: add left/right breathing room via width calc. Desktop unchanged. */}
+                    <DialogContent className="w-[calc(100vw-2rem)] max-w-lg sm:w-full">
                         <DialogHeader>
                             <DialogTitle className="text-sm font-semibold text-amber-900">
                                 Add new user
                             </DialogTitle>
                             <DialogDescription className="text-xs text-muted-foreground">
-                                Create an account and assign a role. (Endpoint expected:{" "}
-                                <span className="font-medium text-foreground">
-                                    POST /admin/users
-                                </span>
-                                )
+                                Create an account and assign a role.
                             </DialogDescription>
                         </DialogHeader>
 
@@ -799,46 +758,63 @@ const AdminUsersInner: React.FC = () => {
                                     <Label className="text-xs" htmlFor="create-role">
                                         Role
                                     </Label>
-                                    <select
-                                        id="create-role"
-                                        className="h-9 w-full rounded-md border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-60"
+
+                                    <Select
                                         value={createForm.role}
-                                        onChange={(e) =>
-                                            setCreateForm((p) => ({ ...p, role: e.target.value }))
+                                        onValueChange={(v) =>
+                                            setCreateForm((p) => ({ ...p, role: v }))
                                         }
                                         disabled={isCreating}
                                     >
-                                        {effectiveRoles.map((r) => (
-                                            <option key={r} value={r}>
-                                                {r}
-                                            </option>
-                                        ))}
-                                    </select>
+                                        <SelectTrigger
+                                            id="create-role"
+                                            className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300"
+                                        >
+                                            <SelectValue placeholder="Select role" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {effectiveRoles.map((r) => (
+                                                <SelectItem key={r} value={r}>
+                                                    {r}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
                                 </div>
 
                                 <div className="space-y-2">
                                     <Label className="text-xs" htmlFor="create-gender">
                                         Gender (optional)
                                     </Label>
-                                    <select
-                                        id="create-gender"
-                                        className="h-9 w-full rounded-md border bg-white px-2 text-sm outline-none focus:ring-2 focus:ring-amber-300 disabled:opacity-60"
-                                        value={createForm.gender}
-                                        onChange={(e) =>
+
+                                    {/* Radix Select items can't use empty string value, so we map empty -> "none" */}
+                                    <Select
+                                        value={createForm.gender ? createForm.gender : "none"}
+                                        onValueChange={(v) =>
                                             setCreateForm((p) => ({
                                                 ...p,
-                                                gender: e.target.value,
+                                                gender: v === "none" ? "" : v,
                                             }))
                                         }
                                         disabled={isCreating}
                                     >
-                                        <option value="">—</option>
-                                        <option value="male">Male</option>
-                                        <option value="female">Female</option>
-                                        <option value="nonbinary">Non-binary</option>
-                                        <option value="prefer-not-to-say">Prefer not to say</option>
-                                        <option value="other">Other</option>
-                                    </select>
+                                        <SelectTrigger
+                                            id="create-gender"
+                                            className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300"
+                                        >
+                                            <SelectValue placeholder="—" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="none">—</SelectItem>
+                                            <SelectItem value="male">Male</SelectItem>
+                                            <SelectItem value="female">Female</SelectItem>
+                                            <SelectItem value="nonbinary">Non-binary</SelectItem>
+                                            <SelectItem value="prefer-not-to-say">
+                                                Prefer not to say
+                                            </SelectItem>
+                                            <SelectItem value="other">Other</SelectItem>
+                                        </SelectContent>
+                                    </Select>
                                 </div>
                             </div>
 
@@ -866,13 +842,9 @@ const AdminUsersInner: React.FC = () => {
                                         <button
                                             type="button"
                                             className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
-                                            onClick={() =>
-                                                setShowCreatePassword((prev) => !prev)
-                                            }
+                                            onClick={() => setShowCreatePassword((prev) => !prev)}
                                             aria-label={
-                                                showCreatePassword
-                                                    ? "Hide password"
-                                                    : "Show password"
+                                                showCreatePassword ? "Hide password" : "Show password"
                                             }
                                             disabled={isCreating}
                                         >
