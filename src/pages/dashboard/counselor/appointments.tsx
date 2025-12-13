@@ -15,6 +15,7 @@ import {
     Save,
     UserCircle2,
     X,
+    CheckCircle2,
 } from "lucide-react";
 
 import { Calendar } from "@/components/ui/calendar";
@@ -26,7 +27,6 @@ import type { IntakeRequestDto } from "@/api/intake/route";
 
 type TimeOption = { value: string; label: string };
 
-// 30-minute slots with AM/PM labels (same as student intake)
 const TIME_OPTIONS: TimeOption[] = [
     { value: "08:00 AM", label: "8:00 AM" },
     { value: "08:30 AM", label: "8:30 AM" },
@@ -60,6 +60,13 @@ const URGENCY_LABELS: Record<string, string> = {
     medium: "Soon (within 1–2 weeks)",
     high: "Urgent (as soon as possible)",
 };
+
+const STATUS_OPTIONS: { value: string; label: string }[] = [
+    { value: "pending", label: "Pending" },
+    { value: "scheduled", label: "Scheduled" },
+    { value: "completed", label: "Completed" },
+    { value: "cancelled", label: "Cancelled" },
+];
 
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
@@ -134,13 +141,10 @@ async function fetchCounselingRequests(): Promise<IntakeRequestDto[]> {
     return list as IntakeRequestDto[];
 }
 
-type UpdateSchedulePayload = {
-    // Send both “scheduled_*” and “preferred_*” so backend can accept either model.
+type CounselorUpdatePayload = {
+    status?: string;
     scheduled_date?: string;
     scheduled_time?: string;
-    preferred_date?: string;
-    preferred_time?: string;
-    status?: string;
 };
 
 async function updateAppointmentSchedule(
@@ -148,15 +152,32 @@ async function updateAppointmentSchedule(
     scheduledDate: string,
     scheduledTime: string,
 ): Promise<any> {
-    const payload: UpdateSchedulePayload = {
+    const payload: CounselorUpdatePayload = {
         scheduled_date: scheduledDate,
         scheduled_time: scheduledTime,
-        preferred_date: scheduledDate,
-        preferred_time: scheduledTime,
         status: "scheduled",
     };
 
-    // Try “appointments” first, then fall back to “intake/requests”.
+    try {
+        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+        });
+    } catch (err) {
+        const e = err as any;
+        if (e?.status === 404) {
+            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            });
+        }
+        throw err;
+    }
+}
+
+async function updateAppointmentStatus(requestId: number | string, status: string): Promise<any> {
+    const payload: CounselorUpdatePayload = { status };
+
     try {
         return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
             method: "PATCH",
@@ -243,12 +264,12 @@ function statusClassName(raw?: string | null): string {
     return "border-slate-200 bg-slate-50 text-slate-800";
 }
 
-// If your backend stores an explicit scheduled_* pair, we’ll use it; otherwise fall back to preferred_*.
-function getScheduledDate(req: any): string | null {
-    return (req?.scheduled_date as string | null) ?? (req?.appointment_date as string | null) ?? req?.preferred_date ?? null;
+// Final schedule should come only from scheduled_* (not preferred_*)
+function getFinalDate(req: any): string | null {
+    return (req?.scheduled_date as string | null) ?? null;
 }
-function getScheduledTime(req: any): string | null {
-    return (req?.scheduled_time as string | null) ?? (req?.appointment_time as string | null) ?? req?.preferred_time ?? null;
+function getFinalTime(req: any): string | null {
+    return (req?.scheduled_time as string | null) ?? null;
 }
 
 const CounselorAppointments: React.FC = () => {
@@ -261,6 +282,9 @@ const CounselorAppointments: React.FC = () => {
     const [editTime, setEditTime] = React.useState<string>("");
     const [isSaving, setIsSaving] = React.useState(false);
 
+    const [statusDraftById, setStatusDraftById] = React.useState<Record<string, string>>({});
+    const [statusSavingId, setStatusSavingId] = React.useState<number | string | null>(null);
+
     const reload = React.useCallback(async () => {
         setIsLoading(true);
         setError(null);
@@ -272,7 +296,19 @@ const CounselorAppointments: React.FC = () => {
                 const bCreated = b.created_at ? Date.parse(b.created_at) : 0;
                 return bCreated - aCreated;
             });
+
             setRequests(sorted);
+
+            setStatusDraftById((prev) => {
+                const next = { ...prev };
+                for (const r of sorted) {
+                    const key = String(r.id);
+                    if (next[key] === undefined) {
+                        next[key] = String(r.status ?? "pending").toLowerCase() || "pending";
+                    }
+                }
+                return next;
+            });
         } catch (err) {
             const message = err instanceof Error ? err.message : "Failed to load appointments.";
             setError(message);
@@ -289,8 +325,8 @@ const CounselorAppointments: React.FC = () => {
     const startEdit = (req: IntakeRequestDto) => {
         setEditingId(req.id);
 
-        const existingDateStr = getScheduledDate(req);
-        const existingTimeStr = getScheduledTime(req);
+        const existingDateStr = getFinalDate(req);
+        const existingTimeStr = getFinalTime(req);
 
         if (existingDateStr) {
             try {
@@ -327,7 +363,7 @@ const CounselorAppointments: React.FC = () => {
         setIsSaving(true);
         try {
             await updateAppointmentSchedule(req.id, scheduledDate, scheduledTime);
-            toast.success("Appointment schedule updated.");
+            toast.success("Final schedule saved (preferred schedule unchanged).");
             cancelEdit();
             void reload();
         } catch (err) {
@@ -338,7 +374,6 @@ const CounselorAppointments: React.FC = () => {
         }
     };
 
-    // renamed from useStudentPreferred -> applyStudentPreferred
     const applyStudentPreferred = (req: IntakeRequestDto) => {
         const d = req.preferred_date;
         const t = req.preferred_time;
@@ -353,20 +388,40 @@ const CounselorAppointments: React.FC = () => {
         if (t) setEditTime(String(t));
     };
 
+    const handleUpdateStatus = async (req: IntakeRequestDto) => {
+        const draft = statusDraftById[String(req.id)] ?? String(req.status ?? "pending").toLowerCase();
+        const current = String(req.status ?? "pending").toLowerCase();
+
+        if (!draft || draft === current) {
+            toast.message("No status change to update.");
+            return;
+        }
+
+        setStatusSavingId(req.id);
+        try {
+            await updateAppointmentStatus(req.id, draft);
+            toast.success(`Status updated to ${draft}.`);
+            void reload();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to update status.";
+            toast.error(message);
+        } finally {
+            setStatusSavingId(null);
+        }
+    };
+
     return (
         <DashboardLayout
             title="Appointments"
-            description="Counseling requests are treated as appointments. Schedule or reschedule based on your availability."
+            description="Preferred schedule stays as the student’s request. Final schedule is set by the counselor. Update status so students know their request is being handled."
         >
             <div className="flex w-full justify-center">
                 <div className="w-full max-w-5xl space-y-4">
-                    {/* Top controls */}
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Appointments</p>
                             <p className="text-[0.7rem] text-amber-900/80">
-                                Review incoming requests and set the final schedule. Use “Schedule / Reschedule”
-                                to adjust the appointment date/time.
+                                Preferred = student request. Final = counselor-confirmed schedule.
                             </p>
                         </div>
 
@@ -400,8 +455,7 @@ const CounselorAppointments: React.FC = () => {
                                 Counseling appointments
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
-                                Shows student requests, preferred schedule, and current status. Set the final
-                                schedule when you’re available.
+                                Set the final schedule and update status (Pending/Scheduled/Completed/Cancelled). Students will see the status changes.
                             </p>
                         </CardHeader>
 
@@ -426,8 +480,6 @@ const CounselorAppointments: React.FC = () => {
                             {!isLoading && requests.length === 0 && !error && (
                                 <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-6 text-center text-xs text-muted-foreground">
                                     No counseling requests/appointments yet.
-                                    <br />
-                                    New student requests will appear here automatically.
                                 </div>
                             )}
 
@@ -442,12 +494,16 @@ const CounselorAppointments: React.FC = () => {
                                         const preferredDate = formatDate(req.preferred_date ?? undefined);
                                         const preferredTime = req.preferred_time ? String(req.preferred_time) : "—";
 
-                                        const finalDateStr = getScheduledDate(req);
-                                        const finalTimeStr = getScheduledTime(req);
+                                        const finalDateStr = getFinalDate(req);
+                                        const finalTimeStr = getFinalTime(req);
                                         const finalDate = formatDate(finalDateStr ?? undefined);
                                         const finalTime = finalTimeStr ? String(finalTimeStr) : "—";
 
                                         const isEditing = editingId === req.id;
+
+                                        const reqStatus = String(req.status ?? "pending").toLowerCase();
+                                        const draftStatus = statusDraftById[String(req.id)] ?? reqStatus;
+                                        const statusIsSaving = statusSavingId === req.id;
 
                                         return (
                                             <div
@@ -455,7 +511,6 @@ const CounselorAppointments: React.FC = () => {
                                                 className="rounded-md border border-amber-50 bg-amber-50/40 px-3 py-2.5 text-xs"
                                             >
                                                 <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                                                    {/* Left */}
                                                     <div className="space-y-1">
                                                         <div className="flex items-center gap-1.5 text-[0.8rem] font-semibold text-amber-900">
                                                             <UserCircle2 className="h-3.5 w-3.5 text-amber-700" />
@@ -497,7 +552,6 @@ const CounselorAppointments: React.FC = () => {
                                                         )}
                                                     </div>
 
-                                                    {/* Right */}
                                                     <div className="flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:items-end">
                                                         <div className="flex items-center gap-1.5 text-amber-900">
                                                             <CalendarClock className="h-3.5 w-3.5" />
@@ -518,45 +572,90 @@ const CounselorAppointments: React.FC = () => {
 
                                                         <div className="text-[0.65rem] text-muted-foreground">Requested: {created}</div>
 
-                                                        <div className="mt-1 flex flex-wrap gap-2 sm:justify-end">
-                                                            {!isEditing ? (
+                                                        <div className="mt-2 flex w-full flex-col gap-2 sm:items-end">
+                                                            <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
+                                                                <div className="w-full sm:w-[170px]">
+                                                                    <Select
+                                                                        value={draftStatus}
+                                                                        onValueChange={(value) =>
+                                                                            setStatusDraftById((prev) => ({
+                                                                                ...prev,
+                                                                                [String(req.id)]: value,
+                                                                            }))
+                                                                        }
+                                                                        disabled={statusIsSaving}
+                                                                    >
+                                                                        <SelectTrigger className="h-8 w-full bg-white/80 text-[0.7rem]">
+                                                                            <SelectValue placeholder="Set status" />
+                                                                        </SelectTrigger>
+                                                                        <SelectContent>
+                                                                            {STATUS_OPTIONS.map((opt) => (
+                                                                                <SelectItem key={opt.value} value={opt.value}>
+                                                                                    {opt.label}
+                                                                                </SelectItem>
+                                                                            ))}
+                                                                        </SelectContent>
+                                                                    </Select>
+                                                                </div>
+
                                                                 <Button
                                                                     type="button"
                                                                     size="sm"
                                                                     variant="outline"
                                                                     className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
-                                                                    onClick={() => startEdit(req)}
+                                                                    onClick={() => void handleUpdateStatus(req)}
+                                                                    disabled={statusIsSaving || (draftStatus ?? "") === reqStatus}
                                                                 >
-                                                                    <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                                                                    {String(req.status ?? "").toLowerCase() === "scheduled"
-                                                                        ? "Reschedule"
-                                                                        : "Schedule"}
+                                                                    {statusIsSaving ? (
+                                                                        <>
+                                                                            <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                                                            Updating…
+                                                                        </>
+                                                                    ) : (
+                                                                        <>
+                                                                            <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                            Update status
+                                                                        </>
+                                                                    )}
                                                                 </Button>
-                                                            ) : (
-                                                                <Button
-                                                                    type="button"
-                                                                    size="sm"
-                                                                    variant="outline"
-                                                                    className="h-8 border-slate-200 bg-white/80 text-[0.7rem] text-slate-800 hover:bg-slate-50"
-                                                                    onClick={cancelEdit}
-                                                                    disabled={isSaving}
-                                                                >
-                                                                    <X className="mr-1.5 h-3.5 w-3.5" />
-                                                                    Cancel
-                                                                </Button>
-                                                            )}
+                                                            </div>
+
+                                                            <div className="mt-1 flex flex-wrap gap-2 sm:justify-end">
+                                                                {!isEditing ? (
+                                                                    <Button
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
+                                                                        onClick={() => startEdit(req)}
+                                                                    >
+                                                                        <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                                                                        {reqStatus === "scheduled" ? "Reschedule" : "Schedule"}
+                                                                    </Button>
+                                                                ) : (
+                                                                    <Button
+                                                                        type="button"
+                                                                        size="sm"
+                                                                        variant="outline"
+                                                                        className="h-8 border-slate-200 bg-white/80 text-[0.7rem] text-slate-800 hover:bg-slate-50"
+                                                                        onClick={cancelEdit}
+                                                                        disabled={isSaving}
+                                                                    >
+                                                                        <X className="mr-1.5 h-3.5 w-3.5" />
+                                                                        Cancel
+                                                                    </Button>
+                                                                )}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
 
-                                                {/* Inline editor */}
                                                 {isEditing && (
                                                     <div className="mt-3 rounded-md border border-amber-100 bg-white/70 p-3">
                                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                                             <div className="grid w-full gap-3 sm:grid-cols-2">
-                                                                {/* Date */}
                                                                 <div className="space-y-1.5">
-                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Appointment date</p>
+                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Final date</p>
                                                                     <Popover>
                                                                         <PopoverTrigger asChild>
                                                                             <Button
@@ -574,16 +673,15 @@ const CounselorAppointments: React.FC = () => {
                                                                             <Calendar
                                                                                 mode="single"
                                                                                 selected={editDate}
-                                                                                onSelect={(date) => setEditDate(date ?? undefined)}
+                                                                                onSelect={(d) => setEditDate(d ?? undefined)}
                                                                                 initialFocus
                                                                             />
                                                                         </PopoverContent>
                                                                     </Popover>
                                                                 </div>
 
-                                                                {/* Time */}
                                                                 <div className="space-y-1.5">
-                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Appointment time</p>
+                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Final time</p>
                                                                     <Select value={editTime} onValueChange={setEditTime} disabled={isSaving}>
                                                                         <SelectTrigger className="h-9 w-full text-left text-[0.75rem]">
                                                                             <SelectValue placeholder="Select time" />
@@ -626,15 +724,10 @@ const CounselorAppointments: React.FC = () => {
                                                                     ) : (
                                                                         <>
                                                                             <Save className="mr-1.5 h-3.5 w-3.5" />
-                                                                            Save schedule
+                                                                            Save final schedule
                                                                         </>
                                                                     )}
                                                                 </Button>
-
-                                                                <p className="text-[0.65rem] text-muted-foreground sm:text-right">
-                                                                    Set the final schedule based on your availability. If the server
-                                                                    rejects the slot (conflict/unavailable), you’ll see the error.
-                                                                </p>
                                                             </div>
                                                         </div>
                                                     </div>

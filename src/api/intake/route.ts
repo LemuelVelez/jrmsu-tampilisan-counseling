@@ -18,8 +18,15 @@ export interface IntakeRequestDto {
     // Core scheduling + status
     concern_type: string | null;
     urgency: "low" | "medium" | "high" | string | null;
+
+    // Student preference
     preferred_date: string | null; // ISO date string (YYYY-MM-DD)
     preferred_time: string | null; // e.g. "14:30" or "8:00 AM"
+
+    // Counselor final schedule ✅
+    scheduled_date?: string | null; // ISO date string (YYYY-MM-DD)
+    scheduled_time?: string | null; // e.g. "8:00 AM"
+
     details: string;
     status: string;
 
@@ -65,7 +72,6 @@ export interface IntakeAssessmentDto {
  * Payload for creating a new intake request (Step 4 only).
  */
 export interface CreateIntakeRequestPayload {
-    // Core required fields
     concern_type: string;
     urgency: "low" | "medium" | "high";
     preferred_date: string;
@@ -77,10 +83,8 @@ export interface CreateIntakeRequestPayload {
  * Payload for creating a new assessment record (Steps 1–3).
  */
 export interface CreateIntakeAssessmentPayload {
-    // Consent (required on backend)
     consent: boolean;
 
-    // Optional demographic + questionnaire fields
     student_name?: string;
     age?: number;
     gender?: string;
@@ -124,19 +128,14 @@ export interface IntakeApiError extends Error {
 
 function resolveIntakeApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error(
-            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
-        );
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
 
     const trimmedPath = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
-async function intakeApiFetch<T>(
-    path: string,
-    init: RequestInit = {},
-): Promise<T> {
+async function intakeApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveIntakeApiUrl(path);
 
     const response = await fetch(url, {
@@ -184,11 +183,6 @@ async function intakeApiFetch<T>(
     return data as T;
 }
 
-/**
- * Create a new counseling intake request (Step 4).
- *
- * POST /student/intake
- */
 export async function createIntakeRequestApi(
     payload: CreateIntakeRequestPayload,
 ): Promise<CreateIntakeRequestResponseDto> {
@@ -198,33 +192,17 @@ export async function createIntakeRequestApi(
     });
 }
 
-/**
- * Create a new assessment record (Steps 1–3).
- *
- * POST /student/intake/assessment
- */
 export async function createIntakeAssessmentApi(
     payload: CreateIntakeAssessmentPayload,
 ): Promise<CreateIntakeAssessmentResponseDto> {
-    return intakeApiFetch<CreateIntakeAssessmentResponseDto>(
-        "/student/intake/assessment",
-        {
-            method: "POST",
-            body: JSON.stringify(payload),
-        },
-    );
+    return intakeApiFetch<CreateIntakeAssessmentResponseDto>("/student/intake/assessment", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
 }
 
-/**
- * Fetch all assessment records (Steps 1–3) for the current student.
- *
- * GET /student/intake/assessments
- */
 export async function getStudentAssessmentsApi(): Promise<GetStudentAssessmentsResponseDto> {
-    return intakeApiFetch<GetStudentAssessmentsResponseDto>(
-        "/student/intake/assessments",
-        {
-            method: "GET",
-        },
-    );
+    return intakeApiFetch<GetStudentAssessmentsResponseDto>("/student/intake/assessments", {
+        method: "GET",
+    });
 }
