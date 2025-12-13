@@ -6,7 +6,24 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
-import { AlertCircle, ClipboardList as ClipboardListIcon, Loader2, UserCircle2 } from "lucide-react";
+import {
+    AlertCircle,
+    ClipboardList as ClipboardListIcon,
+    FileDown,
+    Loader2,
+    UserCircle2,
+} from "lucide-react";
+
+import {
+    Dialog,
+    DialogContent,
+    DialogHeader,
+    DialogTitle,
+    DialogDescription,
+    DialogFooter,
+} from "@/components/ui/dialog";
+
+import { jsPDF } from "jspdf";
 
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
 import type { IntakeAssessmentDto, MentalFrequencyApi } from "@/api/intake/route";
@@ -16,6 +33,13 @@ const FREQUENCY_SCORES: Record<MentalFrequencyApi, number> = {
     several_days: 1,
     more_than_half: 2,
     nearly_every_day: 3,
+};
+
+const MENTAL_FREQUENCY_LABELS: Record<MentalFrequencyApi, string> = {
+    not_at_all: "Not at all",
+    several_days: "Several days",
+    more_than_half: "More than half the days",
+    nearly_every_day: "Nearly every day",
 };
 
 const MH_KEYS: (keyof IntakeAssessmentDto)[] = [
@@ -30,9 +54,25 @@ const MH_KEYS: (keyof IntakeAssessmentDto)[] = [
     "mh_self_harm",
 ];
 
+const MH_QUESTIONS: Record<(typeof MH_KEYS)[number], string> = {
+    mh_little_interest: "Little interest or pleasure in doing things",
+    mh_feeling_down: "Feeling down, depressed, or hopeless",
+    mh_sleep: "Trouble falling/staying asleep, or sleeping too much",
+    mh_energy: "Feeling tired or having little energy",
+    mh_appetite: "Poor appetite or overeating",
+    mh_self_esteem:
+        "Feeling bad about yourself — or that you are a failure or have let yourself or your family down",
+    mh_concentration:
+        "Trouble concentrating on things (e.g., reading or watching television)",
+    mh_motor: "Moving/speaking slowly, or the opposite — fidgety/restless",
+    mh_self_harm: "Thoughts that you would be better off dead or of hurting yourself",
+};
+
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
+        );
     }
     const trimmed = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmed}`;
@@ -73,7 +113,10 @@ async function counselorIntakeFetch<T>(path: string): Promise<T> {
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
-        const error = new Error(message) as Error & { status?: number; data?: unknown };
+        const error = new Error(message) as Error & {
+            status?: number;
+            data?: unknown;
+        };
         error.status = response.status;
         error.data = body ?? text;
         throw error;
@@ -145,7 +188,9 @@ function formatLivingSituation(raw?: string | null, other?: string | null): stri
     return raw;
 }
 
-function calculatePhqScore(assessment: IntakeAssessmentDto): { score: number; answered: number } {
+function calculatePhqScore(
+    assessment: IntakeAssessmentDto,
+): { score: number; answered: number } {
     let score = 0;
     let answered = 0;
 
@@ -169,10 +214,288 @@ function phqSeverityLabel(score: number): string {
     return "Severe";
 }
 
+function prettyFrequency(value?: MentalFrequencyApi | null): string {
+    if (!value) return "—";
+    return MENTAL_FREQUENCY_LABELS[value] ?? String(value);
+}
+
+function sanitizeFilename(name: string): string {
+    return name
+        .replace(/[\\/:*?"<>|]+/g, "")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, 90);
+}
+
+/**
+ * ✅ One-page PDF generator (compact layout)
+ * - Fixed row heights
+ * - Question wraps to max 2 lines (ellipsis)
+ * - No multi-page addPage()
+ */
+function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
+    try {
+        const studentName = getStudentDisplayName(assessment);
+        const submitted = formatDateTime(assessment.created_at);
+        const { score, answered } = calculatePhqScore(assessment);
+        const severity = phqSeverityLabel(score);
+
+        const doc = new jsPDF({ unit: "pt", format: "a4", compress: true });
+
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+
+        const margin = 32;
+
+        const COLORS = {
+            ink: [17, 24, 39] as [number, number, number],
+            muted: [75, 85, 99] as [number, number, number],
+            border: [229, 231, 235] as [number, number, number],
+            header: [245, 158, 11] as [number, number, number],
+            headerText: [255, 255, 255] as [number, number, number],
+            soft: [249, 250, 251] as [number, number, number],
+            zebra: [255, 251, 235] as [number, number, number],
+            brand: [180, 83, 9] as [number, number, number],
+            brandLight: [255, 247, 237] as [number, number, number],
+        };
+
+        const cursor = { y: 0 };
+
+        const wrapMaxLines = (text: string, maxWidth: number, maxLines: number) => {
+            const lines = doc.splitTextToSize(text, maxWidth) as string[];
+            if (lines.length <= maxLines) return lines;
+
+            const truncated = lines.slice(0, maxLines);
+            const last = truncated[maxLines - 1] ?? "";
+            const ellipsis = "…";
+
+            let out = last;
+            while (out.length > 0 && doc.getTextWidth(out + ellipsis) > maxWidth) {
+                out = out.slice(0, -1);
+            }
+            truncated[maxLines - 1] = (out || last).trimEnd() + ellipsis;
+            return truncated;
+        };
+
+        // Header
+        const headerH = 46;
+        doc.setFillColor(...COLORS.header);
+        doc.rect(0, 0, pageWidth, headerH, "F");
+
+        doc.setTextColor(...COLORS.headerText);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text("JRMSU Guidance & Counseling Office", margin, 22);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text("Mental health needs assessment (Steps 1–3)", margin, 38);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text("CONFIDENTIAL", pageWidth - margin, 22, { align: "right" });
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.text(`Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`, pageWidth - margin, 38, {
+            align: "right",
+        });
+
+        doc.setTextColor(...COLORS.ink);
+        cursor.y = headerH + 16;
+
+        const sectionTitle = (title: string) => {
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(9);
+            doc.setTextColor(...COLORS.brand);
+            doc.text(title.toUpperCase(), margin, cursor.y);
+            cursor.y += 10;
+
+            doc.setDrawColor(...COLORS.border);
+            doc.line(margin, cursor.y, pageWidth - margin, cursor.y);
+            cursor.y += 10;
+
+            doc.setTextColor(...COLORS.ink);
+        };
+
+        const cardW = pageWidth - margin * 2;
+
+        const drawCard = (y: number, h: number) => {
+            doc.setFillColor(...COLORS.soft);
+            doc.setDrawColor(...COLORS.border);
+            doc.roundedRect(margin, y, cardW, h, 8, 8, "FD");
+        };
+
+        const kv = (label: string, value: string, x: number, y: number) => {
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(8);
+            doc.setTextColor(...COLORS.muted);
+            doc.text(label, x, y);
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(9);
+            doc.setTextColor(...COLORS.ink);
+            const lines = wrapMaxLines(value, (pageWidth - margin * 2) / 2 - 26, 2);
+            doc.text(lines, x, y + 12);
+        };
+
+        // Student info
+        sectionTitle("Student information");
+
+        const studentCardY = cursor.y;
+        const studentCardH = 72;
+        drawCard(studentCardY, studentCardH);
+
+        const leftX = margin + 14;
+        const rightX = margin + cardW / 2 + 6;
+        const topY = studentCardY + 16;
+
+        kv("Student", studentName, leftX, topY);
+        kv("Submitted", submitted, rightX, topY);
+
+        kv("Consent", assessment.consent ? "Yes (consented)" : "No consent on record", leftX, topY + 34);
+        kv("Score", `${score} / 27  ·  ${answered} of 9 answered`, rightX, topY + 34);
+
+        // ✅ Severity pill INSIDE card
+        const badgeText = `Severity: ${severity}`;
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(8);
+        const badgeW = doc.getTextWidth(badgeText) + 16;
+        const badgeH = 16;
+
+        const badgeX = margin + cardW - badgeW - 14;
+        const badgeY = studentCardY + 10;
+
+        doc.setFillColor(...COLORS.brand);
+        doc.setTextColor(...COLORS.headerText);
+        doc.roundedRect(badgeX, badgeY, badgeW, badgeH, 8, 8, "F");
+        doc.text(badgeText, badgeX + 8, badgeY + 11);
+
+        doc.setTextColor(...COLORS.ink);
+        cursor.y = studentCardY + studentCardH + 14;
+
+        // Demographics
+        sectionTitle("Demographic snapshot");
+
+        const demoCardY = cursor.y;
+        const demoCardH = 70;
+        drawCard(demoCardY, demoCardH);
+
+        const demoY = demoCardY + 16;
+
+        const ageVal = typeof assessment.age === "number" ? String(assessment.age) : "—";
+        const genderVal = formatGender(assessment.gender ?? undefined);
+        const occupationVal = assessment.occupation?.trim() || "—";
+        const livingVal = formatLivingSituation(
+            assessment.living_situation ?? undefined,
+            assessment.living_situation_other ?? undefined,
+        );
+
+        kv("Age", ageVal, leftX, demoY);
+        kv("Gender", genderVal, rightX, demoY);
+        kv("Occupation", occupationVal, leftX, demoY + 34);
+        kv("Living situation", livingVal, rightX, demoY + 34);
+
+        cursor.y = demoCardY + demoCardH + 14;
+
+        // Responses
+        sectionTitle("Questionnaire responses");
+
+        const tableLeft = margin;
+        const tableWidth = pageWidth - margin * 2;
+
+        const colAnswerW = 160;
+        const colQuestionW = tableWidth - colAnswerW;
+
+        const th = 22;
+        doc.setFillColor(...COLORS.header);
+        doc.roundedRect(tableLeft, cursor.y, tableWidth, th, 8, 8, "F");
+        doc.setTextColor(...COLORS.headerText);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text("Question", tableLeft + 12, cursor.y + 15);
+        doc.text("Answer", tableLeft + tableWidth - 12, cursor.y + 15, { align: "right" });
+        doc.setTextColor(...COLORS.ink);
+
+        cursor.y += th;
+
+        const rowH = 30;
+        const padX = 12;
+
+        for (let i = 0; i < MH_KEYS.length; i += 1) {
+            const key = MH_KEYS[i];
+            const q = MH_QUESTIONS[key];
+            const a = prettyFrequency(assessment[key] as MentalFrequencyApi | null | undefined);
+
+            if (i % 2 === 0) {
+                doc.setFillColor(...COLORS.zebra);
+                doc.rect(tableLeft, cursor.y, tableWidth, rowH, "F");
+            }
+
+            doc.setDrawColor(...COLORS.border);
+            doc.rect(tableLeft, cursor.y, tableWidth, rowH, "S");
+            doc.line(tableLeft + colQuestionW, cursor.y, tableLeft + colQuestionW, cursor.y + rowH);
+
+            doc.setFont("helvetica", "normal");
+            doc.setFontSize(8.6);
+            doc.setTextColor(...COLORS.muted);
+            const qLines = wrapMaxLines(q, colQuestionW - padX * 2, 2);
+            doc.text(qLines, tableLeft + padX, cursor.y + 12);
+
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(9);
+            doc.setTextColor(...COLORS.ink);
+            doc.text(a, tableLeft + tableWidth - padX, cursor.y + 18, { align: "right" });
+
+            cursor.y += rowH;
+        }
+
+        cursor.y += 10;
+
+        const noteH = 44;
+        doc.setFillColor(...COLORS.brandLight);
+        doc.setDrawColor(...COLORS.border);
+        doc.roundedRect(margin, cursor.y, cardW, noteH, 8, 8, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.setTextColor(...COLORS.brand);
+        doc.text("Important note", margin + 12, cursor.y + 16);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(...COLORS.muted);
+        const note =
+            "PHQ-9 style scoring for triage only; not a diagnosis. Handle as confidential.";
+        doc.text(wrapMaxLines(note, cardW - 24, 2), margin + 12, cursor.y + 30);
+
+        doc.setDrawColor(...COLORS.border);
+        doc.line(margin, pageHeight - 34, pageWidth - margin, pageHeight - 34);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(8);
+        doc.setTextColor(...COLORS.muted);
+        doc.text("JRMSU Guidance & Counseling Office • Confidential", margin, pageHeight - 18);
+        doc.text("Page 1 of 1", pageWidth - margin, pageHeight - 18, { align: "right" });
+
+        const fileName = sanitizeFilename(
+            `assessment-${studentName}-${(assessment.created_at ?? "submitted").toString().slice(0, 10)}.pdf`,
+        );
+
+        doc.save(fileName);
+    } catch {
+        toast.error("Failed to generate PDF. Please try again.");
+    }
+}
+
 const CounselorIntake: React.FC = () => {
     const [assessments, setAssessments] = React.useState<IntakeAssessmentDto[]>([]);
     const [isLoadingAssessments, setIsLoadingAssessments] = React.useState(false);
     const [assessmentsError, setAssessmentsError] = React.useState<string | null>(null);
+
+    const [isDialogOpen, setIsDialogOpen] = React.useState(false);
+    const [selectedAssessment, setSelectedAssessment] =
+        React.useState<IntakeAssessmentDto | null>(null);
 
     const reloadAssessments = React.useCallback(async () => {
         setIsLoadingAssessments(true);
@@ -200,6 +523,25 @@ const CounselorIntake: React.FC = () => {
         void reloadAssessments();
     }, [reloadAssessments]);
 
+    const closeAssessmentDialog = () => {
+        setIsDialogOpen(false);
+        setSelectedAssessment(null);
+    };
+
+    const dialogStudentName = selectedAssessment
+        ? getStudentDisplayName(selectedAssessment)
+        : "Assessment";
+    const dialogSubmitted = selectedAssessment
+        ? formatDateTime(selectedAssessment.created_at)
+        : "—";
+
+    const dialogScore = selectedAssessment
+        ? calculatePhqScore(selectedAssessment)
+        : { score: 0, answered: 0 };
+    const dialogSeverity = selectedAssessment
+        ? phqSeverityLabel(dialogScore.score)
+        : "—";
+
     return (
         <DashboardLayout
             title="Intake"
@@ -207,14 +549,16 @@ const CounselorIntake: React.FC = () => {
         >
             <div className="flex w-full justify-center">
                 <div className="w-full max-w-5xl space-y-4">
-                    {/* Top controls */}
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Intake (Assessments)</p>
                             <p className="text-[0.7rem] text-amber-900/80">
                                 Counseling requests are now handled as{" "}
                                 <span className="font-medium">appointments</span>. Go to{" "}
-                                <Link to="/dashboard/counselor/appointments" className="font-semibold underline">
+                                <Link
+                                    to="/dashboard/counselor/appointments"
+                                    className="font-semibold underline"
+                                >
                                     Appointments
                                 </Link>{" "}
                                 to schedule or reschedule.
@@ -248,7 +592,6 @@ const CounselorIntake: React.FC = () => {
                         </div>
                     </div>
 
-                    {/* ASSESSMENTS */}
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-1">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold text-amber-900">
@@ -302,7 +645,6 @@ const CounselorIntake: React.FC = () => {
                                                 key={assessment.id}
                                                 className="flex flex-col gap-2 rounded-md border border-amber-50 bg-amber-50/40 px-3 py-2.5 text-xs sm:flex-row sm:items-start sm:justify-between"
                                             >
-                                                {/* Left – student + demographics */}
                                                 <div className="space-y-1">
                                                     <div className="flex flex-wrap items-center gap-1.5 text-[0.8rem] font-semibold text-amber-900">
                                                         <UserCircle2 className="h-3.5 w-3.5 text-amber-700" />
@@ -343,8 +685,7 @@ const CounselorIntake: React.FC = () => {
                                                     <p className="text-[0.65rem] text-muted-foreground">Submitted: {created}</p>
                                                 </div>
 
-                                                {/* Right – MH summary */}
-                                                <div className="mt-1 flex flex-col items-start gap-1 text-[0.7rem] text-muted-foreground sm:items-end">
+                                                <div className="mt-1 flex flex-col items-start gap-2 text-[0.7rem] text-muted-foreground sm:items-end">
                                                     <div className="rounded-md bg-white/90 px-3 py-1.5 shadow-inner shadow-amber-50/70">
                                                         <p className="text-[0.7rem] font-semibold text-amber-900">
                                                             Questionnaire summary
@@ -360,15 +701,24 @@ const CounselorIntake: React.FC = () => {
                                                         </p>
                                                         <p className="mt-1 text-[0.6rem] text-muted-foreground">
                                                             Based on PHQ-9 style scoring for{" "}
-                                                            <span className="font-medium">triage only</span>; not a diagnosis or
-                                                            clinical label.
+                                                            <span className="font-medium">triage only</span>; not a diagnosis or clinical label.
                                                         </p>
                                                     </div>
 
-                                                    <p className="max-w-xs text-[0.65rem] text-muted-foreground sm:text-right">
-                                                        For full item-by-item responses, please refer to the student’s detailed
-                                                        record in the Evaluation or Student profile view.
-                                                    </p>
+                                                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
+                                                            onClick={() => {
+                                                                setSelectedAssessment(assessment);
+                                                                setIsDialogOpen(true);
+                                                            }}
+                                                        >
+                                                            View / Download
+                                                        </Button>
+                                                    </div>
                                                 </div>
                                             </div>
                                         );
@@ -379,6 +729,113 @@ const CounselorIntake: React.FC = () => {
                     </Card>
                 </div>
             </div>
+
+            <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+                <DialogContent className="max-w-3xl">
+                    <DialogHeader>
+                        <DialogTitle className="text-base">Assessment – {dialogStudentName}</DialogTitle>
+                        <DialogDescription className="text-xs">Submitted: {dialogSubmitted}</DialogDescription>
+                    </DialogHeader>
+
+                    <div className="max-h-[70vh] overflow-y-auto pr-2">
+                        {selectedAssessment ? (
+                            <div className="space-y-4 text-sm">
+                                <div className="grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-2">
+                                    <div className="space-y-1 text-xs">
+                                        <p>
+                                            <span className="font-medium">Consent:</span>{" "}
+                                            {selectedAssessment.consent ? "Yes" : "No"}
+                                        </p>
+                                        <p>
+                                            <span className="font-medium">Age:</span>{" "}
+                                            {typeof selectedAssessment.age === "number" ? selectedAssessment.age : "—"}
+                                        </p>
+                                        <p>
+                                            <span className="font-medium">Gender:</span>{" "}
+                                            {formatGender(selectedAssessment.gender ?? undefined)}
+                                        </p>
+                                        <p>
+                                            <span className="font-medium">Occupation:</span>{" "}
+                                            {selectedAssessment.occupation?.trim() || "—"}
+                                        </p>
+                                        <p>
+                                            <span className="font-medium">Living situation:</span>{" "}
+                                            {formatLivingSituation(
+                                                selectedAssessment.living_situation ?? undefined,
+                                                selectedAssessment.living_situation_other ?? undefined,
+                                            )}
+                                        </p>
+                                    </div>
+
+                                    <div className="space-y-1 text-xs">
+                                        <p>
+                                            <span className="font-medium">Score:</span>{" "}
+                                            <span className="font-semibold">{dialogScore.score}</span>{" "}
+                                            <span className="text-muted-foreground">
+                                                ({dialogScore.answered} of 9 answered)
+                                            </span>
+                                        </p>
+                                        <p>
+                                            <span className="font-medium">Severity band:</span>{" "}
+                                            <span className="font-semibold">{dialogSeverity}</span>
+                                        </p>
+                                        <p className="text-[0.7rem] text-muted-foreground">
+                                            Based on PHQ-9 style scoring for triage only; not a diagnosis or clinical label.
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <p className="text-xs font-semibold text-amber-900">Item-by-item responses</p>
+
+                                    <div className="overflow-hidden rounded-md border">
+                                        <div className="grid grid-cols-[1fr_220px] bg-muted/50 px-3 py-2 text-[0.7rem] font-medium">
+                                            <div>Question</div>
+                                            <div className="text-right">Answer</div>
+                                        </div>
+
+                                        <div className="divide-y">
+                                            {MH_KEYS.map((key) => (
+                                                <div
+                                                    key={String(key)}
+                                                    className="grid grid-cols-[1fr_220px] gap-3 px-3 py-2 text-[0.75rem]"
+                                                >
+                                                    <div className="text-muted-foreground">{MH_QUESTIONS[key]}</div>
+                                                    <div className="text-right font-medium text-amber-900">
+                                                        {prettyFrequency(
+                                                            selectedAssessment[key] as MentalFrequencyApi | null | undefined,
+                                                        )}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="py-6 text-center text-xs text-muted-foreground">No assessment selected.</div>
+                        )}
+                    </div>
+
+                    <DialogFooter className="gap-3 sm:gap-3">
+                        <Button type="button" variant="outline" onClick={closeAssessmentDialog}>
+                            Close
+                        </Button>
+
+                        <Button
+                            type="button"
+                            onClick={() => {
+                                if (!selectedAssessment) return;
+                                downloadAssessmentPdf(selectedAssessment);
+                            }}
+                            disabled={!selectedAssessment}
+                        >
+                            <FileDown className="mr-2 h-4 w-4" />
+                            Download PDF
+                        </Button>
+                    </DialogFooter>
+                </DialogContent>
+            </Dialog>
         </DashboardLayout>
     );
 };
