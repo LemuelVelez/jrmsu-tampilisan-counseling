@@ -3,6 +3,7 @@ import React from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import {
@@ -13,6 +14,7 @@ import {
     Loader2,
     Pencil,
     Save,
+    Search,
     UserCircle2,
     X,
     CheckCircle2,
@@ -20,7 +22,13 @@ import {
 
 import { Calendar } from "@/components/ui/calendar";
 import { Popover, PopoverTrigger, PopoverContent } from "@/components/ui/popover";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
 
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
 import type { IntakeRequestDto } from "@/api/intake/route";
@@ -68,15 +76,22 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
     { value: "cancelled", label: "Cancelled" },
 ];
 
+type FinalFilter = "all" | "final_set" | "final_unset";
+
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
+        );
     }
     const trimmed = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmed}`;
 }
 
-async function counselorApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function counselorApiFetch<T>(
+    path: string,
+    init: RequestInit = {},
+): Promise<T> {
     const url = resolveApiUrl(path);
 
     const response = await fetch(url, {
@@ -115,7 +130,10 @@ async function counselorApiFetch<T>(path: string, init: RequestInit = {}): Promi
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
-        const error = new Error(message) as Error & { status?: number; data?: unknown };
+        const error = new Error(message) as Error & {
+            status?: number;
+            data?: unknown;
+        };
         error.status = response.status;
         error.data = body ?? text;
         throw error;
@@ -159,37 +177,52 @@ async function updateAppointmentSchedule(
     };
 
     try {
-        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-        });
+        return await counselorApiFetch<any>(
+            `/counselor/appointments/${requestId}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            },
+        );
     } catch (err) {
         const e = err as any;
         if (e?.status === 404) {
-            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
-                method: "PATCH",
-                body: JSON.stringify(payload),
-            });
+            return counselorApiFetch<any>(
+                `/counselor/intake/requests/${requestId}`,
+                {
+                    method: "PATCH",
+                    body: JSON.stringify(payload),
+                },
+            );
         }
         throw err;
     }
 }
 
-async function updateAppointmentStatus(requestId: number | string, status: string): Promise<any> {
+async function updateAppointmentStatus(
+    requestId: number | string,
+    status: string,
+): Promise<any> {
     const payload: CounselorUpdatePayload = { status };
 
     try {
-        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
-            method: "PATCH",
-            body: JSON.stringify(payload),
-        });
+        return await counselorApiFetch<any>(
+            `/counselor/appointments/${requestId}`,
+            {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            },
+        );
     } catch (err) {
         const e = err as any;
         if (e?.status === 404) {
-            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
-                method: "PATCH",
-                body: JSON.stringify(payload),
-            });
+            return counselorApiFetch<any>(
+                `/counselor/intake/requests/${requestId}`,
+                {
+                    method: "PATCH",
+                    body: JSON.stringify(payload),
+                },
+            );
         }
         throw err;
     }
@@ -272,6 +305,10 @@ function getFinalTime(req: any): string | null {
     return (req?.scheduled_time as string | null) ?? null;
 }
 
+function normalizeText(value: unknown): string {
+    return String(value ?? "").trim().toLowerCase();
+}
+
 const CounselorAppointments: React.FC = () => {
     const [requests, setRequests] = React.useState<IntakeRequestDto[]>([]);
     const [isLoading, setIsLoading] = React.useState(false);
@@ -282,8 +319,19 @@ const CounselorAppointments: React.FC = () => {
     const [editTime, setEditTime] = React.useState<string>("");
     const [isSaving, setIsSaving] = React.useState(false);
 
-    const [statusDraftById, setStatusDraftById] = React.useState<Record<string, string>>({});
-    const [statusSavingId, setStatusSavingId] = React.useState<number | string | null>(null);
+    const [statusDraftById, setStatusDraftById] = React.useState<
+        Record<string, string>
+    >({});
+    const [statusSavingId, setStatusSavingId] = React.useState<number | string | null>(
+        null,
+    );
+
+    // ✅ Search & filters
+    const [searchQuery, setSearchQuery] = React.useState("");
+    const [filterStatus, setFilterStatus] = React.useState<string>("all");
+    const [filterUrgency, setFilterUrgency] = React.useState<string>("all");
+    const [filterConcern, setFilterConcern] = React.useState<string>("all");
+    const [filterFinal, setFilterFinal] = React.useState<FinalFilter>("all");
 
     const reload = React.useCallback(async () => {
         setIsLoading(true);
@@ -310,7 +358,8 @@ const CounselorAppointments: React.FC = () => {
                 return next;
             });
         } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to load appointments.";
+            const message =
+                err instanceof Error ? err.message : "Failed to load appointments.";
             setError(message);
             toast.error(message);
         } finally {
@@ -321,6 +370,64 @@ const CounselorAppointments: React.FC = () => {
     React.useEffect(() => {
         void reload();
     }, [reload]);
+
+    const clearFilters = () => {
+        setSearchQuery("");
+        setFilterStatus("all");
+        setFilterUrgency("all");
+        setFilterConcern("all");
+        setFilterFinal("all");
+    };
+
+    const filteredRequests = React.useMemo(() => {
+        const q = normalizeText(searchQuery);
+
+        return requests.filter((req) => {
+            const status = normalizeText(req.status);
+            const urgency = normalizeText(req.urgency);
+            const concern = normalizeText(req.concern_type);
+
+            if (filterStatus !== "all" && status !== normalizeText(filterStatus)) return false;
+            if (filterUrgency !== "all" && urgency !== normalizeText(filterUrgency)) return false;
+            if (filterConcern !== "all" && concern !== normalizeText(filterConcern)) return false;
+
+            const finalDate = getFinalDate(req);
+            const finalTime = getFinalTime(req);
+            const hasFinal = Boolean(finalDate && finalTime);
+
+            if (filterFinal === "final_set" && !hasFinal) return false;
+            if (filterFinal === "final_unset" && hasFinal) return false;
+
+            if (!q) return true;
+
+            const studentName = getStudentDisplayName(req);
+            const email = (req as any)?.user?.email ?? "";
+            const concernLabel =
+                (req.concern_type ? CONCERN_LABELS[normalizeText(req.concern_type)] : "") ?? "";
+            const urgencyLabel =
+                (req.urgency ? URGENCY_LABELS[normalizeText(req.urgency)] : "") ?? "";
+
+            const haystack = normalizeText(
+                [
+                    req.id,
+                    studentName,
+                    email,
+                    req.concern_type,
+                    concernLabel,
+                    req.urgency,
+                    urgencyLabel,
+                    req.status,
+                    req.details,
+                    req.preferred_date,
+                    req.preferred_time,
+                    finalDate ?? "",
+                    finalTime ?? "",
+                ].join(" "),
+            );
+
+            return haystack.includes(q);
+        });
+    }, [requests, searchQuery, filterStatus, filterUrgency, filterConcern, filterFinal]);
 
     const startEdit = (req: IntakeRequestDto) => {
         setEditingId(req.id);
@@ -367,7 +474,8 @@ const CounselorAppointments: React.FC = () => {
             cancelEdit();
             void reload();
         } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to update schedule.";
+            const message =
+                err instanceof Error ? err.message : "Failed to update schedule.";
             toast.error(message);
         } finally {
             setIsSaving(false);
@@ -389,7 +497,9 @@ const CounselorAppointments: React.FC = () => {
     };
 
     const handleUpdateStatus = async (req: IntakeRequestDto) => {
-        const draft = statusDraftById[String(req.id)] ?? String(req.status ?? "pending").toLowerCase();
+        const draft =
+            statusDraftById[String(req.id)] ??
+            String(req.status ?? "pending").toLowerCase();
         const current = String(req.status ?? "pending").toLowerCase();
 
         if (!draft || draft === current) {
@@ -403,12 +513,16 @@ const CounselorAppointments: React.FC = () => {
             toast.success(`Status updated to ${draft}.`);
             void reload();
         } catch (err) {
-            const message = err instanceof Error ? err.message : "Failed to update status.";
+            const message =
+                err instanceof Error ? err.message : "Failed to update status.";
             toast.error(message);
         } finally {
             setStatusSavingId(null);
         }
     };
+
+    const totalCount = requests.length;
+    const shownCount = filteredRequests.length;
 
     return (
         <DashboardLayout
@@ -419,7 +533,9 @@ const CounselorAppointments: React.FC = () => {
                 <div className="w-full max-w-5xl space-y-4">
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
-                            <p className="font-semibold">Guidance &amp; Counseling – Appointments</p>
+                            <p className="font-semibold">
+                                Guidance &amp; Counseling – Appointments
+                            </p>
                             <p className="text-[0.7rem] text-amber-900/80">
                                 Preferred = student request. Final = counselor-confirmed schedule.
                             </p>
@@ -455,8 +571,108 @@ const CounselorAppointments: React.FC = () => {
                                 Counseling appointments
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
-                                Set the final schedule and update status (Pending/Scheduled/Completed/Cancelled). Students will see the status changes.
+                                Search and filter requests, then set final schedule and update status
+                                (Pending/Scheduled/Completed/Cancelled).
                             </p>
+
+                            {/* ✅ Search + filters (shadcn) */}
+                            <div className="mt-3 grid gap-2 sm:grid-cols-12">
+                                <div className="sm:col-span-5">
+                                    <div className="relative">
+                                        <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                                        <Input
+                                            value={searchQuery}
+                                            onChange={(e) => setSearchQuery(e.target.value)}
+                                            placeholder="Search student, email, concern, details, ID…"
+                                            className="h-9 pl-9"
+                                        />
+                                    </div>
+                                </div>
+
+                                <div className="sm:col-span-2">
+                                    <Select value={filterStatus} onValueChange={setFilterStatus}>
+                                        <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Status" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All status</SelectItem>
+                                            {STATUS_OPTIONS.map((opt) => (
+                                                <SelectItem key={opt.value} value={opt.value}>
+                                                    {opt.label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="sm:col-span-2">
+                                    <Select value={filterUrgency} onValueChange={setFilterUrgency}>
+                                        <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Urgency" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All urgency</SelectItem>
+                                            {Object.entries(URGENCY_LABELS).map(([value, label]) => (
+                                                <SelectItem key={value} value={value}>
+                                                    {label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="sm:col-span-2">
+                                    <Select value={filterConcern} onValueChange={setFilterConcern}>
+                                        <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Concern" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All concerns</SelectItem>
+                                            {Object.entries(CONCERN_LABELS).map(([value, label]) => (
+                                                <SelectItem key={value} value={value}>
+                                                    {label}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="sm:col-span-1">
+                                    <Select
+                                        value={filterFinal}
+                                        onValueChange={(v) => setFilterFinal(v as FinalFilter)}
+                                    >
+                                        <SelectTrigger className="h-9">
+                                            <SelectValue placeholder="Final" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="all">All</SelectItem>
+                                            <SelectItem value="final_set">Final set</SelectItem>
+                                            <SelectItem value="final_unset">Not scheduled</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="sm:col-span-12 flex flex-wrap items-center justify-between gap-2 pt-1 text-[0.7rem] text-muted-foreground">
+                                    <span>
+                                        Showing{" "}
+                                        <span className="font-medium text-amber-900">{shownCount}</span>{" "}
+                                        of{" "}
+                                        <span className="font-medium text-amber-900">{totalCount}</span>
+                                    </span>
+
+                                    <Button
+                                        type="button"
+                                        size="sm"
+                                        variant="outline"
+                                        onClick={clearFilters}
+                                        className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
+                                    >
+                                        <X className="mr-1.5 h-3.5 w-3.5" />
+                                        Clear
+                                    </Button>
+                                </div>
+                            </div>
                         </CardHeader>
 
                         <CardContent className="space-y-3">
@@ -483,26 +699,53 @@ const CounselorAppointments: React.FC = () => {
                                 </div>
                             )}
 
-                            {!isLoading && requests.length > 0 && (
+                            {!isLoading && requests.length > 0 && filteredRequests.length === 0 && (
+                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-6 text-center text-xs text-muted-foreground">
+                                    No results match your current search/filters.
+                                    <div className="mt-3">
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            variant="outline"
+                                            onClick={clearFilters}
+                                            className="border-amber-200 bg-white/80 text-xs text-amber-900 hover:bg-amber-50"
+                                        >
+                                            <X className="mr-1.5 h-3.5 w-3.5" />
+                                            Clear filters
+                                        </Button>
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isLoading && filteredRequests.length > 0 && (
                                 <div className="space-y-2">
-                                    {requests.map((req) => {
+                                    {filteredRequests.map((req) => {
                                         const studentName = getStudentDisplayName(req);
                                         const created = formatDateTime(req.created_at);
-                                        const concern = formatConcernType(req.concern_type ?? undefined);
+                                        const concern = formatConcernType(
+                                            req.concern_type ?? undefined,
+                                        );
                                         const urgencyLabel = formatUrgency(req.urgency ?? undefined);
 
-                                        const preferredDate = formatDate(req.preferred_date ?? undefined);
-                                        const preferredTime = req.preferred_time ? String(req.preferred_time) : "—";
+                                        const preferredDate = formatDate(
+                                            req.preferred_date ?? undefined,
+                                        );
+                                        const preferredTime = req.preferred_time
+                                            ? String(req.preferred_time)
+                                            : "—";
 
                                         const finalDateStr = getFinalDate(req);
                                         const finalTimeStr = getFinalTime(req);
                                         const finalDate = formatDate(finalDateStr ?? undefined);
-                                        const finalTime = finalTimeStr ? String(finalTimeStr) : "—";
+                                        const finalTime = finalTimeStr
+                                            ? String(finalTimeStr)
+                                            : "—";
 
                                         const isEditing = editingId === req.id;
 
                                         const reqStatus = String(req.status ?? "pending").toLowerCase();
-                                        const draftStatus = statusDraftById[String(req.id)] ?? reqStatus;
+                                        const draftStatus =
+                                            statusDraftById[String(req.id)] ?? reqStatus;
                                         const statusIsSaving = statusSavingId === req.id;
 
                                         return (
@@ -538,7 +781,10 @@ const CounselorAppointments: React.FC = () => {
                                                                         req.status,
                                                                     )}`}
                                                                 >
-                                                                    Status: <span className="ml-1 capitalize">{String(req.status)}</span>
+                                                                    Status:{" "}
+                                                                    <span className="ml-1 capitalize">
+                                                                        {String(req.status)}
+                                                                    </span>
                                                                 </span>
                                                             )}
                                                         </div>
@@ -560,17 +806,27 @@ const CounselorAppointments: React.FC = () => {
 
                                                         <div className="text-[0.7rem]">
                                                             <span className="font-medium">Preferred:</span>{" "}
-                                                            <span className="font-medium text-amber-900">{preferredDate}</span>
-                                                            {preferredTime !== "—" ? <span> · {preferredTime}</span> : null}
+                                                            <span className="font-medium text-amber-900">
+                                                                {preferredDate}
+                                                            </span>
+                                                            {preferredTime !== "—" ? (
+                                                                <span> · {preferredTime}</span>
+                                                            ) : null}
                                                         </div>
 
                                                         <div className="text-[0.7rem]">
                                                             <span className="font-medium">Final:</span>{" "}
-                                                            <span className="font-medium text-amber-900">{finalDate}</span>
-                                                            {finalTime !== "—" ? <span> · {finalTime}</span> : null}
+                                                            <span className="font-medium text-amber-900">
+                                                                {finalDate}
+                                                            </span>
+                                                            {finalTime !== "—" ? (
+                                                                <span> · {finalTime}</span>
+                                                            ) : null}
                                                         </div>
 
-                                                        <div className="text-[0.65rem] text-muted-foreground">Requested: {created}</div>
+                                                        <div className="text-[0.65rem] text-muted-foreground">
+                                                            Requested: {created}
+                                                        </div>
 
                                                         <div className="mt-2 flex w-full flex-col gap-2 sm:items-end">
                                                             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end">
@@ -590,7 +846,10 @@ const CounselorAppointments: React.FC = () => {
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             {STATUS_OPTIONS.map((opt) => (
-                                                                                <SelectItem key={opt.value} value={opt.value}>
+                                                                                <SelectItem
+                                                                                    key={opt.value}
+                                                                                    value={opt.value}
+                                                                                >
                                                                                     {opt.label}
                                                                                 </SelectItem>
                                                                             ))}
@@ -604,7 +863,10 @@ const CounselorAppointments: React.FC = () => {
                                                                     variant="outline"
                                                                     className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
                                                                     onClick={() => void handleUpdateStatus(req)}
-                                                                    disabled={statusIsSaving || (draftStatus ?? "") === reqStatus}
+                                                                    disabled={
+                                                                        statusIsSaving ||
+                                                                        (draftStatus ?? "") === reqStatus
+                                                                    }
                                                                 >
                                                                     {statusIsSaving ? (
                                                                         <>
@@ -630,7 +892,9 @@ const CounselorAppointments: React.FC = () => {
                                                                         onClick={() => startEdit(req)}
                                                                     >
                                                                         <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                                                                        {reqStatus === "scheduled" ? "Reschedule" : "Schedule"}
+                                                                        {reqStatus === "scheduled"
+                                                                            ? "Reschedule"
+                                                                            : "Schedule"}
                                                                     </Button>
                                                                 ) : (
                                                                     <Button
@@ -655,21 +919,32 @@ const CounselorAppointments: React.FC = () => {
                                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
                                                             <div className="grid w-full gap-3 sm:grid-cols-2">
                                                                 <div className="space-y-1.5">
-                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Final date</p>
+                                                                    <p className="text-[0.7rem] font-medium text-amber-900">
+                                                                        Final date
+                                                                    </p>
                                                                     <Popover>
                                                                         <PopoverTrigger asChild>
                                                                             <Button
                                                                                 type="button"
                                                                                 variant="outline"
-                                                                                className={`w-full justify-start text-left text-[0.75rem] font-normal ${!editDate ? "text-muted-foreground" : ""
+                                                                                className={`w-full justify-start text-left text-[0.75rem] font-normal ${!editDate
+                                                                                    ? "text-muted-foreground"
+                                                                                    : ""
                                                                                     }`}
                                                                                 disabled={isSaving}
                                                                             >
                                                                                 <CalendarIcon className="mr-2 h-4 w-4" />
-                                                                                {editDate ? format(editDate, "PPP") : <span>Select date</span>}
+                                                                                {editDate ? (
+                                                                                    format(editDate, "PPP")
+                                                                                ) : (
+                                                                                    <span>Select date</span>
+                                                                                )}
                                                                             </Button>
                                                                         </PopoverTrigger>
-                                                                        <PopoverContent className="w-auto p-0" align="start">
+                                                                        <PopoverContent
+                                                                            className="w-auto p-0"
+                                                                            align="start"
+                                                                        >
                                                                             <Calendar
                                                                                 mode="single"
                                                                                 selected={editDate}
@@ -681,14 +956,23 @@ const CounselorAppointments: React.FC = () => {
                                                                 </div>
 
                                                                 <div className="space-y-1.5">
-                                                                    <p className="text-[0.7rem] font-medium text-amber-900">Final time</p>
-                                                                    <Select value={editTime} onValueChange={setEditTime} disabled={isSaving}>
+                                                                    <p className="text-[0.7rem] font-medium text-amber-900">
+                                                                        Final time
+                                                                    </p>
+                                                                    <Select
+                                                                        value={editTime}
+                                                                        onValueChange={setEditTime}
+                                                                        disabled={isSaving}
+                                                                    >
                                                                         <SelectTrigger className="h-9 w-full text-left text-[0.75rem]">
                                                                             <SelectValue placeholder="Select time" />
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             {TIME_OPTIONS.map((slot) => (
-                                                                                <SelectItem key={slot.value} value={slot.value}>
+                                                                                <SelectItem
+                                                                                    key={slot.value}
+                                                                                    value={slot.value}
+                                                                                >
                                                                                     {slot.label}
                                                                                 </SelectItem>
                                                                             ))}
