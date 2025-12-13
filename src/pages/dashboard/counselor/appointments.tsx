@@ -15,6 +15,7 @@ import {
     Pencil,
     Save,
     Search,
+    Trash2,
     UserCircle2,
     X,
     CheckCircle2,
@@ -29,6 +30,17 @@ import {
     SelectTrigger,
     SelectValue,
 } from "@/components/ui/select";
+
+import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogCancel,
+    AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
 import type { IntakeRequestDto } from "@/api/intake/route";
@@ -88,10 +100,7 @@ function resolveApiUrl(path: string): string {
     return `${AUTH_API_BASE_URL}/${trimmed}`;
 }
 
-async function counselorApiFetch<T>(
-    path: string,
-    init: RequestInit = {},
-): Promise<T> {
+async function counselorApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveApiUrl(path);
 
     const response = await fetch(url, {
@@ -130,10 +139,7 @@ async function counselorApiFetch<T>(
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
-        const error = new Error(message) as Error & {
-            status?: number;
-            data?: unknown;
-        };
+        const error = new Error(message) as Error & { status?: number; data?: unknown };
         error.status = response.status;
         error.data = body ?? text;
         throw error;
@@ -177,52 +183,53 @@ async function updateAppointmentSchedule(
     };
 
     try {
-        return await counselorApiFetch<any>(
-            `/counselor/appointments/${requestId}`,
-            {
-                method: "PATCH",
-                body: JSON.stringify(payload),
-            },
-        );
+        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+        });
     } catch (err) {
         const e = err as any;
         if (e?.status === 404) {
-            return counselorApiFetch<any>(
-                `/counselor/intake/requests/${requestId}`,
-                {
-                    method: "PATCH",
-                    body: JSON.stringify(payload),
-                },
-            );
+            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            });
         }
         throw err;
     }
 }
 
-async function updateAppointmentStatus(
-    requestId: number | string,
-    status: string,
-): Promise<any> {
+async function updateAppointmentStatus(requestId: number | string, status: string): Promise<any> {
     const payload: CounselorUpdatePayload = { status };
 
     try {
-        return await counselorApiFetch<any>(
-            `/counselor/appointments/${requestId}`,
-            {
-                method: "PATCH",
-                body: JSON.stringify(payload),
-            },
-        );
+        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+        });
     } catch (err) {
         const e = err as any;
         if (e?.status === 404) {
-            return counselorApiFetch<any>(
-                `/counselor/intake/requests/${requestId}`,
-                {
-                    method: "PATCH",
-                    body: JSON.stringify(payload),
-                },
-            );
+            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
+                method: "PATCH",
+                body: JSON.stringify(payload),
+            });
+        }
+        throw err;
+    }
+}
+
+async function deleteAppointment(requestId: number | string): Promise<any> {
+    try {
+        return await counselorApiFetch<any>(`/counselor/appointments/${requestId}`, {
+            method: "DELETE",
+        });
+    } catch (err) {
+        const e = err as any;
+        if (e?.status === 404) {
+            return counselorApiFetch<any>(`/counselor/intake/requests/${requestId}`, {
+                method: "DELETE",
+            });
         }
         throw err;
     }
@@ -319,12 +326,13 @@ const CounselorAppointments: React.FC = () => {
     const [editTime, setEditTime] = React.useState<string>("");
     const [isSaving, setIsSaving] = React.useState(false);
 
-    const [statusDraftById, setStatusDraftById] = React.useState<
-        Record<string, string>
-    >({});
-    const [statusSavingId, setStatusSavingId] = React.useState<number | string | null>(
-        null,
-    );
+    const [statusDraftById, setStatusDraftById] = React.useState<Record<string, string>>({});
+    const [statusSavingId, setStatusSavingId] = React.useState<number | string | null>(null);
+
+    // Delete confirmation
+    const [deleteOpen, setDeleteOpen] = React.useState(false);
+    const [deleteTarget, setDeleteTarget] = React.useState<IntakeRequestDto | null>(null);
+    const [isDeleting, setIsDeleting] = React.useState(false);
 
     // ✅ Search & filters
     const [searchQuery, setSearchQuery] = React.useState("");
@@ -358,8 +366,7 @@ const CounselorAppointments: React.FC = () => {
                 return next;
             });
         } catch (err) {
-            const message =
-                err instanceof Error ? err.message : "Failed to load appointments.";
+            const message = err instanceof Error ? err.message : "Failed to load appointments.";
             setError(message);
             toast.error(message);
         } finally {
@@ -474,8 +481,7 @@ const CounselorAppointments: React.FC = () => {
             cancelEdit();
             void reload();
         } catch (err) {
-            const message =
-                err instanceof Error ? err.message : "Failed to update schedule.";
+            const message = err instanceof Error ? err.message : "Failed to update schedule.";
             toast.error(message);
         } finally {
             setIsSaving(false);
@@ -498,8 +504,7 @@ const CounselorAppointments: React.FC = () => {
 
     const handleUpdateStatus = async (req: IntakeRequestDto) => {
         const draft =
-            statusDraftById[String(req.id)] ??
-            String(req.status ?? "pending").toLowerCase();
+            statusDraftById[String(req.id)] ?? String(req.status ?? "pending").toLowerCase();
         const current = String(req.status ?? "pending").toLowerCase();
 
         if (!draft || draft === current) {
@@ -513,11 +518,33 @@ const CounselorAppointments: React.FC = () => {
             toast.success(`Status updated to ${draft}.`);
             void reload();
         } catch (err) {
-            const message =
-                err instanceof Error ? err.message : "Failed to update status.";
+            const message = err instanceof Error ? err.message : "Failed to update status.";
             toast.error(message);
         } finally {
             setStatusSavingId(null);
+        }
+    };
+
+    const askDelete = (req: IntakeRequestDto) => {
+        setDeleteTarget(req);
+        setDeleteOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        setIsDeleting(true);
+        try {
+            await deleteAppointment(deleteTarget.id);
+            toast.success("Appointment/request deleted.");
+            setDeleteOpen(false);
+            setDeleteTarget(null);
+            void reload();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to delete appointment.";
+            toast.error(message);
+        } finally {
+            setIsDeleting(false);
         }
     };
 
@@ -533,9 +560,7 @@ const CounselorAppointments: React.FC = () => {
                 <div className="w-full max-w-5xl space-y-4">
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
-                            <p className="font-semibold">
-                                Guidance &amp; Counseling – Appointments
-                            </p>
+                            <p className="font-semibold">Guidance &amp; Counseling – Appointments</p>
                             <p className="text-[0.7rem] text-amber-900/80">
                                 Preferred = student request. Final = counselor-confirmed schedule.
                             </p>
@@ -575,7 +600,6 @@ const CounselorAppointments: React.FC = () => {
                                 (Pending/Scheduled/Completed/Cancelled).
                             </p>
 
-                            {/* ✅ Search + filters (shadcn) */}
                             <div className="mt-3 grid gap-2 sm:grid-cols-12">
                                 <div className="sm:col-span-5">
                                     <div className="relative">
@@ -656,8 +680,7 @@ const CounselorAppointments: React.FC = () => {
                                 <div className="sm:col-span-12 flex flex-wrap items-center justify-between gap-2 pt-1 text-[0.7rem] text-muted-foreground">
                                     <span>
                                         Showing{" "}
-                                        <span className="font-medium text-amber-900">{shownCount}</span>{" "}
-                                        of{" "}
+                                        <span className="font-medium text-amber-900">{shownCount}</span> of{" "}
                                         <span className="font-medium text-amber-900">{totalCount}</span>
                                     </span>
 
@@ -722,30 +745,21 @@ const CounselorAppointments: React.FC = () => {
                                     {filteredRequests.map((req) => {
                                         const studentName = getStudentDisplayName(req);
                                         const created = formatDateTime(req.created_at);
-                                        const concern = formatConcernType(
-                                            req.concern_type ?? undefined,
-                                        );
+                                        const concern = formatConcernType(req.concern_type ?? undefined);
                                         const urgencyLabel = formatUrgency(req.urgency ?? undefined);
 
-                                        const preferredDate = formatDate(
-                                            req.preferred_date ?? undefined,
-                                        );
-                                        const preferredTime = req.preferred_time
-                                            ? String(req.preferred_time)
-                                            : "—";
+                                        const preferredDate = formatDate(req.preferred_date ?? undefined);
+                                        const preferredTime = req.preferred_time ? String(req.preferred_time) : "—";
 
                                         const finalDateStr = getFinalDate(req);
                                         const finalTimeStr = getFinalTime(req);
                                         const finalDate = formatDate(finalDateStr ?? undefined);
-                                        const finalTime = finalTimeStr
-                                            ? String(finalTimeStr)
-                                            : "—";
+                                        const finalTime = finalTimeStr ? String(finalTimeStr) : "—";
 
                                         const isEditing = editingId === req.id;
 
                                         const reqStatus = String(req.status ?? "pending").toLowerCase();
-                                        const draftStatus =
-                                            statusDraftById[String(req.id)] ?? reqStatus;
+                                        const draftStatus = statusDraftById[String(req.id)] ?? reqStatus;
                                         const statusIsSaving = statusSavingId === req.id;
 
                                         return (
@@ -782,9 +796,7 @@ const CounselorAppointments: React.FC = () => {
                                                                     )}`}
                                                                 >
                                                                     Status:{" "}
-                                                                    <span className="ml-1 capitalize">
-                                                                        {String(req.status)}
-                                                                    </span>
+                                                                    <span className="ml-1 capitalize">{String(req.status)}</span>
                                                                 </span>
                                                             )}
                                                         </div>
@@ -806,22 +818,14 @@ const CounselorAppointments: React.FC = () => {
 
                                                         <div className="text-[0.7rem]">
                                                             <span className="font-medium">Preferred:</span>{" "}
-                                                            <span className="font-medium text-amber-900">
-                                                                {preferredDate}
-                                                            </span>
-                                                            {preferredTime !== "—" ? (
-                                                                <span> · {preferredTime}</span>
-                                                            ) : null}
+                                                            <span className="font-medium text-amber-900">{preferredDate}</span>
+                                                            {preferredTime !== "—" ? <span> · {preferredTime}</span> : null}
                                                         </div>
 
                                                         <div className="text-[0.7rem]">
                                                             <span className="font-medium">Final:</span>{" "}
-                                                            <span className="font-medium text-amber-900">
-                                                                {finalDate}
-                                                            </span>
-                                                            {finalTime !== "—" ? (
-                                                                <span> · {finalTime}</span>
-                                                            ) : null}
+                                                            <span className="font-medium text-amber-900">{finalDate}</span>
+                                                            {finalTime !== "—" ? <span> · {finalTime}</span> : null}
                                                         </div>
 
                                                         <div className="text-[0.65rem] text-muted-foreground">
@@ -846,10 +850,7 @@ const CounselorAppointments: React.FC = () => {
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             {STATUS_OPTIONS.map((opt) => (
-                                                                                <SelectItem
-                                                                                    key={opt.value}
-                                                                                    value={opt.value}
-                                                                                >
+                                                                                <SelectItem key={opt.value} value={opt.value}>
                                                                                     {opt.label}
                                                                                 </SelectItem>
                                                                             ))}
@@ -863,10 +864,7 @@ const CounselorAppointments: React.FC = () => {
                                                                     variant="outline"
                                                                     className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
                                                                     onClick={() => void handleUpdateStatus(req)}
-                                                                    disabled={
-                                                                        statusIsSaving ||
-                                                                        (draftStatus ?? "") === reqStatus
-                                                                    }
+                                                                    disabled={statusIsSaving || (draftStatus ?? "") === reqStatus}
                                                                 >
                                                                     {statusIsSaving ? (
                                                                         <>
@@ -892,9 +890,7 @@ const CounselorAppointments: React.FC = () => {
                                                                         onClick={() => startEdit(req)}
                                                                     >
                                                                         <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                                                                        {reqStatus === "scheduled"
-                                                                            ? "Reschedule"
-                                                                            : "Schedule"}
+                                                                        {reqStatus === "scheduled" ? "Reschedule" : "Schedule"}
                                                                     </Button>
                                                                 ) : (
                                                                     <Button
@@ -909,6 +905,18 @@ const CounselorAppointments: React.FC = () => {
                                                                         Cancel
                                                                     </Button>
                                                                 )}
+
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                                    onClick={() => askDelete(req)}
+                                                                    disabled={isDeleting}
+                                                                >
+                                                                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                    Delete
+                                                                </Button>
                                                             </div>
                                                         </div>
                                                     </div>
@@ -927,24 +935,15 @@ const CounselorAppointments: React.FC = () => {
                                                                             <Button
                                                                                 type="button"
                                                                                 variant="outline"
-                                                                                className={`w-full justify-start text-left text-[0.75rem] font-normal ${!editDate
-                                                                                    ? "text-muted-foreground"
-                                                                                    : ""
+                                                                                className={`w-full justify-start text-left text-[0.75rem] font-normal ${!editDate ? "text-muted-foreground" : ""
                                                                                     }`}
                                                                                 disabled={isSaving}
                                                                             >
                                                                                 <CalendarIcon className="mr-2 h-4 w-4" />
-                                                                                {editDate ? (
-                                                                                    format(editDate, "PPP")
-                                                                                ) : (
-                                                                                    <span>Select date</span>
-                                                                                )}
+                                                                                {editDate ? format(editDate, "PPP") : <span>Select date</span>}
                                                                             </Button>
                                                                         </PopoverTrigger>
-                                                                        <PopoverContent
-                                                                            className="w-auto p-0"
-                                                                            align="start"
-                                                                        >
+                                                                        <PopoverContent className="w-auto p-0" align="start">
                                                                             <Calendar
                                                                                 mode="single"
                                                                                 selected={editDate}
@@ -959,20 +958,13 @@ const CounselorAppointments: React.FC = () => {
                                                                     <p className="text-[0.7rem] font-medium text-amber-900">
                                                                         Final time
                                                                     </p>
-                                                                    <Select
-                                                                        value={editTime}
-                                                                        onValueChange={setEditTime}
-                                                                        disabled={isSaving}
-                                                                    >
+                                                                    <Select value={editTime} onValueChange={setEditTime} disabled={isSaving}>
                                                                         <SelectTrigger className="h-9 w-full text-left text-[0.75rem]">
                                                                             <SelectValue placeholder="Select time" />
                                                                         </SelectTrigger>
                                                                         <SelectContent>
                                                                             {TIME_OPTIONS.map((slot) => (
-                                                                                <SelectItem
-                                                                                    key={slot.value}
-                                                                                    value={slot.value}
-                                                                                >
+                                                                                <SelectItem key={slot.value} value={slot.value}>
                                                                                     {slot.label}
                                                                                 </SelectItem>
                                                                             ))}
@@ -1025,6 +1017,48 @@ const CounselorAppointments: React.FC = () => {
                     </Card>
                 </div>
             </div>
+
+            {/* Delete confirmation */}
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent className="sm:max-w-lg">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="text-base">Delete this appointment/request?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-xs">
+                            You are about to delete the record for{" "}
+                            <span className="font-medium text-foreground">
+                                {deleteTarget ? getStudentDisplayName(deleteTarget) : "this student"}
+                            </span>
+                            . This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+
+                    <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                        <AlertDialogCancel disabled={isDeleting} className="w-full sm:w-auto">
+                            Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                void confirmDelete();
+                            }}
+                            disabled={isDeleting}
+                            className="w-full bg-red-600 text-white hover:bg-red-700 sm:w-auto"
+                        >
+                            {isDeleting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Deleting…
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                </>
+                            )}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </DashboardLayout>
     );
 };

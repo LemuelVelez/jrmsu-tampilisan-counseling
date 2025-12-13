@@ -11,6 +11,7 @@ import {
     ClipboardList as ClipboardListIcon,
     FileDown,
     Loader2,
+    Trash2,
     UserCircle2,
 } from "lucide-react";
 
@@ -22,6 +23,17 @@ import {
     DialogDescription,
     DialogFooter,
 } from "@/components/ui/dialog";
+
+import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogCancel,
+    AlertDialogAction,
+} from "@/components/ui/alert-dialog";
 
 import { jsPDF } from "jspdf";
 
@@ -78,12 +90,16 @@ function resolveApiUrl(path: string): string {
     return `${AUTH_API_BASE_URL}/${trimmed}`;
 }
 
-async function counselorIntakeFetch<T>(path: string): Promise<T> {
+async function counselorIntakeApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveApiUrl(path);
 
     const response = await fetch(url, {
-        method: "GET",
-        headers: { Accept: "application/json" },
+        ...init,
+        headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            ...(init.headers ?? {}),
+        },
         credentials: "include",
     });
 
@@ -113,10 +129,7 @@ async function counselorIntakeFetch<T>(path: string): Promise<T> {
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
-        const error = new Error(message) as Error & {
-            status?: number;
-            data?: unknown;
-        };
+        const error = new Error(message) as Error & { status?: number; data?: unknown };
         error.status = response.status;
         error.data = body ?? text;
         throw error;
@@ -126,7 +139,9 @@ async function counselorIntakeFetch<T>(path: string): Promise<T> {
 }
 
 async function fetchAssessments(): Promise<IntakeAssessmentDto[]> {
-    const raw = await counselorIntakeFetch<any>("/counselor/intake/assessments");
+    const raw = await counselorIntakeApiFetch<any>("/counselor/intake/assessments", {
+        method: "GET",
+    });
 
     const list =
         Array.isArray(raw) && raw.length && typeof raw[0] === "object"
@@ -138,6 +153,28 @@ async function fetchAssessments(): Promise<IntakeAssessmentDto[]> {
                     : [];
 
     return list as IntakeAssessmentDto[];
+}
+
+async function deleteAssessment(assessmentId: number | string): Promise<any> {
+    const candidates = [
+        `/counselor/intake/assessments/${assessmentId}`,
+        `/counselor/assessments/${assessmentId}`,
+        `/counselor/intake/assessment/${assessmentId}`,
+    ];
+
+    let lastErr: unknown = null;
+    for (const path of candidates) {
+        try {
+            return await counselorIntakeApiFetch<any>(path, { method: "DELETE" });
+        } catch (err) {
+            const e = err as any;
+            lastErr = err;
+            if (e?.status === 404) continue;
+            throw err;
+        }
+    }
+
+    throw lastErr ?? new Error("Delete endpoint not found.");
 }
 
 function getStudentDisplayName(record: any): string {
@@ -291,12 +328,9 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8);
-        doc.text(
-            `Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`,
-            pageWidth - margin,
-            38,
-            { align: "right" },
-        );
+        doc.text(`Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`, pageWidth - margin, 38, {
+            align: "right",
+        });
 
         doc.setTextColor(...COLORS.ink);
         cursor.y = headerH + 16;
@@ -332,11 +366,7 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
             doc.setFont("helvetica", "normal");
             doc.setFontSize(9);
             doc.setTextColor(...COLORS.ink);
-            const lines = wrapMaxLines(
-                value,
-                (pageWidth - margin * 2) / 2 - 26,
-                2,
-            );
+            const lines = wrapMaxLines(value, (pageWidth - margin * 2) / 2 - 26, 2);
             doc.text(lines, x, y + 12);
         };
 
@@ -503,6 +533,11 @@ const CounselorIntake: React.FC = () => {
     const [selectedAssessment, setSelectedAssessment] =
         React.useState<IntakeAssessmentDto | null>(null);
 
+    // Delete confirmation
+    const [deleteOpen, setDeleteOpen] = React.useState(false);
+    const [deleteTarget, setDeleteTarget] = React.useState<IntakeAssessmentDto | null>(null);
+    const [isDeleting, setIsDeleting] = React.useState(false);
+
     const reloadAssessments = React.useCallback(async () => {
         setIsLoadingAssessments(true);
         setAssessmentsError(null);
@@ -534,6 +569,29 @@ const CounselorIntake: React.FC = () => {
         setSelectedAssessment(null);
     };
 
+    const askDelete = (assessment: IntakeAssessmentDto) => {
+        setDeleteTarget(assessment);
+        setDeleteOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        setIsDeleting(true);
+        try {
+            await deleteAssessment(deleteTarget.id);
+            toast.success("Assessment deleted.");
+            setDeleteOpen(false);
+            setDeleteTarget(null);
+            void reloadAssessments();
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Failed to delete assessment.";
+            toast.error(message);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
     const dialogStudentName = selectedAssessment
         ? getStudentDisplayName(selectedAssessment)
         : "Assessment";
@@ -551,7 +609,6 @@ const CounselorIntake: React.FC = () => {
         >
             <div className="flex w-full justify-center">
                 <div className="w-full max-w-5xl space-y-4">
-                    {/* Top controls */}
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Intake (Assessments)</p>
@@ -565,7 +622,6 @@ const CounselorIntake: React.FC = () => {
                             </p>
                         </div>
 
-                        {/* ✅ Mobile: vertical buttons, Desktop: unchanged */}
                         <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                             <Button
                                 type="button"
@@ -720,6 +776,18 @@ const CounselorIntake: React.FC = () => {
                                                         >
                                                             View / Download
                                                         </Button>
+
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            variant="outline"
+                                                            className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                            onClick={() => askDelete(assessment)}
+                                                            disabled={isDeleting}
+                                                        >
+                                                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                            Delete
+                                                        </Button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -848,6 +916,48 @@ const CounselorIntake: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Delete confirmation */}
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent className="sm:max-w-lg">
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="text-base">Delete assessment?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-xs">
+                            You are about to delete the assessment submitted by{" "}
+                            <span className="font-medium text-foreground">
+                                {deleteTarget ? getStudentDisplayName(deleteTarget) : "this student"}
+                            </span>
+                            . This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+
+                    <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                        <AlertDialogCancel disabled={isDeleting} className="w-full sm:w-auto">
+                            Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                void confirmDelete();
+                            }}
+                            disabled={isDeleting}
+                            className="w-full bg-red-600 text-white hover:bg-red-700 sm:w-auto"
+                        >
+                            {isDeleting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Deleting…
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                </>
+                            )}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </DashboardLayout>
     );
 };

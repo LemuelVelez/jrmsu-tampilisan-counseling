@@ -10,6 +10,7 @@ import {
     CalendarClock,
     ClipboardList as ClipboardListIcon,
     Loader2,
+    Trash2,
     UserCircle2,
 } from "lucide-react";
 import { format, parseISO, startOfToday } from "date-fns";
@@ -26,6 +27,19 @@ import {
     DialogDescription,
     DialogFooter,
 } from "@/components/ui/dialog";
+
+import {
+    AlertDialog,
+    AlertDialogContent,
+    AlertDialogHeader,
+    AlertDialogTitle,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogCancel,
+    AlertDialogAction,
+} from "@/components/ui/alert-dialog";
+
+import { AUTH_API_BASE_URL } from "@/api/auth/route";
 
 const CONCERN_LABELS: Record<string, string> = {
     academic: "Academic",
@@ -80,6 +94,106 @@ const MH_QUESTIONS: Record<(typeof MH_KEYS)[number], string> = {
     mh_motor: "Moving/speaking slowly, or the opposite — fidgety/restless",
     mh_self_harm: "Thoughts that you would be better off dead or of hurting yourself",
 };
+
+function resolveApiUrl(path: string): string {
+    if (!AUTH_API_BASE_URL) {
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
+        );
+    }
+    const trimmed = path.replace(/^\/+/, "");
+    return `${AUTH_API_BASE_URL}/${trimmed}`;
+}
+
+async function studentApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const url = resolveApiUrl(path);
+
+    const response = await fetch(url, {
+        ...init,
+        headers: {
+            Accept: "application/json",
+            "Content-Type": "application/json",
+            ...(init.headers ?? {}),
+        },
+        credentials: "include",
+    });
+
+    const text = await response.text();
+    let data: unknown = null;
+
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch {
+            data = text;
+        }
+    }
+
+    if (!response.ok) {
+        const body = data as any;
+
+        const firstErrorFromLaravel =
+            body?.errors && typeof body.errors === "object"
+                ? (Object.values(body.errors)[0] as any)?.[0]
+                : undefined;
+
+        const message =
+            body?.message ||
+            body?.error ||
+            firstErrorFromLaravel ||
+            response.statusText ||
+            "An unknown error occurred while communicating with the server.";
+
+        const error = new Error(message) as Error & { status?: number; data?: unknown };
+        error.status = response.status;
+        error.data = body ?? text;
+        throw error;
+    }
+
+    return data as T;
+}
+
+async function deleteStudentRequest(requestId: number | string): Promise<any> {
+    const candidates = [
+        `/student/appointments/${requestId}`,
+        `/student/evaluations/${requestId}`,
+        `/student/intake/requests/${requestId}`,
+        `/student/counseling/requests/${requestId}`,
+    ];
+
+    let lastErr: unknown = null;
+    for (const path of candidates) {
+        try {
+            return await studentApiFetch<any>(path, { method: "DELETE" });
+        } catch (err) {
+            const e = err as any;
+            lastErr = err;
+            if (e?.status === 404) continue;
+            throw err;
+        }
+    }
+    throw lastErr ?? new Error("Delete endpoint not found.");
+}
+
+async function deleteStudentAssessment(assessmentId: number | string): Promise<any> {
+    const candidates = [
+        `/student/intake/assessments/${assessmentId}`,
+        `/student/assessments/${assessmentId}`,
+    ];
+
+    let lastErr: unknown = null;
+    for (const path of candidates) {
+        try {
+            return await studentApiFetch<any>(path, { method: "DELETE" });
+        } catch (err) {
+            const e = err as any;
+            lastErr = err;
+            if (e?.status === 404) continue;
+            throw err;
+        }
+    }
+    throw lastErr ?? new Error("Delete endpoint not found.");
+}
 
 function StatusBadge({ status }: { status: string }) {
     const normalized = status.toLowerCase();
@@ -239,6 +353,10 @@ function getAssessmentHasAnyResponses(assessment: any): boolean {
     return MH_KEYS.some((k) => Boolean(assessment?.[k]));
 }
 
+type DeleteTarget =
+    | { kind: "request"; id: string | number; label: string }
+    | { kind: "assessment"; id: string | number; label: string };
+
 const StudentEvaluation: React.FC = () => {
     const [evaluations, setEvaluations] = React.useState<StudentEvaluationEntry[]>([]);
     const [assessments, setAssessments] = React.useState<StudentAssessment[]>([]);
@@ -254,6 +372,11 @@ const StudentEvaluation: React.FC = () => {
         React.useState<StudentAssessment | null>(null);
     const [selectedRequest, setSelectedRequest] =
         React.useState<StudentEvaluationEntry | null>(null);
+
+    // Delete confirmation (AlertDialog)
+    const [deleteOpen, setDeleteOpen] = React.useState(false);
+    const [deleteTarget, setDeleteTarget] = React.useState<DeleteTarget | null>(null);
+    const [isDeleting, setIsDeleting] = React.useState(false);
 
     const loadData = React.useCallback(async () => {
         setIsLoading(true);
@@ -306,6 +429,59 @@ const StudentEvaluation: React.FC = () => {
         setIsDialogOpen(true);
     };
 
+    const askDeleteRequest = (req: StudentEvaluationEntry) => {
+        const id = req.id as any;
+        if (id === undefined || id === null) {
+            toast.error("Unable to delete: missing request id.");
+            return;
+        }
+        setDeleteTarget({
+            kind: "request",
+            id,
+            label: formatConcernType(req.concern_type ?? undefined) || "Counseling request",
+        });
+        setDeleteOpen(true);
+    };
+
+    const askDeleteAssessment = (assessment: StudentAssessment) => {
+        const id = (assessment as any)?.id;
+        if (id === undefined || id === null) {
+            toast.error("Unable to delete: missing assessment id.");
+            return;
+        }
+        setDeleteTarget({
+            kind: "assessment",
+            id,
+            label: "Assessment submission",
+        });
+        setDeleteOpen(true);
+    };
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return;
+
+        setIsDeleting(true);
+        try {
+            if (deleteTarget.kind === "request") {
+                await deleteStudentRequest(deleteTarget.id);
+                toast.success("Request deleted.");
+            } else {
+                await deleteStudentAssessment(deleteTarget.id);
+                toast.success("Assessment deleted.");
+            }
+
+            setDeleteOpen(false);
+            setDeleteTarget(null);
+            void loadData();
+        } catch (err) {
+            const message =
+                err instanceof Error ? err.message : "Failed to delete. Please try again.";
+            toast.error(message);
+        } finally {
+            setIsDeleting(false);
+        }
+    };
+
     const dialogTitle =
         dialogMode === "assessment" ? "Assessment preview" : "Counseling request preview";
 
@@ -329,8 +505,7 @@ const StudentEvaluation: React.FC = () => {
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Evaluation</p>
                             <p className="text-[0.7rem] text-amber-900/80">
-                                Preview-only: you can view your submitted records here, but you cannot
-                                modify them from this page.
+                                Preview-only: you can view your submitted records here. Deleting a record is permanent.
                             </p>
                         </div>
 
@@ -364,8 +539,7 @@ const StudentEvaluation: React.FC = () => {
                                 <span>Evaluation – assessments &amp; counseling history</span>
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
-                                This page shows your submitted mental health assessments (Steps 1–3) and your
-                                counseling requests. Use the preview buttons to view full details.
+                                Use the preview buttons to view details. Use Delete to remove a record (with confirmation).
                             </p>
                         </CardHeader>
 
@@ -392,8 +566,7 @@ const StudentEvaluation: React.FC = () => {
                                     You haven’t submitted any assessments or counseling requests yet.
                                     <br />
                                     <span className="mt-1 inline-block">
-                                        Start by filling out the <span className="font-semibold">Intake</span>{" "}
-                                        form in the sidebar.
+                                        Start by filling out the <span className="font-semibold">Intake</span> form in the sidebar.
                                     </span>
                                 </div>
                             )}
@@ -436,8 +609,7 @@ const StudentEvaluation: React.FC = () => {
                                                                 </div>
 
                                                                 <p className="text-[0.7rem] text-muted-foreground">
-                                                                    Submitted:{" "}
-                                                                    <span className="font-medium text-emerald-900">{submitted}</span>
+                                                                    Submitted: <span className="font-medium text-emerald-900">{submitted}</span>
                                                                 </p>
 
                                                                 <p className="text-[0.7rem] text-slate-700">
@@ -445,7 +617,8 @@ const StudentEvaluation: React.FC = () => {
                                                                     {typeof a?.age === "number" ? a.age : "—"}{" "}
                                                                     <span className="mx-1">•</span>{" "}
                                                                     <span className="font-medium">Gender:</span>{" "}
-                                                                    {formatGender(a?.gender)} <span className="mx-1">•</span>{" "}
+                                                                    {formatGender(a?.gender)}{" "}
+                                                                    <span className="mx-1">•</span>{" "}
                                                                     <span className="font-medium">Occupation:</span>{" "}
                                                                     {a?.occupation?.trim?.() ? a.occupation.trim() : "—"}
                                                                 </p>
@@ -460,6 +633,18 @@ const StudentEvaluation: React.FC = () => {
                                                                     onClick={() => openAssessmentPreview(assessment)}
                                                                 >
                                                                     View / Preview
+                                                                </Button>
+
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                                    onClick={() => askDeleteAssessment(assessment)}
+                                                                    disabled={isDeleting}
+                                                                >
+                                                                    <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                    Delete
                                                                 </Button>
                                                             </div>
                                                         </div>
@@ -478,8 +663,7 @@ const StudentEvaluation: React.FC = () => {
                                                     Upcoming / active requests
                                                 </h2>
                                                 <p className="text-[0.7rem] text-muted-foreground">
-                                                    Uses counselor final schedule when available; otherwise your preferred
-                                                    date.
+                                                    Uses counselor final schedule when available; otherwise your preferred date.
                                                 </p>
                                             </div>
 
@@ -536,15 +720,29 @@ const StudentEvaluation: React.FC = () => {
                                                                         </span>
                                                                     </p>
 
-                                                                    <Button
-                                                                        type="button"
-                                                                        size="sm"
-                                                                        variant="outline"
-                                                                        className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
-                                                                        onClick={() => openRequestPreview(evaluation)}
-                                                                    >
-                                                                        View / Preview
-                                                                    </Button>
+                                                                    <div className="flex flex-wrap gap-2 sm:justify-end">
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
+                                                                            onClick={() => openRequestPreview(evaluation)}
+                                                                        >
+                                                                            View / Preview
+                                                                        </Button>
+
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                                            onClick={() => askDeleteRequest(evaluation)}
+                                                                            disabled={isDeleting}
+                                                                        >
+                                                                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                            Delete
+                                                                        </Button>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         );
@@ -615,15 +813,29 @@ const StudentEvaluation: React.FC = () => {
                                                                         </span>
                                                                     </p>
 
-                                                                    <Button
-                                                                        type="button"
-                                                                        size="sm"
-                                                                        variant="outline"
-                                                                        className="h-8 border-slate-200 bg-white/80 text-[0.7rem] text-slate-900 hover:bg-slate-50"
-                                                                        onClick={() => openRequestPreview(evaluation)}
-                                                                    >
-                                                                        View / Preview
-                                                                    </Button>
+                                                                    <div className="flex flex-wrap gap-2 sm:justify-end">
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 border-slate-200 bg-white/80 text-[0.7rem] text-slate-900 hover:bg-slate-50"
+                                                                            onClick={() => openRequestPreview(evaluation)}
+                                                                        >
+                                                                            View / Preview
+                                                                        </Button>
+
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                                            onClick={() => askDeleteRequest(evaluation)}
+                                                                            disabled={isDeleting}
+                                                                        >
+                                                                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                            Delete
+                                                                        </Button>
+                                                                    </div>
                                                                 </div>
                                                             </div>
                                                         );
@@ -639,15 +851,13 @@ const StudentEvaluation: React.FC = () => {
                 </div>
             </div>
 
+            {/* Preview dialog */}
             <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
                 {/* ✅ Mobile-only: proper viewport spacing (top/bottom/left/right). Desktop unchanged via sm:* */}
                 <DialogContent
                     className={[
-                        // left/right spacing: 1rem each side (100vw - 2rem)
                         "w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)]",
-                        // top/bottom spacing: pin near top with 1rem gap and limit height
                         "top-4 translate-y-0 max-h-[calc(100vh-2rem)]",
-                        // keep desktop behavior untouched
                         "sm:max-w-3xl sm:top-[50%] sm:translate-y-[-50%] sm:max-h-none",
                     ].join(" ")}
                 >
@@ -659,7 +869,6 @@ const StudentEvaluation: React.FC = () => {
                         <DialogDescription className="text-xs">{dialogSubtitle}</DialogDescription>
                     </DialogHeader>
 
-                    {/* ✅ Mobile-only max height uses viewport; desktop keeps original 70vh */}
                     <div className="max-h-[calc(100vh-12rem)] overflow-y-auto pr-2 sm:max-h-[70vh]">
                         {dialogMode === "assessment" ? (
                             selectedAssessment ? (
@@ -682,9 +891,9 @@ const StudentEvaluation: React.FC = () => {
                                             </p>
                                             <p>
                                                 <span className="font-medium">Occupation:</span>{" "}
-                                                {(selectedAssessment as any).occupation?.trim?.()
-                                                    ? (selectedAssessment as any).occupation.trim()
-                                                    : "—"}
+                                                (selectedAssessment as any).occupation?.trim?.()
+                                                ? (selectedAssessment as any).occupation.trim()
+                                                : "—"
                                             </p>
                                             <p>
                                                 <span className="font-medium">Living situation:</span>{" "}
@@ -700,8 +909,7 @@ const StudentEvaluation: React.FC = () => {
                                                 This is a read-only preview of your submitted intake assessment.
                                             </p>
                                             <p className="text-[0.7rem] text-muted-foreground">
-                                                If you need corrections, please contact the Guidance &amp; Counseling
-                                                Office.
+                                                If you need corrections, please contact the Guidance &amp; Counseling Office.
                                             </p>
                                         </div>
                                     </div>
@@ -736,8 +944,7 @@ const StudentEvaluation: React.FC = () => {
                                             </div>
                                         ) : (
                                             <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-center text-xs text-muted-foreground">
-                                                No item-by-item questionnaire fields were found to preview for this
-                                                submission.
+                                                No item-by-item questionnaire fields were found to preview for this submission.
                                             </div>
                                         )}
                                     </div>
@@ -791,9 +998,7 @@ const StudentEvaluation: React.FC = () => {
                                     </div>
 
                                     <div className="rounded-md border border-amber-100 bg-amber-50/60 px-3 py-2 text-[0.7rem] text-amber-900">
-                                        This is a read-only preview. If you need changes, please contact the
-                                        Guidance &amp; Counseling Office or submit a new request (if your workflow
-                                        allows).
+                                        This is a read-only preview. Deleting a record is permanent.
                                     </div>
                                 </div>
                             </div>
@@ -816,6 +1021,54 @@ const StudentEvaluation: React.FC = () => {
                     </DialogFooter>
                 </DialogContent>
             </Dialog>
+
+            {/* Delete confirmation dialog */}
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent
+                    className={[
+                        "w-[calc(100vw-2rem)] max-w-[calc(100vw-2rem)]",
+                        "top-4 translate-y-0",
+                        "sm:max-w-lg sm:top-[50%] sm:translate-y-[-50%]",
+                    ].join(" ")}
+                >
+                    <AlertDialogHeader>
+                        <AlertDialogTitle className="text-base">Delete this record?</AlertDialogTitle>
+                        <AlertDialogDescription className="text-xs">
+                            You are about to delete{" "}
+                            <span className="font-medium text-foreground">
+                                {deleteTarget?.label ?? "this item"}
+                            </span>
+                            . This action cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+
+                    <AlertDialogFooter className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+                        <AlertDialogCancel disabled={isDeleting} className="w-full sm:w-auto">
+                            Cancel
+                        </AlertDialogCancel>
+                        <AlertDialogAction
+                            onClick={(e) => {
+                                e.preventDefault();
+                                void confirmDelete();
+                            }}
+                            disabled={isDeleting}
+                            className="w-full bg-red-600 text-white hover:bg-red-700 sm:w-auto"
+                        >
+                            {isDeleting ? (
+                                <>
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    Deleting…
+                                </>
+                            ) : (
+                                <>
+                                    <Trash2 className="mr-2 h-4 w-4" />
+                                    Delete
+                                </>
+                            )}
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </DashboardLayout>
     );
 };
