@@ -227,12 +227,6 @@ function sanitizeFilename(name: string): string {
         .slice(0, 90);
 }
 
-/**
- * ✅ One-page PDF generator (compact layout)
- * - Fixed row heights
- * - Question wraps to max 2 lines (ellipsis)
- * - No multi-page addPage()
- */
 function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
     try {
         const studentName = getStudentDisplayName(assessment);
@@ -297,9 +291,12 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
 
         doc.setFont("helvetica", "normal");
         doc.setFontSize(8);
-        doc.text(`Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`, pageWidth - margin, 38, {
-            align: "right",
-        });
+        doc.text(
+            `Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`,
+            pageWidth - margin,
+            38,
+            { align: "right" },
+        );
 
         doc.setTextColor(...COLORS.ink);
         cursor.y = headerH + 16;
@@ -335,7 +332,11 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
             doc.setFont("helvetica", "normal");
             doc.setFontSize(9);
             doc.setTextColor(...COLORS.ink);
-            const lines = wrapMaxLines(value, (pageWidth - margin * 2) / 2 - 26, 2);
+            const lines = wrapMaxLines(
+                value,
+                (pageWidth - margin * 2) / 2 - 26,
+                2,
+            );
             doc.text(lines, x, y + 12);
         };
 
@@ -353,10 +354,15 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
         kv("Student", studentName, leftX, topY);
         kv("Submitted", submitted, rightX, topY);
 
-        kv("Consent", assessment.consent ? "Yes (consented)" : "No consent on record", leftX, topY + 34);
+        kv(
+            "Consent",
+            assessment.consent ? "Yes (consented)" : "No consent on record",
+            leftX,
+            topY + 34,
+        );
         kv("Score", `${score} / 27  ·  ${answered} of 9 answered`, rightX, topY + 34);
 
-        // ✅ Severity pill INSIDE card
+        // Severity pill
         const badgeText = `Severity: ${severity}`;
         doc.setFont("helvetica", "bold");
         doc.setFontSize(8);
@@ -531,16 +537,12 @@ const CounselorIntake: React.FC = () => {
     const dialogStudentName = selectedAssessment
         ? getStudentDisplayName(selectedAssessment)
         : "Assessment";
-    const dialogSubmitted = selectedAssessment
-        ? formatDateTime(selectedAssessment.created_at)
-        : "—";
+    const dialogSubmitted = selectedAssessment ? formatDateTime(selectedAssessment.created_at) : "—";
 
     const dialogScore = selectedAssessment
         ? calculatePhqScore(selectedAssessment)
         : { score: 0, answered: 0 };
-    const dialogSeverity = selectedAssessment
-        ? phqSeverityLabel(dialogScore.score)
-        : "—";
+    const dialogSeverity = selectedAssessment ? phqSeverityLabel(dialogScore.score) : "—";
 
     return (
         <DashboardLayout
@@ -549,29 +551,28 @@ const CounselorIntake: React.FC = () => {
         >
             <div className="flex w-full justify-center">
                 <div className="w-full max-w-5xl space-y-4">
+                    {/* Top controls */}
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Intake (Assessments)</p>
                             <p className="text-[0.7rem] text-amber-900/80">
                                 Counseling requests are now handled as{" "}
                                 <span className="font-medium">appointments</span>. Go to{" "}
-                                <Link
-                                    to="/dashboard/counselor/appointments"
-                                    className="font-semibold underline"
-                                >
+                                <Link to="/dashboard/counselor/appointments" className="font-semibold underline">
                                     Appointments
                                 </Link>{" "}
                                 to schedule or reschedule.
                             </p>
                         </div>
 
-                        <div className="flex flex-wrap items-center gap-2">
+                        {/* ✅ Mobile: vertical buttons, Desktop: unchanged */}
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                             <Button
                                 type="button"
                                 size="sm"
                                 variant="outline"
                                 onClick={() => void reloadAssessments()}
-                                className="border-amber-200 bg-white/80 text-xs text-amber-900 hover:bg-amber-50"
+                                className="w-full border-amber-200 bg-white/80 text-xs text-amber-900 hover:bg-amber-50 sm:w-auto"
                             >
                                 {isLoadingAssessments ? (
                                     <>
@@ -586,7 +587,7 @@ const CounselorIntake: React.FC = () => {
                                 )}
                             </Button>
 
-                            <Button asChild type="button" size="sm" className="text-xs">
+                            <Button asChild type="button" size="sm" className="w-full text-xs sm:w-auto">
                                 <Link to="/dashboard/counselor/appointments">Open Appointments</Link>
                             </Button>
                         </div>
@@ -599,8 +600,8 @@ const CounselorIntake: React.FC = () => {
                                 Needs assessments (Steps 1–3)
                             </CardTitle>
                             <p className="text-xs text-muted-foreground">
-                                This list shows consent, demographic snapshots, and mental health questionnaire
-                                responses submitted by students. Scores are shown for triage and{" "}
+                                This list shows consent, demographic snapshots, and mental health questionnaire responses
+                                submitted by students. Scores are shown for triage and{" "}
                                 <span className="font-medium">are not diagnostic labels</span>.
                             </p>
                         </CardHeader>
@@ -701,7 +702,8 @@ const CounselorIntake: React.FC = () => {
                                                         </p>
                                                         <p className="mt-1 text-[0.6rem] text-muted-foreground">
                                                             Based on PHQ-9 style scoring for{" "}
-                                                            <span className="font-medium">triage only</span>; not a diagnosis or clinical label.
+                                                            <span className="font-medium">triage only</span>; not a diagnosis or
+                                                            clinical label.
                                                         </p>
                                                     </div>
 
@@ -788,37 +790,46 @@ const CounselorIntake: React.FC = () => {
                                 <div className="space-y-2">
                                     <p className="text-xs font-semibold text-amber-900">Item-by-item responses</p>
 
-                                    <div className="overflow-hidden rounded-md border">
-                                        <div className="grid grid-cols-[1fr_220px] bg-muted/50 px-3 py-2 text-[0.7rem] font-medium">
-                                            <div>Question</div>
-                                            <div className="text-right">Answer</div>
-                                        </div>
+                                    <div className="overflow-x-auto rounded-md border">
+                                        <div className="min-w-[640px]">
+                                            <div className="grid grid-cols-[1fr_220px] bg-muted/50 px-3 py-2 text-[0.7rem] font-medium">
+                                                <div>Question</div>
+                                                <div className="text-right">Answer</div>
+                                            </div>
 
-                                        <div className="divide-y">
-                                            {MH_KEYS.map((key) => (
-                                                <div
-                                                    key={String(key)}
-                                                    className="grid grid-cols-[1fr_220px] gap-3 px-3 py-2 text-[0.75rem]"
-                                                >
-                                                    <div className="text-muted-foreground">{MH_QUESTIONS[key]}</div>
-                                                    <div className="text-right font-medium text-amber-900">
-                                                        {prettyFrequency(
-                                                            selectedAssessment[key] as MentalFrequencyApi | null | undefined,
-                                                        )}
+                                            <div className="divide-y">
+                                                {MH_KEYS.map((key) => (
+                                                    <div
+                                                        key={String(key)}
+                                                        className="grid grid-cols-[1fr_220px] gap-3 px-3 py-2 text-[0.75rem]"
+                                                    >
+                                                        <div className="text-muted-foreground">{MH_QUESTIONS[key]}</div>
+                                                        <div className="text-right font-medium text-amber-900">
+                                                            {prettyFrequency(
+                                                                selectedAssessment[key] as MentalFrequencyApi | null | undefined,
+                                                            )}
+                                                        </div>
                                                     </div>
-                                                </div>
-                                            ))}
+                                                ))}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         ) : (
-                            <div className="py-6 text-center text-xs text-muted-foreground">No assessment selected.</div>
+                            <div className="py-6 text-center text-xs text-muted-foreground">
+                                No assessment selected.
+                            </div>
                         )}
                     </div>
 
-                    <DialogFooter className="gap-3 sm:gap-3">
-                        <Button type="button" variant="outline" onClick={closeAssessmentDialog}>
+                    <DialogFooter className="flex flex-col gap-3 sm:flex-row sm:justify-end sm:gap-3">
+                        <Button
+                            type="button"
+                            variant="outline"
+                            onClick={closeAssessmentDialog}
+                            className="w-full sm:w-auto"
+                        >
                             Close
                         </Button>
 
@@ -829,6 +840,7 @@ const CounselorIntake: React.FC = () => {
                                 downloadAssessmentPdf(selectedAssessment);
                             }}
                             disabled={!selectedAssessment}
+                            className="w-full sm:w-auto"
                         >
                             <FileDown className="mr-2 h-4 w-4" />
                             Download PDF
