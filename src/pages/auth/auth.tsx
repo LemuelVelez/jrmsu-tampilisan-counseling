@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -21,7 +22,12 @@ import ecounselingLogo from "@/assets/images/ecounseling.svg";
 import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
-import { registerAccount, type RegisterPayload } from "@/lib/authentication";
+import {
+    registerAccount,
+    type RegisterPayload,
+    getCurrentSession,
+    clearSession,
+} from "@/lib/authentication";
 import { toast } from "sonner";
 import { resolveDashboardPathForRole } from "@/lib/role";
 
@@ -42,10 +48,7 @@ const COLLEGES: Record<string, string[]> = {
         "Bachelor of Physical Education",
         "BEED",
     ],
-    "College of Computing Studies": [
-        "BS Information Systems",
-        "BS Computer Science",
-    ],
+    "College of Computing Studies": ["BS Information Systems", "BS Computer Science"],
     "College of Agriculture and Forestry": ["BS Agriculture", "BS Forestry"],
     "College of Liberal Arts, Mathematics and Sciences": ["BAELS"],
     "School of Engineering": ["Agricultural Biosystems Engineering"],
@@ -68,11 +71,20 @@ interface AuthFormProps extends React.HTMLAttributes<HTMLDivElement> {
     onSwitchMode: () => void;
 }
 
+function isEmailVerified(u: any): boolean {
+    if (!u) return false;
+    if (u?.email_verified_at) return true;
+    if (typeof u?.email_verified === "boolean") return u.email_verified;
+    if (typeof u?.verified === "boolean") return u.verified;
+    return false;
+}
+
 const LoginForm: React.FC<AuthFormProps> = ({
     className,
     onSwitchMode,
     ...props
 }) => {
+    const navigate = useNavigate();
     const [showLoginPassword, setShowLoginPassword] = React.useState(false);
     const [formError, setFormError] = React.useState<string | null>(null);
     const [isSubmitting, setIsSubmitting] = React.useState(false);
@@ -98,6 +110,26 @@ const LoginForm: React.FC<AuthFormProps> = ({
 
             try {
                 await signIn({ email, password });
+
+                // ✅ After signIn, check the stored session user
+                const nextSession = getCurrentSession();
+                const user = nextSession.user;
+
+                // ✅ If email is NOT verified: treat login as not successful
+                if (!isEmailVerified(user)) {
+                    clearSession();
+
+                    toast.info(
+                        "Your email is not verified yet. Please verify your email to continue.",
+                    );
+
+                    navigate(
+                        `/auth/verify-email?email=${encodeURIComponent(email)}`,
+                        { replace: true },
+                    );
+                    return;
+                }
+
                 // Successful sign in: AuthPage listens to session changes and will redirect.
                 toast.success("Signed in successfully.");
             } catch (error) {
@@ -112,7 +144,7 @@ const LoginForm: React.FC<AuthFormProps> = ({
                 setIsSubmitting(false);
             }
         },
-        [signIn],
+        [signIn, navigate],
     );
 
     return (
@@ -354,10 +386,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                 toast.success(
                     "Account created. Please check your email for a verification link.",
                 );
-                // On success, take the user to the email verification screen.
-                navigate(
-                    `/auth/verify-email?email=${encodeURIComponent(email)}`,
-                );
+                navigate(`/auth/verify-email?email=${encodeURIComponent(email)}`);
             } catch (error) {
                 console.error("[auth] Registration failed", error);
                 const message =
@@ -398,7 +427,6 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                 </p>
                             </div>
 
-                            {/* NEW: Full name field */}
                             <Field>
                                 <FieldLabel htmlFor="signup-name">Full name</FieldLabel>
                                 <Input
@@ -428,7 +456,6 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                 </FieldDescription>
                             </Field>
 
-                            {/* Gender + Registration type */}
                             <Field>
                                 <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                                     <Field>
@@ -474,7 +501,6 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                 </div>
                             </Field>
 
-                            {/* Student-only fields */}
                             {accountType === "student" && (
                                 <Field>
                                     <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -626,7 +652,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                         id="signup-course-other"
                                                         placeholder="Please specify your course"
                                                         value={courseOther}
-                                                        onChange={(e) => setCourseOther(e.target.value)}
+                                                        onChange={(e) =>
+                                                            setCourseOther(e.target.value)
+                                                        }
                                                     />
                                                 </div>
                                             )}
@@ -692,9 +720,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                     setShowSignupConfirmPassword((prev) => !prev)
                                                 }
                                                 aria-label={
-                                                    showSignupConfirmPassword
-                                                        ? "Hide password"
-                                                        : "Show password"
+                                                    showSignupConfirmPassword ? "Hide password" : "Show password"
                                                 }
                                             >
                                                 {showSignupConfirmPassword ? (
@@ -706,9 +732,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                         </div>
                                     </Field>
                                 </Field>
-                                <FieldDescription>
-                                    Must be at least 8 characters long.
-                                </FieldDescription>
+                                <FieldDescription>Must be at least 8 characters long.</FieldDescription>
                                 {formError && (
                                     <FieldDescription
                                         role="alert"
@@ -770,6 +794,17 @@ const AuthPage: React.FC = () => {
             return;
         }
 
+        // ✅ If user is authenticated but email is not verified, force verify flow.
+        if (!isEmailVerified(session.user)) {
+            const email =
+                typeof session.user.email === "string" ? session.user.email : "";
+            clearSession();
+            navigate(`/auth/verify-email?email=${encodeURIComponent(email)}`, {
+                replace: true,
+            });
+            return;
+        }
+
         // Only auto-redirect after a successful sign-in.
         // After registration we manually send the user to the verify-email page.
         if (mode !== "login") {
@@ -790,7 +825,6 @@ const AuthPage: React.FC = () => {
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
-                {/* Header with logo (clickable back to landing page) */}
                 <div className="flex flex-col items-center justify-center gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <Link
                         to="/"
