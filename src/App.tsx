@@ -1,5 +1,6 @@
-import { Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
+/* eslint-disable @typescript-eslint/no-explicit-any */
+import React, { Suspense } from "react";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 
 import LandingPage from "./pages/landing";
 import AuthPage from "./pages/auth/auth";
@@ -7,68 +8,118 @@ import ForgotPasswordPage from "./pages/auth/forgot-password";
 import ResetPasswordPage from "./pages/auth/reset-password";
 import VerifyEmailPage from "./pages/auth/verify-email";
 import AuthCallbackPage from "./pages/auth/callback";
+
 import AdminOverview from "./pages/dashboard/admin/overview";
 import AdminUsersPage from "./pages/dashboard/admin/user";
+
 import CounselorOverview from "./pages/dashboard/counselor/overview";
-import CounselorIntake from "./pages/dashboard/counselor/intake"; // ✅ ADDED
+import CounselorIntake from "./pages/dashboard/counselor/intake";
+import CounselorAppointments from "./pages/dashboard/counselor/appointments";
+
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
 import StudentMessages from "./pages/dashboard/student/messages";
 import StudentSettings from "./pages/dashboard/student/settings";
+
 import NotFoundPage from "./pages/404";
 import Loading from "./components/Loading";
 import { Toaster } from "./components/ui/sonner";
+
 import { getCurrentSession } from "@/lib/authentication";
-import { resolveDashboardPathForRole } from "@/lib/role";
+import { normalizeRole, resolveDashboardPathForRole } from "@/lib/role";
+
+function isEmailVerified(u: any): boolean {
+  if (!u) return false;
+  if (u?.email_verified_at) return true;
+  if (typeof u?.email_verified === "boolean") return u.email_verified;
+  if (typeof u?.verified === "boolean") return u.verified;
+  return false;
+}
+
+/**
+ * Route guard:
+ * - Requires auth session
+ * - Requires email verified
+ * - Requires role in allowedRoles
+ * If blocked → redirects to the correct place.
+ */
+function RequireRole({
+  allowedRoles,
+  children,
+}: {
+  allowedRoles: string[];
+  children: React.ReactElement;
+}) {
+  const location = useLocation();
+  const session = getCurrentSession();
+  const user = session.user;
+
+  // Not logged in
+  if (!user) {
+    return <Navigate to="/auth" replace state={{ from: location.pathname }} />;
+  }
+
+  // Email not verified
+  if (!isEmailVerified(user)) {
+    const email = typeof user.email === "string" ? user.email : "";
+    return (
+      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
+    );
+  }
+
+  const role = normalizeRole(user.role ?? "");
+
+  const allowed = allowedRoles.some((r) => role.includes(r));
+  if (!allowed) {
+    // Redirect them back to their own dashboard root
+    const home = resolveDashboardPathForRole(user.role ?? "");
+    return <Navigate to={home} replace />;
+  }
+
+  return children;
+}
 
 function DashboardIndexRoute() {
   const session = getCurrentSession();
   const user = session.user;
 
-  // No active session → send user to auth page
-  if (!user) {
-    return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to="/auth" replace />;
+
+  // If somehow they have a session but not verified, always push to verify
+  if (!isEmailVerified(user)) {
+    const email = typeof user.email === "string" ? user.email : "";
+    return (
+      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
+    );
   }
 
-  const rawRole =
-    typeof user.role === "string"
-      ? user.role
-      : user.role != null
-        ? String(user.role)
-        : null;
-
-  const dashboardPath = resolveDashboardPathForRole(rawRole);
-
+  const dashboardPath = resolveDashboardPathForRole(user.role ?? null);
   return <Navigate to={dashboardPath} replace />;
 }
 
-// Centralized settings redirection based on role
 function SettingsIndexRoute() {
   const session = getCurrentSession();
   const user = session.user;
 
-  // No active session → send user to auth page
-  if (!user) {
-    return <Navigate to="/auth" replace />;
+  if (!user) return <Navigate to="/auth" replace />;
+
+  if (!isEmailVerified(user)) {
+    const email = typeof user.email === "string" ? user.email : "";
+    return (
+      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
+    );
   }
 
-  const rawRole =
-    typeof user.role === "string"
-      ? user.role
-      : user.role != null
-        ? String(user.role)
-        : null;
+  const role = normalizeRole(user.role ?? "");
 
-  const normalizedRole = rawRole?.toLowerCase() ?? null;
-
-  // Currently only student has a dedicated settings page
-  if (normalizedRole === "student") {
+  // Only student has a dedicated settings page (and student dashboard includes guest)
+  if (role.includes("student") || role.includes("guest")) {
     return <Navigate to="/dashboard/student/settings" replace />;
   }
 
-  // Fallback: send other roles back to their dashboard home
-  const dashboardPath = resolveDashboardPathForRole(rawRole);
+  // Otherwise go to their dashboard home
+  const dashboardPath = resolveDashboardPathForRole(user.role ?? null);
   return <Navigate to={dashboardPath} replace />;
 }
 
@@ -93,18 +144,91 @@ function App() {
           {/* Centralized settings entry point */}
           <Route path="/dashboard/settings" element={<SettingsIndexRoute />} />
 
-          {/* Dashboards by role */}
-          <Route path="/dashboard/admin" element={<AdminOverview />} />
-          <Route path="/dashboard/admin/users" element={<AdminUsersPage />} />
+          {/* Admin routes (admin only) */}
+          <Route
+            path="/dashboard/admin"
+            element={
+              <RequireRole allowedRoles={["admin"]}>
+                <AdminOverview />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/admin/users"
+            element={
+              <RequireRole allowedRoles={["admin"]}>
+                <AdminUsersPage />
+              </RequireRole>
+            }
+          />
 
-          <Route path="/dashboard/counselor" element={<CounselorOverview />} />
-          <Route path="/dashboard/counselor/intake" element={<CounselorIntake />} /> {/* ✅ ADDED */}
+          {/* Counselor routes (counselor only) */}
+          <Route
+            path="/dashboard/counselor"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorOverview />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/counselor/intake"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorIntake />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/counselor/appointments"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorAppointments />
+              </RequireRole>
+            }
+          />
 
-          <Route path="/dashboard/student" element={<StudentOverview />} />
-          <Route path="/dashboard/student/intake" element={<StudentIntake />} />
-          <Route path="/dashboard/student/messages" element={<StudentMessages />} />
-          <Route path="/dashboard/student/evaluation" element={<StudentEvaluation />} />
-          <Route path="/dashboard/student/settings" element={<StudentSettings />} />
+          {/* Student routes (student + guest only) */}
+          <Route
+            path="/dashboard/student"
+            element={
+              <RequireRole allowedRoles={["student", "guest"]}>
+                <StudentOverview />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/student/intake"
+            element={
+              <RequireRole allowedRoles={["student", "guest"]}>
+                <StudentIntake />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/student/messages"
+            element={
+              <RequireRole allowedRoles={["student", "guest"]}>
+                <StudentMessages />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/student/evaluation"
+            element={
+              <RequireRole allowedRoles={["student", "guest"]}>
+                <StudentEvaluation />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/student/settings"
+            element={
+              <RequireRole allowedRoles={["student", "guest"]}>
+                <StudentSettings />
+              </RequireRole>
+            }
+          />
 
           {/* 404 */}
           <Route path="*" element={<NotFoundPage />} />
