@@ -41,14 +41,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { cn } from "@/lib/utils";
 import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
@@ -176,6 +169,93 @@ async function tryDeleteConversationApi(conversationId: string, numericMessageId
     }
 }
 
+function extractUsersArray(payload: any): any[] {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+
+    const candidates = [
+        payload.users,
+        payload.data,
+        payload.results,
+        payload.items,
+        payload.records,
+        payload?.payload?.users,
+        payload?.payload?.data,
+    ];
+
+    for (const c of candidates) {
+        if (Array.isArray(c)) return c;
+    }
+
+    return [];
+}
+
+function extractUserName(u: any): string {
+    const name =
+        (u?.name && String(u.name).trim()) ||
+        (u?.full_name && String(u.full_name).trim()) ||
+        (u?.display_name && String(u.display_name).trim()) ||
+        (u?.first_name || u?.last_name ? `${u?.first_name ?? ""} ${u?.last_name ?? ""}`.trim() : "") ||
+        "";
+    return name || "Counselor";
+}
+
+async function trySearchCounselorsFromDb(query: string, token?: string | null): Promise<DirectoryCounselor[]> {
+    const q = query.trim();
+    const roleParam = encodeURIComponent("counselor");
+
+    const candidates: string[] = [];
+    if (q.length > 0) {
+        const qq = encodeURIComponent(q);
+        candidates.push(`/users?role=${roleParam}&search=${qq}`);
+        candidates.push(`/users?role=${roleParam}&q=${qq}`);
+        candidates.push(`/users/search?role=${roleParam}&q=${qq}`);
+        candidates.push(`/search/users?role=${roleParam}&q=${qq}`);
+
+        candidates.push(`/counselors?search=${qq}`);
+        candidates.push(`/counselors/search?q=${qq}`);
+        candidates.push(`/counselors?query=${qq}`);
+    } else {
+        candidates.push(`/users?role=${roleParam}&limit=20`);
+        candidates.push(`/users?role=${roleParam}&per_page=20`);
+        candidates.push(`/counselors?limit=20`);
+        candidates.push(`/counselors?per_page=20`);
+    }
+
+    let lastErr: any = null;
+
+    for (const path of candidates) {
+        try {
+            const data = await apiFetch(path, { method: "GET" }, token);
+            const arr = extractUsersArray(data);
+
+            const mapped: DirectoryCounselor[] = arr
+                .map((raw) => raw?.user ?? raw)
+                .map((u: any) => {
+                    const id = u?.id ?? u?.user_id ?? u?.counselor_id;
+                    if (id == null || String(id).trim() === "") return null;
+                    return { id, name: extractUserName(u) } as DirectoryCounselor;
+                })
+                .filter(Boolean) as DirectoryCounselor[];
+
+            // de-dupe
+            const seen = new Set<string>();
+            const deduped = mapped.filter((c) => {
+                const key = String(c.id);
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+            return deduped;
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to search counselors from database.");
+}
+
 const formatTimestamp = (iso: string) => {
     const d = new Date(iso);
     if (Number.isNaN(d.getTime())) return iso;
@@ -300,44 +380,29 @@ function buildConversations(messages: UiMessage[]): Conversation[] {
     return conversations;
 }
 
-function buildCounselorDirectory(messages: UiMessage[]): DirectoryCounselor[] {
-    const map = new Map<string, DirectoryCounselor>();
-
-    const upsert = (id: any, name: any) => {
-        if (id == null || String(id).trim() === "") return;
-        const key = String(id);
-        const cleaned = (name && String(name).trim()) || "";
-        const fallback = `Counselor #${id}`;
-        const finalName = !cleaned || cleaned.toLowerCase() === "counselor" ? fallback : cleaned;
-
-        const prev = map.get(key);
-        if (!prev) {
-            map.set(key, { id, name: finalName });
-            return;
-        }
-        if (prev.name.toLowerCase() === fallback.toLowerCase() && finalName.toLowerCase() !== fallback.toLowerCase()) {
-            map.set(key, { id, name: finalName });
-        }
-    };
-
-    for (const m of messages) {
-        if (m.sender === "counselor") upsert(m.senderId, m.senderName);
-        if (m.recipientRole === "counselor") upsert(m.recipientId, `Counselor #${m.recipientId}`);
-    }
-
-    const list = Array.from(map.values());
-    list.sort((a, b) => a.name.localeCompare(b.name));
-    return list;
-}
-
 function CounselorCombobox(props: {
     counselors: DirectoryCounselor[];
     value: DirectoryCounselor | null;
     onChange: (u: DirectoryCounselor) => void;
+
+    searchValue: string;
+    onSearchValueChange: (v: string) => void;
+    isLoading?: boolean;
+
     placeholder?: string;
     emptyText?: string;
 }) {
-    const { counselors, value, onChange, placeholder = "Select counselor…", emptyText = "No counselors found." } = props;
+    const {
+        counselors,
+        value,
+        onChange,
+        searchValue,
+        onSearchValueChange,
+        isLoading,
+        placeholder = "Select counselor…",
+        emptyText = "No counselors found.",
+    } = props;
+
     const [open, setOpen] = React.useState(false);
 
     return (
@@ -353,9 +418,13 @@ function CounselorCombobox(props: {
 
             <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
-                    <CommandInput placeholder="Type counselor name or ID…" />
+                    <CommandInput
+                        placeholder="Type counselor name or ID…"
+                        value={searchValue}
+                        onValueChange={(v) => onSearchValueChange(v)}
+                    />
                     <CommandList>
-                        <CommandEmpty>{emptyText}</CommandEmpty>
+                        <CommandEmpty>{isLoading ? "Searching…" : emptyText}</CommandEmpty>
                         <CommandGroup>
                             {counselors.map((u) => {
                                 const selected = !!value && String(value.id) === String(u.id);
@@ -405,7 +474,11 @@ const StudentMessages: React.FC = () => {
     const [draftConversations, setDraftConversations] = React.useState<Conversation[]>([]);
     const [showNewMessage, setShowNewMessage] = React.useState(false);
 
+    // NEW: counselor directory fetched from DB (not history)
     const [newCounselor, setNewCounselor] = React.useState<DirectoryCounselor | null>(null);
+    const [counselorQuery, setCounselorQuery] = React.useState("");
+    const [counselorResults, setCounselorResults] = React.useState<DirectoryCounselor[]>([]);
+    const [counselorLoading, setCounselorLoading] = React.useState(false);
 
     // Edit message dialog
     const [editOpen, setEditOpen] = React.useState(false);
@@ -461,6 +534,41 @@ const StudentMessages: React.FC = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [meName]);
 
+    // Fetch counselors from DB (debounced) when creating new message
+    React.useEffect(() => {
+        if (!showNewMessage) return;
+
+        let cancelled = false;
+        const q = counselorQuery.trim();
+        const shouldFetch = q.length === 0 || q.length >= 2;
+
+        if (!shouldFetch) {
+            setCounselorResults([]);
+            setCounselorLoading(false);
+            return;
+        }
+
+        const t = window.setTimeout(async () => {
+            setCounselorLoading(true);
+            try {
+                const res = await trySearchCounselorsFromDb(q, token);
+                if (cancelled) return;
+                setCounselorResults(res);
+            } catch (err) {
+                if (cancelled) return;
+                setCounselorResults([]);
+                toast.error(err instanceof Error ? err.message : "Failed to search counselors.");
+            } finally {
+                if (!cancelled) setCounselorLoading(false);
+            }
+        }, q.length === 0 ? 0 : 300);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(t);
+        };
+    }, [showNewMessage, counselorQuery, token]);
+
     const conversationsFromMessages = React.useMemo(() => buildConversations(messages), [messages]);
 
     const conversations = React.useMemo(() => {
@@ -500,8 +608,6 @@ const StudentMessages: React.FC = () => {
     }, [messages, activeConversationId]);
 
     const hasUnreadActive = React.useMemo(() => activeMessages.some((m) => m.isUnread), [activeMessages]);
-
-    const counselorDirectory = React.useMemo(() => buildCounselorDirectory(messages), [messages]);
 
     const markConversationRead = async () => {
         if (!activeConversationId) return;
@@ -573,7 +679,10 @@ const StudentMessages: React.FC = () => {
         setActiveConversationId(conversationId);
         setMobileView("chat");
         setShowNewMessage(false);
+
         setNewCounselor(null);
+        setCounselorQuery("");
+        setCounselorResults([]);
 
         requestAnimationFrame(() => textareaRef.current?.focus());
     };
@@ -644,7 +753,7 @@ const StudentMessages: React.FC = () => {
         }
     };
 
-    // ===== Edit / Delete message (FIXED: remove impossible "system" comparisons) =====
+    // ===== Edit / Delete message (student can only edit/delete their own student/guest messages) =====
     const isMineMessage = (m: UiMessage) => (m.sender === "student" || m.sender === "guest") && m.senderName === meName;
     const canEdit = (m: UiMessage) => isMineMessage(m);
     const canDelete = (m: UiMessage) => isMineMessage(m);
@@ -799,14 +908,28 @@ const StudentMessages: React.FC = () => {
                                             <div className="grid grid-cols-1 gap-2">
                                                 <div className="space-y-1">
                                                     <Label className="text-[0.70rem] font-medium text-slate-700">Counselor (required)</Label>
+
                                                     <CounselorCombobox
-                                                        counselors={counselorDirectory}
+                                                        counselors={counselorResults}
                                                         value={newCounselor}
                                                         onChange={(u) => setNewCounselor(u)}
+                                                        searchValue={counselorQuery}
+                                                        onSearchValueChange={(v) => {
+                                                            setCounselorQuery(v);
+                                                            setNewCounselor(null);
+                                                        }}
+                                                        isLoading={counselorLoading}
                                                         placeholder="Type counselor name or ID…"
-                                                        emptyText="No counselors found in history."
+                                                        emptyText={
+                                                            counselorQuery.trim().length < 2
+                                                                ? "Type at least 2 characters to search."
+                                                                : "No counselors found."
+                                                        }
                                                     />
-                                                    <div className="text-[0.70rem] text-muted-foreground">Tip: Type a name or ID to filter, then click a counselor.</div>
+
+                                                    <div className="text-[0.70rem] text-muted-foreground">
+                                                        Tip: This searches your database (not message history).
+                                                    </div>
                                                 </div>
 
                                                 <Button type="button" className="mt-2 h-9 text-xs" onClick={startNewConversation} disabled={!newCounselor}>
@@ -1072,11 +1195,7 @@ const StudentMessages: React.FC = () => {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingMsg}>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                                onClick={confirmDeleteMessage}
-                                disabled={isDeletingMsg}
-                                className="bg-destructive text-white hover:bg-destructive/90"
-                            >
+                            <AlertDialogAction onClick={confirmDeleteMessage} disabled={isDeletingMsg} className="bg-destructive text-white hover:bg-destructive/90">
                                 {isDeletingMsg ? "Deleting…" : "Delete"}
                             </AlertDialogAction>
                         </AlertDialogFooter>
@@ -1092,11 +1211,7 @@ const StudentMessages: React.FC = () => {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingConvo}>Cancel</AlertDialogCancel>
-                            <AlertDialogAction
-                                onClick={confirmDeleteConversation}
-                                disabled={isDeletingConvo}
-                                className="bg-destructive text-white hover:bg-destructive/90"
-                            >
+                            <AlertDialogAction onClick={confirmDeleteConversation} disabled={isDeletingConvo} className="bg-destructive text-white hover:bg-destructive/90">
                                 {isDeletingConvo ? "Deleting…" : "Delete conversation"}
                             </AlertDialogAction>
                         </AlertDialogFooter>
