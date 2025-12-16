@@ -1,17 +1,8 @@
 import {
     markStudentMessagesReadApi,
+    markCounselorMessagesReadApi,
     type MarkMessagesReadResponseDto,
 } from "../route";
-
-/**
- * Helper for operations on a single message record, identified by ID.
- *
- * This file is a small wrapper around the bulk mark-as-read endpoint:
- *   POST /student/messages/mark-as-read
- *
- * It is used by the student Messages page to mark one message as read
- * when the user clicks the "NEW" badge.
- */
 
 /**
  * Normalize a message ID into a valid integer.
@@ -34,15 +25,12 @@ function normalizeMessageId(id: number | string): number {
 }
 
 /**
- * Mark a single message as read for the current student.
+ * Mark a single message as read for the current student/guest.
  *
- * Internally this calls:
+ * Internally calls:
  *   POST /student/messages/mark-as-read
  * with:
  *   { "message_ids": [id] }
- *
- * It guarantees that the ID sent to Laravel is an integer, which
- * avoids the "message_ids.0 field must be an integer" validation error.
  */
 export async function markStudentMessageReadByIdApi(
     id: number | string,
@@ -50,6 +38,24 @@ export async function markStudentMessageReadByIdApi(
     const normalizedId = normalizeMessageId(id);
 
     return markStudentMessagesReadApi({
+        message_ids: [normalizedId],
+    });
+}
+
+/**
+ * Mark a single message as read for the current counselor.
+ *
+ * Internally calls:
+ *   POST /counselor/messages/mark-as-read
+ * with:
+ *   { "message_ids": [id] }
+ */
+export async function markCounselorMessageReadByIdApi(
+    id: number | string,
+): Promise<MarkMessagesReadResponseDto> {
+    const normalizedId = normalizeMessageId(id);
+
+    return markCounselorMessagesReadApi({
         message_ids: [normalizedId],
     });
 }

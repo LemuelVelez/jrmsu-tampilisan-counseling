@@ -3,33 +3,51 @@ import { AUTH_API_BASE_URL } from "@/api/auth/route";
 
 /**
  * Sender role as stored in the database.
- * The backend may store this as an enum or simple string.
+ * Includes guest so counselor inbox can display guest-authored messages.
  */
-export type MessageSenderApi = "student" | "counselor" | "system" | string;
+export type MessageSenderApi = "student" | "guest" | "counselor" | "system" | string;
 
 /**
- * DTO for a single message exchanged between the student and
- * the Guidance & Counseling Office.
- *
- * Intended to map 1:1 with the `messages` (or similar) table.
+ * A generic message DTO used by both student and counselor message endpoints.
+ * The backend may include more fields; we keep this flexible.
  */
 export interface MessageDto {
     id: number | string;
-    user_id: number | string;
+
+    /**
+     * For student endpoints, this often refers to the student/guest user.
+     * For counselor endpoints, it may represent the peer or owner depending on backend implementation.
+     */
+    user_id?: number | string;
 
     sender: MessageSenderApi;
     sender_name?: string | null;
+
     content: string;
+
+    /**
+     * Some backends store as boolean, others as 0/1.
+     */
     is_read: boolean | number;
 
     created_at: string;
     updated_at?: string;
 
+    // Optional fields for threading/conversations (backend-dependent)
+    conversation_id?: number | string;
+    recipient_id?: number | string;
+    recipient_role?: string;
+    message_type?: string;
+
     [key: string]: unknown;
 }
 
+/** -----------------------------
+ * Student (and Guest) Endpoints
+ * ------------------------------*/
+
 /**
- * Response DTO for fetching all messages for the current student.
+ * Response DTO for fetching all messages for the current student/guest.
  */
 export interface GetStudentMessagesResponseDto {
     message?: string;
@@ -44,7 +62,7 @@ export interface CreateStudentMessagePayload {
 }
 
 /**
- * Response DTO after creating a new message.
+ * Response DTO after creating a new message (student/guest).
  */
 export interface CreateStudentMessageResponseDto {
     message?: string;
@@ -53,8 +71,7 @@ export interface CreateStudentMessageResponseDto {
 
 /**
  * Payload for marking one or more messages as read.
- * If `message_ids` is omitted or an empty array, the backend is
- * expected to mark *all* messages for the current student as read.
+ * If `message_ids` is omitted or an empty array, backend is expected to mark all.
  */
 export interface MarkMessagesReadPayload {
     message_ids?: Array<number | string>;
@@ -68,6 +85,49 @@ export interface MarkMessagesReadResponseDto {
     updated_count?: number;
 }
 
+/** -----------------------------
+ * Counselor Endpoints
+ * ------------------------------*/
+
+/**
+ * Counselor inbox response.
+ * Backend may return either a flat list of messages or thread-grouped messages.
+ * We keep it compatible with a simple `messages` array for now.
+ */
+export interface GetCounselorMessagesResponseDto {
+    message?: string;
+    messages: MessageDto[];
+}
+
+/**
+ * Counselor message payload.
+ * We allow counselor to message: student, guest, or counselor.
+ * (UI prevents invalid pairings like student↔student etc.)
+ */
+export interface CreateCounselorMessagePayload {
+    content: string;
+
+    /**
+     * Who the counselor is sending to.
+     * Optional because you said "do not mind backend"—this is ready for later.
+     */
+    recipient_role?: "student" | "guest" | "counselor";
+    recipient_id?: number | string;
+
+    /**
+     * Optional conversation/thread id (if your backend supports it later).
+     */
+    conversation_id?: number | string;
+}
+
+/**
+ * Counselor create message response.
+ */
+export interface CreateCounselorMessageResponseDto {
+    message?: string;
+    messageRecord: MessageDto;
+}
+
 export interface MessagesApiError extends Error {
     status?: number;
     data?: unknown;
@@ -75,19 +135,13 @@ export interface MessagesApiError extends Error {
 
 function resolveMessagesApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error(
-            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
-        );
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
-
     const trimmedPath = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
-async function messagesApiFetch<T>(
-    path: string,
-    init: RequestInit = {},
-): Promise<T> {
+async function messagesApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveMessagesApiUrl(path);
 
     const response = await fetch(url, {
@@ -136,7 +190,7 @@ async function messagesApiFetch<T>(
 }
 
 /**
- * Fetch all messages for the currently authenticated student.
+ * Fetch all messages for the currently authenticated student/guest.
  *
  * GET /student/messages
  */
@@ -147,7 +201,7 @@ export async function getStudentMessagesApi(): Promise<GetStudentMessagesRespons
 }
 
 /**
- * Create a new message authored by the current student.
+ * Create a new message authored by the current student/guest.
  *
  * POST /student/messages
  */
@@ -161,10 +215,7 @@ export async function createStudentMessageApi(
 }
 
 /**
- * Mark one or more messages as read for the current student.
- *
- * If `payload` is omitted or `message_ids` is an empty array,
- * the backend is expected to mark *all* messages as read.
+ * Mark one or more messages as read for the current student/guest.
  *
  * POST /student/messages/mark-as-read
  */
@@ -172,11 +223,50 @@ export async function markStudentMessagesReadApi(
     payload?: MarkMessagesReadPayload,
 ): Promise<MarkMessagesReadResponseDto> {
     const safePayload = payload ?? {};
-    return messagesApiFetch<MarkMessagesReadResponseDto>(
-        "/student/messages/mark-as-read",
-        {
-            method: "POST",
-            body: JSON.stringify(safePayload),
-        },
-    );
+    return messagesApiFetch<MarkMessagesReadResponseDto>("/student/messages/mark-as-read", {
+        method: "POST",
+        body: JSON.stringify(safePayload),
+    });
+}
+
+/**
+ * Fetch counselor inbox messages.
+ *
+ * GET /counselor/messages
+ *
+ * Note: backend shape may evolve (threads, pagination, etc.).
+ */
+export async function getCounselorMessagesApi(): Promise<GetCounselorMessagesResponseDto> {
+    return messagesApiFetch<GetCounselorMessagesResponseDto>("/counselor/messages", {
+        method: "GET",
+    });
+}
+
+/**
+ * Counselor sends a message to a student/guest/counselor.
+ *
+ * POST /counselor/messages
+ */
+export async function createCounselorMessageApi(
+    payload: CreateCounselorMessagePayload,
+): Promise<CreateCounselorMessageResponseDto> {
+    return messagesApiFetch<CreateCounselorMessageResponseDto>("/counselor/messages", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+/**
+ * Counselor marks messages as read (bulk).
+ *
+ * POST /counselor/messages/mark-as-read
+ */
+export async function markCounselorMessagesReadApi(
+    payload?: MarkMessagesReadPayload,
+): Promise<MarkMessagesReadResponseDto> {
+    const safePayload = payload ?? {};
+    return messagesApiFetch<MarkMessagesReadResponseDto>("/counselor/messages/mark-as-read", {
+        method: "POST",
+        body: JSON.stringify(safePayload),
+    });
 }
