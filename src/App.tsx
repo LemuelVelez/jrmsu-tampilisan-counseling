@@ -15,6 +15,7 @@ import AdminUsersPage from "./pages/dashboard/admin/user";
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import CounselorIntake from "./pages/dashboard/counselor/intake";
 import CounselorAppointments from "./pages/dashboard/counselor/appointments";
+import CounselorMessages from "./pages/dashboard/counselor/messages";
 
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
@@ -184,6 +185,14 @@ function App() {
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorAppointments />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/counselor/messages"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorMessages />
               </RequireRole>
             }
           />
