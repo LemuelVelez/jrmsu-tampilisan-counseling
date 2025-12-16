@@ -120,7 +120,7 @@ const counselorNavItems: NavItem[] = [
     },
     {
         // Student directory & profile view
-        title: "Students",
+        title: "Students & Guests",
         to: "/dashboard/counselor/students",
         icon: GraduationCap,
     },
