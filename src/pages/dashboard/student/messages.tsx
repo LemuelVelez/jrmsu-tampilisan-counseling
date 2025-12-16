@@ -21,26 +21,160 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Label } from "@/components/ui/label";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+
+import { cn } from "@/lib/utils";
+import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
 
 type UiSender = "student" | "guest" | "counselor" | "system";
 
 type UiMessage = {
     id: number | string;
+    conversationId: string;
+
     sender: UiSender;
     senderName: string;
     content: string;
     createdAt: string;
     isUnread: boolean;
+
+    senderId?: number | string | null;
+    recipientId?: number | string | null;
+    recipientRole?: string | null;
 };
 
-type ConversationPreview = {
-    id: "counselor_thread";
-    title: string;
+type Conversation = {
+    id: string;
+    counselorId?: number | string | null;
+    counselorName: string;
     subtitle: string;
     unreadCount: number;
     lastMessage?: string;
     lastTimestamp?: string;
 };
+
+type DirectoryCounselor = {
+    id: number | string;
+    name: string;
+};
+
+const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined;
+const API_BASE_URL = RAW_BASE_URL ? RAW_BASE_URL.replace(/\/+$/, "") : undefined;
+
+function resolveApiUrl(path: string): string {
+    if (!API_BASE_URL) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.");
+    const trimmed = path.replace(/^\/+/, "");
+    return `${API_BASE_URL}/${trimmed}`;
+}
+
+async function apiFetch(path: string, init: RequestInit, token?: string | null): Promise<unknown> {
+    const url = resolveApiUrl(path);
+    const res = await fetch(url, {
+        ...init,
+        credentials: "include",
+        headers: {
+            Accept: "application/json",
+            ...(init.body ? { "Content-Type": "application/json" } : {}),
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            ...(init.headers ?? {}),
+        },
+    });
+
+    const text = await res.text();
+    let data: any = null;
+    if (text) {
+        try {
+            data = JSON.parse(text);
+        } catch {
+            data = text;
+        }
+    }
+
+    if (!res.ok) {
+        const msg = data?.message || data?.error || res.statusText || "Server request failed.";
+        throw new Error(msg);
+    }
+
+    return data;
+}
+
+async function tryDeleteMessageApi(messageId: number, token?: string | null) {
+    const candidates = [`/messages/${messageId}`, `/message/${messageId}`];
+    let lastErr: any = null;
+
+    for (const p of candidates) {
+        try {
+            await apiFetch(p, { method: "DELETE" }, token);
+            return;
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+    throw lastErr ?? new Error("Failed to delete message.");
+}
+
+async function tryUpdateMessageApi(messageId: number, content: string, token?: string | null) {
+    const payload = JSON.stringify({ content });
+
+    try {
+        await apiFetch(`/messages/${messageId}`, { method: "PATCH", body: payload }, token);
+        return;
+    } catch {
+        await apiFetch(`/messages/${messageId}`, { method: "PUT", body: payload }, token);
+    }
+}
+
+async function tryDeleteConversationApi(conversationId: string, numericMessageIds: number[], token?: string | null) {
+    const candidates = [
+        `/messages/conversations/${encodeURIComponent(conversationId)}`,
+        `/conversations/${encodeURIComponent(conversationId)}`,
+        `/messages/thread/${encodeURIComponent(conversationId)}`,
+    ];
+
+    for (const p of candidates) {
+        try {
+            await apiFetch(p, { method: "DELETE" }, token);
+            return;
+        } catch {
+            // ignore and fallback
+        }
+    }
+
+    for (const id of numericMessageIds) {
+        try {
+            await tryDeleteMessageApi(id, token);
+        } catch {
+            // keep going
+        }
+    }
+}
 
 const formatTimestamp = (iso: string) => {
     const d = new Date(iso);
@@ -67,49 +201,234 @@ function normalizeSender(sender: StudentMessage["sender"]): UiSender {
     return "system";
 }
 
+function safeConversationIdStudent(dto: StudentMessage): string {
+    const raw = (dto as any).conversation_id ?? (dto as any).conversationId;
+    if (raw != null && String(raw).trim()) return String(raw);
+
+    const sender = normalizeSender(dto.sender);
+    const senderId = (dto as any).sender_id ?? null;
+
+    const recipientRole = (dto as any).recipient_role ?? null;
+    const recipientId = (dto as any).recipient_id ?? null;
+
+    const counselorId =
+        (sender === "counselor" ? senderId : null) ??
+        (recipientRole === "counselor" ? recipientId : null) ??
+        (dto as any).counselor_id ??
+        null;
+
+    if (counselorId != null && String(counselorId).trim()) return `counselor-${String(counselorId)}`;
+    return "counselor-office";
+}
+
 function mapDtoToUi(dto: StudentMessage, meName: string, index: number): UiMessage {
     const sender = normalizeSender(dto.sender);
+
     const senderName =
         (dto.sender_name && String(dto.sender_name).trim()) ||
-        (sender === "system"
-            ? "Guidance & Counseling Office"
-            : sender === "counselor"
-                ? "Guidance Counselor"
-                : meName);
+        (sender === "system" ? "Guidance & Counseling Office" : sender === "counselor" ? "Counselor" : meName);
 
     const createdAt = dto.created_at ?? new Date(0).toISOString();
     const fallbackId = `${createdAt}-${sender}-${index}`;
 
     return {
         id: dto.id ?? fallbackId,
+        conversationId: safeConversationIdStudent(dto),
+
         sender,
         senderName,
         content: dto.content ?? "",
         createdAt,
         isUnread: dto.is_read === false || dto.is_read === 0,
+
+        senderId: (dto as any).sender_id ?? null,
+        recipientId: (dto as any).recipient_id ?? null,
+        recipientRole: (dto as any).recipient_role ?? null,
     };
+}
+
+function buildConversations(messages: UiMessage[]): Conversation[] {
+    const grouped = new Map<string, UiMessage[]>();
+    for (const m of messages) {
+        const arr = grouped.get(m.conversationId) ?? [];
+        arr.push(m);
+        grouped.set(m.conversationId, arr);
+    }
+
+    const conversations: Conversation[] = [];
+
+    for (const [conversationId, msgs] of grouped.entries()) {
+        const ordered = [...msgs].sort((a, b) => {
+            const ta = new Date(a.createdAt).getTime();
+            const tb = new Date(b.createdAt).getTime();
+            if (ta !== tb) return ta - tb;
+            return String(a.id).localeCompare(String(b.id));
+        });
+
+        const last = ordered[ordered.length - 1];
+        const unreadCount = ordered.filter((m) => m.isUnread).length;
+
+        const counselorMsg = ordered.find((m) => m.sender === "counselor") ?? null;
+
+        const counselorId =
+            counselorMsg?.senderId ??
+            ordered.find((m) => m.recipientRole === "counselor" && m.recipientId != null)?.recipientId ??
+            (conversationId.startsWith("counselor-") ? conversationId.replace("counselor-", "") : null);
+
+        const counselorName =
+            (counselorMsg?.senderName && counselorMsg.senderName !== "Counselor" ? counselorMsg.senderName : "") ||
+            (counselorId != null ? `Counselor #${counselorId}` : "Counselor Office");
+
+        conversations.push({
+            id: conversationId,
+            counselorId: counselorId ?? null,
+            counselorName,
+            subtitle: "Private thread",
+            unreadCount,
+            lastMessage: last?.content ?? "",
+            lastTimestamp: last?.createdAt ?? "",
+        });
+    }
+
+    conversations.sort((a, b) => {
+        if (a.unreadCount !== b.unreadCount) return b.unreadCount - a.unreadCount;
+        const ta = a.lastTimestamp ? new Date(a.lastTimestamp).getTime() : 0;
+        const tb = b.lastTimestamp ? new Date(b.lastTimestamp).getTime() : 0;
+        return tb - ta;
+    });
+
+    return conversations;
+}
+
+function buildCounselorDirectory(messages: UiMessage[]): DirectoryCounselor[] {
+    const map = new Map<string, DirectoryCounselor>();
+
+    const upsert = (id: any, name: any) => {
+        if (id == null || String(id).trim() === "") return;
+        const key = String(id);
+        const cleaned = (name && String(name).trim()) || "";
+        const fallback = `Counselor #${id}`;
+        const finalName = !cleaned || cleaned.toLowerCase() === "counselor" ? fallback : cleaned;
+
+        const prev = map.get(key);
+        if (!prev) {
+            map.set(key, { id, name: finalName });
+            return;
+        }
+        if (prev.name.toLowerCase() === fallback.toLowerCase() && finalName.toLowerCase() !== fallback.toLowerCase()) {
+            map.set(key, { id, name: finalName });
+        }
+    };
+
+    for (const m of messages) {
+        if (m.sender === "counselor") upsert(m.senderId, m.senderName);
+        if (m.recipientRole === "counselor") upsert(m.recipientId, `Counselor #${m.recipientId}`);
+    }
+
+    const list = Array.from(map.values());
+    list.sort((a, b) => a.name.localeCompare(b.name));
+    return list;
+}
+
+function CounselorCombobox(props: {
+    counselors: DirectoryCounselor[];
+    value: DirectoryCounselor | null;
+    onChange: (u: DirectoryCounselor) => void;
+    placeholder?: string;
+    emptyText?: string;
+}) {
+    const { counselors, value, onChange, placeholder = "Select counselor…", emptyText = "No counselors found." } = props;
+    const [open, setOpen] = React.useState(false);
+
+    return (
+        <Popover open={open} onOpenChange={setOpen}>
+            <PopoverTrigger asChild>
+                <Button variant="outline" role="combobox" aria-expanded={open} className="h-9 w-full justify-between">
+                    <span className={cn("min-w-0 truncate text-left", !value ? "text-muted-foreground" : "")}>
+                        {value ? `${value.name} • ID: ${value.id}` : placeholder}
+                    </span>
+                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+            </PopoverTrigger>
+
+            <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
+                <Command>
+                    <CommandInput placeholder="Type counselor name or ID…" />
+                    <CommandList>
+                        <CommandEmpty>{emptyText}</CommandEmpty>
+                        <CommandGroup>
+                            {counselors.map((u) => {
+                                const selected = !!value && String(value.id) === String(u.id);
+                                return (
+                                    <CommandItem
+                                        key={`counselor-${u.id}`}
+                                        value={`${u.name} ${u.id}`}
+                                        onSelect={() => {
+                                            onChange(u);
+                                            setOpen(false);
+                                        }}
+                                        className="gap-2"
+                                    >
+                                        <Check className={cn("h-4 w-4", selected ? "opacity-100" : "opacity-0")} />
+                                        <div className="min-w-0 flex-1">
+                                            <div className="truncate text-sm">{u.name}</div>
+                                            <div className="truncate text-xs text-muted-foreground">ID: {u.id}</div>
+                                        </div>
+                                    </CommandItem>
+                                );
+                            })}
+                        </CommandGroup>
+                    </CommandList>
+                </Command>
+            </PopoverContent>
+        </Popover>
+    );
 }
 
 const StudentMessages: React.FC = () => {
     const session = getCurrentSession();
-    const meName =
-        session?.user && (session.user as any).name ? String((session.user as any).name) : "You";
+    const token = (session as any)?.token ?? null;
+    const meName = session?.user && (session.user as any).name ? String((session.user as any).name) : "You";
 
-    const [mobileView, setMobileView] = React.useState<"list" | "chat">("chat");
+    const [mobileView, setMobileView] = React.useState<"list" | "chat">("list");
 
     const [isLoading, setIsLoading] = React.useState(true);
     const [isSending, setIsSending] = React.useState(false);
     const [isMarking, setIsMarking] = React.useState(false);
 
+    const [search, setSearch] = React.useState("");
+
     const [draft, setDraft] = React.useState("");
     const [messages, setMessages] = React.useState<UiMessage[]>([]);
+    const [activeConversationId, setActiveConversationId] = React.useState<string>("");
+
+    const [draftConversations, setDraftConversations] = React.useState<Conversation[]>([]);
+    const [showNewMessage, setShowNewMessage] = React.useState(false);
+
+    const [newCounselor, setNewCounselor] = React.useState<DirectoryCounselor | null>(null);
+
+    // Edit message dialog
+    const [editOpen, setEditOpen] = React.useState(false);
+    const [editingMessage, setEditingMessage] = React.useState<UiMessage | null>(null);
+    const [editDraft, setEditDraft] = React.useState("");
+    const [isSavingEdit, setIsSavingEdit] = React.useState(false);
+
+    // Delete message confirm
+    const [deleteMsgOpen, setDeleteMsgOpen] = React.useState(false);
+    const [deletingMessage, setDeletingMessage] = React.useState<UiMessage | null>(null);
+    const [isDeletingMsg, setIsDeletingMsg] = React.useState(false);
+
+    // Delete conversation confirm
+    const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false);
+    const [isDeletingConvo, setIsDeletingConvo] = React.useState(false);
 
     const bottomRef = React.useRef<HTMLDivElement | null>(null);
     const localIdRef = React.useRef(0);
+    const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
     React.useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-    }, [messages.length]);
+    }, [activeConversationId, messages.length]);
 
     React.useEffect(() => {
         let mounted = true;
@@ -122,7 +441,11 @@ const StudentMessages: React.FC = () => {
                 const ui = raw.map((m, idx) => mapDtoToUi(m, meName, idx));
 
                 if (!mounted) return;
+
                 setMessages(ui);
+
+                const convs = buildConversations(ui);
+                if (!activeConversationId && convs.length > 0) setActiveConversationId(convs[0].id);
             } catch (err) {
                 toast.error(err instanceof Error ? err.message : "Failed to load your messages.");
             } finally {
@@ -135,31 +458,73 @@ const StudentMessages: React.FC = () => {
         return () => {
             mounted = false;
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [meName]);
 
-    const hasUnread = messages.some((m) => m.isUnread);
+    const conversationsFromMessages = React.useMemo(() => buildConversations(messages), [messages]);
 
-    const conversation: ConversationPreview = React.useMemo(() => {
-        const ordered = [...messages].sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-        const last = ordered[ordered.length - 1];
+    const conversations = React.useMemo(() => {
+        const map = new Map<string, Conversation>();
+        for (const c of conversationsFromMessages) map.set(c.id, c);
+        for (const d of draftConversations) {
+            if (!map.has(d.id)) map.set(d.id, d);
+        }
 
-        return {
-            id: "counselor_thread",
-            title: "Guidance Counselor",
-            subtitle: "Private thread (Student/Guest ↔ Counselor)",
-            unreadCount: messages.filter((m) => m.isUnread).length,
-            lastMessage: last?.content ?? "",
-            lastTimestamp: last?.createdAt ?? "",
-        };
-    }, [messages]);
+        const merged = Array.from(map.values());
+        merged.sort((a, b) => {
+            if (a.unreadCount !== b.unreadCount) return b.unreadCount - a.unreadCount;
+            const ta = a.lastTimestamp ? new Date(a.lastTimestamp).getTime() : 0;
+            const tb = b.lastTimestamp ? new Date(b.lastTimestamp).getTime() : 0;
+            return tb - ta;
+        });
 
-    const markAllAsRead = async () => {
-        if (!hasUnread) return;
+        return merged;
+    }, [conversationsFromMessages, draftConversations]);
+
+    const filteredConversations = React.useMemo(() => {
+        const q = search.trim().toLowerCase();
+        if (!q) return conversations;
+        return conversations.filter((c) => c.counselorName.toLowerCase().includes(q) || c.subtitle.toLowerCase().includes(q));
+    }, [conversations, search]);
+
+    const activeConversation = React.useMemo(
+        () => conversations.find((c) => c.id === activeConversationId) ?? null,
+        [conversations, activeConversationId],
+    );
+
+    const activeMessages = React.useMemo(() => {
+        if (!activeConversationId) return [];
+        return messages
+            .filter((m) => m.conversationId === activeConversationId)
+            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
+    }, [messages, activeConversationId]);
+
+    const hasUnreadActive = React.useMemo(() => activeMessages.some((m) => m.isUnread), [activeMessages]);
+
+    const counselorDirectory = React.useMemo(() => buildCounselorDirectory(messages), [messages]);
+
+    const markConversationRead = async () => {
+        if (!activeConversationId) return;
+        const unread = activeMessages.filter((m) => m.isUnread);
+        if (unread.length === 0) return;
 
         setIsMarking(true);
         try {
-            await markStudentMessagesAsRead();
-            setMessages((prev) => prev.map((m) => ({ ...m, isUnread: false })));
+            const numericIds = unread
+                .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
+                .filter((n) => Number.isInteger(n)) as number[];
+
+            try {
+                if (numericIds.length > 0) {
+                    await (markStudentMessagesAsRead as any)(numericIds);
+                } else {
+                    await markStudentMessagesAsRead();
+                }
+            } catch {
+                await markStudentMessagesAsRead();
+            }
+
+            setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)));
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.");
         } finally {
@@ -170,7 +535,6 @@ const StudentMessages: React.FC = () => {
     const markSingleAsRead = async (msg: UiMessage) => {
         if (!msg.isUnread) return;
 
-        // local/non-numeric ids: UI-only
         if (typeof msg.id !== "number") {
             setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isUnread: false } : m)));
             return;
@@ -184,22 +548,67 @@ const StudentMessages: React.FC = () => {
         }
     };
 
+    const startNewConversation = () => {
+        if (!newCounselor) {
+            toast.error("Counselor is required.");
+            return;
+        }
+
+        const counselorId = newCounselor.id;
+        const counselorName = newCounselor.name;
+        const conversationId = `new-counselor-${String(counselorId)}-${Date.now()}`;
+        const nowIso = new Date().toISOString();
+
+        const convo: Conversation = {
+            id: conversationId,
+            counselorId,
+            counselorName,
+            subtitle: "Private thread",
+            unreadCount: 0,
+            lastMessage: "",
+            lastTimestamp: nowIso,
+        };
+
+        setDraftConversations((prev) => [convo, ...prev]);
+        setActiveConversationId(conversationId);
+        setMobileView("chat");
+        setShowNewMessage(false);
+        setNewCounselor(null);
+
+        requestAnimationFrame(() => textareaRef.current?.focus());
+    };
+
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault();
+
+        if (!activeConversation) {
+            toast.error("Select a counselor conversation first.");
+            return;
+        }
+
         const text = draft.trim();
         if (!text) return;
+
+        const counselorId = activeConversation.counselorId ?? null;
+        if (!counselorId) {
+            toast.error("This conversation has no counselor id. Please create/select a counselor conversation.");
+            return;
+        }
 
         const tempId = `local-${++localIdRef.current}`;
         const nowIso = new Date().toISOString();
 
-        // Optimistic add
         const optimistic: UiMessage = {
             id: tempId,
+            conversationId: activeConversation.id,
             sender: "student",
             senderName: meName,
             content: text,
             createdAt: nowIso,
             isUnread: false,
+
+            recipientRole: "counselor",
+            recipientId: counselorId,
         };
 
         setMessages((prev) => [...prev, optimistic]);
@@ -207,13 +616,26 @@ const StudentMessages: React.FC = () => {
         setIsSending(true);
 
         try {
-            const res = await sendStudentMessage(text);
-            const dto = res.messageRecord;
+            const payload: any = {
+                content: text,
+                recipient_role: "counselor",
+                recipient_id: counselorId,
+                conversation_id: activeConversation.id,
+            };
+
+            const res = await (sendStudentMessage as any)(payload);
+            const dto = res?.messageRecord ?? null;
 
             if (dto) {
                 const serverMsg = mapDtoToUi(dto, meName, messages.length);
                 setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)));
+
+                if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
+                    setActiveConversationId(serverMsg.conversationId);
+                }
             }
+
+            setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id));
         } catch (err) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId));
             toast.error(err instanceof Error ? err.message : "Failed to send your message.");
@@ -222,17 +644,137 @@ const StudentMessages: React.FC = () => {
         }
     };
 
+    // ===== Edit / Delete message (FIXED: remove impossible "system" comparisons) =====
+    const isMineMessage = (m: UiMessage) => (m.sender === "student" || m.sender === "guest") && m.senderName === meName;
+    const canEdit = (m: UiMessage) => isMineMessage(m);
+    const canDelete = (m: UiMessage) => isMineMessage(m);
+
+    const openEdit = (m: UiMessage) => {
+        setEditingMessage(m);
+        setEditDraft(m.content);
+        setEditOpen(true);
+    };
+
+    const saveEdit = async () => {
+        if (!editingMessage) return;
+        const next = editDraft.trim();
+        if (!next) {
+            toast.error("Message cannot be empty.");
+            return;
+        }
+
+        const id = editingMessage.id;
+        const prevContent = editingMessage.content;
+
+        setIsSavingEdit(true);
+        setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: next } : m)));
+
+        try {
+            if (typeof id === "number") {
+                await tryUpdateMessageApi(id, next, token);
+            }
+            setEditOpen(false);
+            setEditingMessage(null);
+            toast.success("Message updated.");
+        } catch (err) {
+            setMessages((prev) => prev.map((m) => (m.id === id ? { ...m, content: prevContent } : m)));
+            toast.error(err instanceof Error ? err.message : "Failed to update message.");
+        } finally {
+            setIsSavingEdit(false);
+        }
+    };
+
+    const askDeleteMessage = (m: UiMessage) => {
+        setDeletingMessage(m);
+        setDeleteMsgOpen(true);
+    };
+
+    const confirmDeleteMessage = async () => {
+        if (!deletingMessage) return;
+
+        const target = deletingMessage;
+        setIsDeletingMsg(true);
+
+        let removed: { msg: UiMessage; index: number } | null = null;
+
+        setMessages((prev) => {
+            const index = prev.findIndex((x) => x.id === target.id);
+            removed = { msg: target, index: index < 0 ? prev.length : index };
+            return prev.filter((x) => x.id !== target.id);
+        });
+
+        try {
+            if (typeof target.id === "number") {
+                await tryDeleteMessageApi(target.id, token);
+            }
+            toast.success("Message deleted.");
+            setDeleteMsgOpen(false);
+            setDeletingMessage(null);
+        } catch (err) {
+            if (removed) {
+                setMessages((prev) => {
+                    const next = [...prev];
+                    const idx = Math.max(0, Math.min(removed!.index, next.length));
+                    next.splice(idx, 0, removed!.msg);
+                    return next;
+                });
+            }
+            toast.error(err instanceof Error ? err.message : "Failed to delete message.");
+        } finally {
+            setIsDeletingMsg(false);
+        }
+    };
+
+    // ===== Delete conversation =====
+    const askDeleteConversation = () => {
+        if (!activeConversation) return;
+        setDeleteConvoOpen(true);
+    };
+
+    const confirmDeleteConversation = async () => {
+        if (!activeConversation) return;
+
+        const convoId = activeConversation.id;
+        const toDelete = activeMessages;
+        const numericIds = toDelete
+            .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
+            .filter((n) => Number.isInteger(n)) as number[];
+
+        const nextCandidate = conversations.filter((c) => c.id !== convoId)[0]?.id ?? "";
+
+        setIsDeletingConvo(true);
+
+        const removedPayload = {
+            messages: toDelete,
+            draft: draftConversations.find((d) => d.id === convoId) ?? null,
+        };
+
+        setMessages((prev) => prev.filter((m) => m.conversationId !== convoId));
+        setDraftConversations((prev) => prev.filter((d) => d.id !== convoId));
+
+        try {
+            await tryDeleteConversationApi(convoId, numericIds, token);
+            toast.success("Conversation deleted.");
+            setDeleteConvoOpen(false);
+            setActiveConversationId(nextCandidate);
+            if (!nextCandidate) setMobileView("list");
+        } catch (err) {
+            setMessages((prev) => [...prev, ...removedPayload.messages]);
+            if (removedPayload.draft) setDraftConversations((prev) => [removedPayload.draft!, ...prev]);
+            toast.error(err instanceof Error ? err.message : "Failed to delete conversation.");
+        } finally {
+            setIsDeletingConvo(false);
+        }
+    };
+
     return (
-        <DashboardLayout
-            title="Messages"
-            description="Chat privately with the Guidance Counselor (Student/Guest ↔ Counselor only)."
-        >
+        <DashboardLayout title="Messages" description="Chat privately with your chosen counselor.">
             <div className="mx-auto w-full max-w-6xl">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
                     <CardHeader className="space-y-2">
                         <CardTitle className="text-base">Messages</CardTitle>
                         <CardDescription className="text-xs">
-                            This is a private conversation between your account and the Guidance Counselor.
+                            Choose a counselor to message. Each counselor has their own private thread.
                         </CardDescription>
                     </CardHeader>
 
@@ -241,61 +783,91 @@ const StudentMessages: React.FC = () => {
                             {/* LEFT: conversation list */}
                             <div className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"}`}>
                                 <div className="p-4">
-                                    <div className="mb-3 flex items-center justify-between">
+                                    <div className="mb-3 flex items-center justify-between gap-3">
                                         <div className="text-sm font-semibold text-slate-900">Conversations</div>
                                         <Badge variant="secondary" className="text-[0.70rem]">
                                             Student
                                         </Badge>
                                     </div>
 
-                                    {/* one-thread UI (search disabled but uses Input shadcn as requested) */}
-                                    <Input disabled value="" placeholder="Search (coming soon)" className="h-9" />
+                                    <Button type="button" variant="outline" className="h-9 w-full text-xs" onClick={() => setShowNewMessage((v) => !v)}>
+                                        {showNewMessage ? "Close new message" : "Create new message"}
+                                    </Button>
+
+                                    {showNewMessage ? (
+                                        <div className="mt-3 rounded-xl border bg-white/60 p-3">
+                                            <div className="grid grid-cols-1 gap-2">
+                                                <div className="space-y-1">
+                                                    <Label className="text-[0.70rem] font-medium text-slate-700">Counselor (required)</Label>
+                                                    <CounselorCombobox
+                                                        counselors={counselorDirectory}
+                                                        value={newCounselor}
+                                                        onChange={(u) => setNewCounselor(u)}
+                                                        placeholder="Type counselor name or ID…"
+                                                        emptyText="No counselors found in history."
+                                                    />
+                                                    <div className="text-[0.70rem] text-muted-foreground">Tip: Type a name or ID to filter, then click a counselor.</div>
+                                                </div>
+
+                                                <Button type="button" className="mt-2 h-9 text-xs" onClick={startNewConversation} disabled={!newCounselor}>
+                                                    Start
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    ) : null}
+
+                                    <div className="mt-3">
+                                        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search counselors…" className="h-9" />
+                                    </div>
                                 </div>
 
                                 <Separator />
 
                                 <ScrollArea className="h-[560px]">
                                     <div className="space-y-2 p-4">
-                                        <button
-                                            type="button"
-                                            onClick={() => setMobileView("chat")}
-                                            className="w-full rounded-xl border bg-white/60 p-3 text-left transition hover:bg-white"
-                                        >
-                                            <div className="flex items-center justify-between gap-3">
-                                                <div className="flex min-w-0 items-center gap-3">
-                                                    <Avatar className="h-9 w-9 border">
-                                                        <AvatarFallback className="text-xs font-semibold">
-                                                            {initials(conversation.title)}
-                                                        </AvatarFallback>
-                                                    </Avatar>
-                                                    <div className="min-w-0">
-                                                        <div className="truncate text-sm font-semibold text-slate-900">
-                                                            {conversation.title}
+                                        {isLoading ? (
+                                            <div className="text-sm text-muted-foreground">Loading conversations…</div>
+                                        ) : filteredConversations.length === 0 ? (
+                                            <div className="rounded-lg border bg-white/60 p-4 text-sm text-muted-foreground">No conversations found.</div>
+                                        ) : (
+                                            filteredConversations.map((c) => {
+                                                const active = c.id === activeConversationId;
+                                                return (
+                                                    <button
+                                                        key={c.id}
+                                                        type="button"
+                                                        onClick={() => {
+                                                            setActiveConversationId(c.id);
+                                                            setMobileView("chat");
+                                                            requestAnimationFrame(() => textareaRef.current?.focus());
+                                                        }}
+                                                        className={`w-full rounded-xl border p-3 text-left transition ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"}`}
+                                                    >
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <div className="flex min-w-0 items-center gap-3">
+                                                                <Avatar className="h-9 w-9 border">
+                                                                    <AvatarFallback className="text-xs font-semibold">{initials(c.counselorName)}</AvatarFallback>
+                                                                </Avatar>
+
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-semibold text-slate-900">{c.counselorName}</div>
+                                                                    <div className="truncate text-xs text-muted-foreground">{c.subtitle}</div>
+                                                                </div>
+                                                            </div>
+
+                                                            <div className="flex items-center gap-2">
+                                                                {c.unreadCount > 0 ? (
+                                                                    <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">{c.unreadCount}</Badge>
+                                                                ) : null}
+                                                                <span className="text-xs text-muted-foreground">{formatShort(c.lastTimestamp)}</span>
+                                                            </div>
                                                         </div>
-                                                        <div className="truncate text-xs text-muted-foreground">{conversation.subtitle}</div>
-                                                    </div>
-                                                </div>
 
-                                                <div className="flex items-center gap-2">
-                                                    {conversation.unreadCount > 0 ? (
-                                                        <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">
-                                                            {conversation.unreadCount}
-                                                        </Badge>
-                                                    ) : null}
-                                                    <span className="text-xs text-muted-foreground">
-                                                        {formatShort(conversation.lastTimestamp)}
-                                                    </span>
-                                                </div>
-                                            </div>
-
-                                            <div className="mt-2 truncate text-xs text-muted-foreground">
-                                                {conversation.lastMessage || "No messages yet."}
-                                            </div>
-                                        </button>
-
-                                        <div className="rounded-xl border bg-muted/30 p-3 text-xs text-muted-foreground">
-                                            Only <b>Student/Guest ↔ Counselor</b> is allowed here.
-                                        </div>
+                                                        <div className="mt-2 truncate text-xs text-muted-foreground">{c.lastMessage || "No messages yet."}</div>
+                                                    </button>
+                                                );
+                                            })
+                                        )}
                                     </div>
                                 </ScrollArea>
                             </div>
@@ -304,69 +876,84 @@ const StudentMessages: React.FC = () => {
                             <div className={`flex flex-col ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
                                 <div className="flex items-center justify-between gap-3 border-b bg-white/70 p-4">
                                     <div className="flex items-center gap-3">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon"
-                                            className="md:hidden"
-                                            onClick={() => setMobileView("list")}
-                                            aria-label="Back"
-                                        >
+                                        <Button type="button" variant="outline" size="icon" className="md:hidden" onClick={() => setMobileView("list")} aria-label="Back">
                                             ←
                                         </Button>
 
-                                        <div className="flex items-center gap-3">
-                                            <Avatar className="h-10 w-10 border">
-                                                <AvatarFallback className="text-xs font-semibold">
-                                                    {initials("Guidance Counselor")}
-                                                </AvatarFallback>
-                                            </Avatar>
+                                        {activeConversation ? (
+                                            <div className="flex items-center gap-3">
+                                                <Avatar className="h-10 w-10 border">
+                                                    <AvatarFallback className="text-xs font-semibold">{initials(activeConversation.counselorName)}</AvatarFallback>
+                                                </Avatar>
 
-                                            <div className="min-w-0">
-                                                <div className="truncate text-sm font-semibold text-slate-900">Guidance Counselor</div>
-                                                <div className="truncate text-xs text-muted-foreground">Private thread</div>
+                                                <div className="min-w-0">
+                                                    <div className="truncate text-sm font-semibold text-slate-900">{activeConversation.counselorName}</div>
+                                                    <div className="truncate text-xs text-muted-foreground">Private thread</div>
+                                                </div>
                                             </div>
-                                        </div>
+                                        ) : (
+                                            <div className="text-sm text-muted-foreground">Select a counselor</div>
+                                        )}
                                     </div>
 
-                                    <Button
-                                        type="button"
-                                        variant="outline"
-                                        className="h-9 px-3 text-xs"
-                                        onClick={markAllAsRead}
-                                        disabled={isLoading || isMarking || !hasUnread}
-                                    >
-                                        {isMarking ? "Marking…" : "Mark read"}
-                                    </Button>
+                                    <div className="flex items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="h-9 px-3 text-xs"
+                                            onClick={markConversationRead}
+                                            disabled={isLoading || isMarking || !activeConversation || !hasUnreadActive}
+                                        >
+                                            {isMarking ? "Marking…" : "Mark read"}
+                                        </Button>
+
+                                        <DropdownMenu>
+                                            <DropdownMenuTrigger asChild>
+                                                <Button type="button" variant="outline" size="icon" className="h-9 w-9" disabled={!activeConversation}>
+                                                    <MoreVertical className="h-4 w-4" />
+                                                </Button>
+                                            </DropdownMenuTrigger>
+                                            <DropdownMenuContent align="end">
+                                                <DropdownMenuItem
+                                                    className="text-destructive focus:text-destructive"
+                                                    onSelect={(e) => {
+                                                        e.preventDefault();
+                                                        askDeleteConversation();
+                                                    }}
+                                                >
+                                                    <Trash2 className="mr-2 h-4 w-4" />
+                                                    Delete conversation
+                                                </DropdownMenuItem>
+                                            </DropdownMenuContent>
+                                        </DropdownMenu>
+                                    </div>
                                 </div>
 
                                 <ScrollArea className="h-[520px] bg-linear-to-b from-muted/30 to-white">
                                     <div className="space-y-3 p-4">
-                                        {isLoading ? (
+                                        {!activeConversation ? (
+                                            <div className="py-10 text-center text-sm text-muted-foreground">Choose a counselor conversation.</div>
+                                        ) : isLoading ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">Loading messages…</div>
-                                        ) : messages.length === 0 ? (
+                                        ) : activeMessages.length === 0 ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
                                         ) : (
-                                            messages.map((m) => {
+                                            activeMessages.map((m) => {
                                                 const mine = m.sender === "student" || m.sender === "guest";
                                                 const system = m.sender === "system";
                                                 const align = system ? "justify-center" : mine ? "justify-end" : "justify-start";
 
-                                                const bubble =
-                                                    system
-                                                        ? "border bg-white/90"
-                                                        : mine
-                                                            ? "border-emerald-200 bg-emerald-50/90"
-                                                            : "border-slate-200 bg-white/90";
+                                                const bubble = system
+                                                    ? "border bg-white/90"
+                                                    : mine
+                                                        ? "border-emerald-200 bg-emerald-50/90"
+                                                        : "border-slate-200 bg-white/90";
 
                                                 return (
                                                     <div key={m.id} className={`flex ${align}`}>
                                                         <div className="max-w-[86%]">
                                                             {!system ? (
-                                                                <div
-                                                                    className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
-                                                                        }`}
-                                                                >
+                                                                <div className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"}`}>
                                                                     <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
                                                                     <span aria-hidden="true">•</span>
                                                                     <span>{formatTimestamp(m.createdAt)}</span>
@@ -380,16 +967,48 @@ const StudentMessages: React.FC = () => {
                                                                             NEW
                                                                         </button>
                                                                     ) : null}
+
+                                                                    {(canEdit(m) || canDelete(m)) && (
+                                                                        <DropdownMenu>
+                                                                            <DropdownMenuTrigger asChild>
+                                                                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                                                                    <MoreVertical className="h-4 w-4" />
+                                                                                </Button>
+                                                                            </DropdownMenuTrigger>
+                                                                            <DropdownMenuContent align={mine ? "end" : "start"}>
+                                                                                {canEdit(m) && (
+                                                                                    <DropdownMenuItem
+                                                                                        onSelect={(e) => {
+                                                                                            e.preventDefault();
+                                                                                            openEdit(m);
+                                                                                        }}
+                                                                                    >
+                                                                                        <Pencil className="mr-2 h-4 w-4" />
+                                                                                        Edit
+                                                                                    </DropdownMenuItem>
+                                                                                )}
+                                                                                {canEdit(m) && canDelete(m) ? <DropdownMenuSeparator /> : null}
+                                                                                {canDelete(m) && (
+                                                                                    <DropdownMenuItem
+                                                                                        className="text-destructive focus:text-destructive"
+                                                                                        onSelect={(e) => {
+                                                                                            e.preventDefault();
+                                                                                            askDeleteMessage(m);
+                                                                                        }}
+                                                                                    >
+                                                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                                                        Delete
+                                                                                    </DropdownMenuItem>
+                                                                                )}
+                                                                            </DropdownMenuContent>
+                                                                        </DropdownMenu>
+                                                                    )}
                                                                 </div>
                                                             ) : (
-                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
-                                                                    {formatTimestamp(m.createdAt)}
-                                                                </div>
+                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">{formatTimestamp(m.createdAt)}</div>
                                                             )}
 
-                                                            <div className={`rounded-2xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${bubble}`}>
-                                                                {m.content}
-                                                            </div>
+                                                            <div className={`rounded-2xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${bubble}`}>{m.content}</div>
                                                         </div>
                                                     </div>
                                                 );
@@ -404,22 +1023,16 @@ const StudentMessages: React.FC = () => {
                                     <div className="flex items-end gap-2">
                                         <div className="flex-1">
                                             <Textarea
+                                                ref={textareaRef}
                                                 value={draft}
                                                 onChange={(e) => setDraft(e.target.value)}
-                                                placeholder="Write a message…"
-                                                disabled={isSending}
+                                                placeholder={activeConversation ? `Message ${activeConversation.counselorName}…` : "Select a counselor…"}
+                                                disabled={!activeConversation || isSending}
                                                 className="min-h-11 resize-none rounded-2xl"
                                             />
-                                            <div className="mt-1 text-[0.70rem] text-muted-foreground">
-                                                Allowed: Student/Guest ↔ Counselor
-                                            </div>
                                         </div>
 
-                                        <Button
-                                            type="submit"
-                                            className="h-11 rounded-2xl px-5"
-                                            disabled={isSending || !draft.trim()}
-                                        >
+                                        <Button type="submit" className="h-11 rounded-2xl px-5" disabled={!activeConversation || isSending || !draft.trim()}>
                                             {isSending ? "Sending…" : "Send"}
                                         </Button>
                                     </div>
@@ -428,6 +1041,67 @@ const StudentMessages: React.FC = () => {
                         </div>
                     </CardContent>
                 </Card>
+
+                {/* Edit dialog */}
+                <Dialog open={editOpen} onOpenChange={(v) => (!isSavingEdit ? setEditOpen(v) : null)}>
+                    <DialogContent>
+                        <DialogHeader>
+                            <DialogTitle>Edit message</DialogTitle>
+                            <DialogDescription>Update your message then save.</DialogDescription>
+                        </DialogHeader>
+
+                        <Textarea value={editDraft} onChange={(e) => setEditDraft(e.target.value)} className="min-h-28" />
+
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={() => setEditOpen(false)} disabled={isSavingEdit}>
+                                Cancel
+                            </Button>
+                            <Button type="button" onClick={saveEdit} disabled={isSavingEdit || !editDraft.trim()}>
+                                {isSavingEdit ? "Saving…" : "Save changes"}
+                            </Button>
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* Delete message confirm */}
+                <AlertDialog open={deleteMsgOpen} onOpenChange={(v) => (!isDeletingMsg ? setDeleteMsgOpen(v) : null)}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete message?</AlertDialogTitle>
+                            <AlertDialogDescription>This action cannot be undone.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isDeletingMsg}>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={confirmDeleteMessage}
+                                disabled={isDeletingMsg}
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                            >
+                                {isDeletingMsg ? "Deleting…" : "Delete"}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+
+                {/* Delete conversation confirm */}
+                <AlertDialog open={deleteConvoOpen} onOpenChange={(v) => (!isDeletingConvo ? setDeleteConvoOpen(v) : null)}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
+                            <AlertDialogDescription>This will remove the entire thread (all messages) from your inbox.</AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isDeletingConvo}>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={confirmDeleteConversation}
+                                disabled={isDeletingConvo}
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                            >
+                                {isDeletingConvo ? "Deleting…" : "Delete conversation"}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
             </div>
         </DashboardLayout>
     );
