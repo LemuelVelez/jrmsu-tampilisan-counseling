@@ -42,14 +42,7 @@ import {
     AlertDialogHeader,
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogFooter,
-    DialogHeader,
-    DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { cn } from "@/lib/utils";
 import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
@@ -124,11 +117,7 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
     }
 
     if (!res.ok) {
-        const msg =
-            data?.message ||
-            data?.error ||
-            res.statusText ||
-            "Server request failed.";
+        const msg = data?.message || data?.error || res.statusText || "Server request failed.";
         throw new Error(msg);
     }
 
@@ -176,6 +165,7 @@ async function tryDeleteConversationApi(conversationId: string, numericMessageId
         }
     }
 
+    // fallback: delete each message
     for (const id of numericMessageIds) {
         try {
             await tryDeleteMessageApi(id, token);
@@ -183,6 +173,145 @@ async function tryDeleteConversationApi(conversationId: string, numericMessageId
             // keep going
         }
     }
+}
+
+function extractUsersArray(payload: any): any[] {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+
+    const candidates = [
+        payload.users,
+        payload.data,
+        payload.results,
+        payload.items,
+        payload.records,
+        payload?.payload?.users,
+        payload?.payload?.data,
+    ];
+
+    for (const c of candidates) {
+        if (Array.isArray(c)) return c;
+    }
+
+    return [];
+}
+
+function extractUserName(u: any): string {
+    const name =
+        (u?.name && String(u.name).trim()) ||
+        (u?.full_name && String(u.full_name).trim()) ||
+        (u?.fullname && String(u.fullname).trim()) ||
+        (u?.display_name && String(u.display_name).trim()) ||
+        (u?.first_name || u?.last_name ? `${u?.first_name ?? ""} ${u?.last_name ?? ""}`.trim() : "") ||
+        "";
+    return name || "Unknown";
+}
+
+/**
+ * Use DB role fields if present. Returns null when it can't confidently map.
+ * (We use this to filter results to the selected role, if the API returns mixed roles.)
+ */
+function toPeerRole(role: any): PeerRole | null {
+    if (role == null) return null;
+    const r = String(role).trim().toLowerCase();
+
+    if (r === "student") return "student";
+    if (r === "guest") return "guest";
+    if (r === "counselor") return "counselor";
+
+    // common alternates
+    if (r === "guidance" || r === "guidance_counselor" || r === "guidance counselor") return "counselor";
+    if (r === "students") return "student";
+    if (r === "guests") return "guest";
+    if (r === "counselors") return "counselor";
+
+    return null;
+}
+
+/**
+ * Fetch users from DB (NOT from message history).
+ *
+ * IMPORTANT:
+ * Since your exact Laravel endpoint is unknown from the frontend code shown,
+ * this function tries several common routes + response shapes.
+ * Adjust/lock to your real endpoint when you confirm it.
+ */
+async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
+    const q = query.trim();
+    const roleParam = encodeURIComponent(role);
+
+    // Candidate endpoints (common Laravel patterns)
+    const candidates: string[] = [];
+
+    if (q.length > 0) {
+        const qq = encodeURIComponent(q);
+        candidates.push(`/users?role=${roleParam}&search=${qq}`);
+        candidates.push(`/users?role=${roleParam}&q=${qq}`);
+        candidates.push(`/users/search?role=${roleParam}&q=${qq}`);
+        candidates.push(`/search/users?role=${roleParam}&q=${qq}`);
+
+        // role-specific collections
+        candidates.push(`/${role}s?search=${qq}`); // /students, /guests, /counselors
+        candidates.push(`/${role}s/search?q=${qq}`);
+        candidates.push(`/${role}s?query=${qq}`);
+    } else {
+        // "initial list" when nothing typed (try to keep small)
+        candidates.push(`/users?role=${roleParam}&limit=20`);
+        candidates.push(`/users?role=${roleParam}&per_page=20`);
+        candidates.push(`/${role}s?limit=20`);
+        candidates.push(`/${role}s?per_page=20`);
+    }
+
+    let lastErr: any = null;
+
+    for (const path of candidates) {
+        try {
+            const data = await apiFetch(path, { method: "GET" }, token);
+            const arr = extractUsersArray(data);
+            if (!Array.isArray(arr)) continue;
+
+            const mapped: DirectoryUser[] = arr
+                .map((raw) => raw?.user ?? raw) // sometimes nested
+                .map((u: any) => {
+                    const id = u?.id ?? u?.user_id ?? u?.account_id ?? u?.student_id ?? u?.counselor_id;
+                    if (id == null || String(id).trim() === "") return null;
+
+                    const name = extractUserName(u);
+
+                    // ✅ Use toPeerRole here (fixes unused var error)
+                    const dbRole =
+                        toPeerRole(u?.role) ??
+                        toPeerRole(u?.role_name) ??
+                        toPeerRole(u?.account_type) ??
+                        toPeerRole(u?.type);
+
+                    // If API returns role info and it's not the selected role, skip it.
+                    if (dbRole && dbRole !== role) return null;
+
+                    return {
+                        id,
+                        name,
+                        role: role,
+                    } as DirectoryUser;
+                })
+                .filter(Boolean) as DirectoryUser[];
+
+            // de-dupe
+            const seen = new Set<string>();
+            const deduped = mapped.filter((u) => {
+                const key = `${u.role}-${String(u.id)}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            });
+
+            return deduped;
+        } catch (e) {
+            lastErr = e;
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to search users from database.");
 }
 
 const formatTimestamp = (iso: string) => {
@@ -334,7 +463,8 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             }
         }
 
-        const subtitle = peerRole === "counselor" ? "Counselor thread" : peerRole === "guest" ? "Guest thread" : "Student thread";
+        const subtitle =
+            peerRole === "counselor" ? "Counselor thread" : peerRole === "guest" ? "Guest thread" : "Student thread";
 
         conversations.push({
             id: conversationId,
@@ -358,72 +488,29 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
     return conversations;
 }
 
-function isGenericName(name: string, role: PeerRole): boolean {
-    const n = (name || "").trim().toLowerCase();
-    if (!n) return true;
-    if (n === "student" || n === "guest" || n === "counselor") return true;
-    if (n === roleLabel(role).toLowerCase()) return true;
-    if (n === "guidance counselor" || n === "guidance & counseling office") return true;
-    return false;
-}
-
-function buildDirectoryFromMessages(messages: UiMessage[], myUserId: string): Record<PeerRole, DirectoryUser[]> {
-    const map = new Map<string, DirectoryUser>();
-
-    const upsert = (role: PeerRole, id: any, name: any) => {
-        if (id == null || String(id).trim() === "") return;
-        const key = `${role}-${String(id)}`;
-        const fallback = role === "counselor" ? `Counselor #${id}` : `${roleLabel(role)} #${id}`;
-        const cleaned = (name && String(name).trim()) || "";
-        const finalName = !cleaned || isGenericName(cleaned, role) ? fallback : cleaned;
-
-        if (role === "counselor" && String(id) === String(myUserId)) return;
-
-        const prev = map.get(key);
-        if (!prev) {
-            map.set(key, { role, id, name: finalName });
-            return;
-        }
-
-        if (isGenericName(prev.name, role) && !isGenericName(finalName, role)) {
-            map.set(key, { role, id, name: finalName });
-        }
-    };
-
-    for (const m of messages) {
-        if (m.sender !== "system") {
-            if (m.sender === "student" || m.sender === "guest") {
-                const id = m.userId ?? m.senderId;
-                upsert(m.sender, id, m.senderName);
-            } else if (m.sender === "counselor") {
-                upsert("counselor", m.senderId, m.senderName);
-            }
-        }
-
-        if (m.recipientRole && (m.recipientRole === "student" || m.recipientRole === "guest" || m.recipientRole === "counselor")) {
-            const rr = m.recipientRole as PeerRole;
-            upsert(rr, m.recipientId, rr === "counselor" ? `Counselor #${m.recipientId}` : `${roleLabel(rr)} #${m.recipientId}`);
-        }
-    }
-
-    const buckets: Record<PeerRole, DirectoryUser[]> = { student: [], guest: [], counselor: [] };
-    for (const u of map.values()) buckets[u.role].push(u);
-
-    (Object.keys(buckets) as PeerRole[]).forEach((r) => {
-        buckets[r].sort((a, b) => a.name.localeCompare(b.name));
-    });
-
-    return buckets;
-}
-
 function UserCombobox(props: {
     users: DirectoryUser[];
     value: DirectoryUser | null;
     onChange: (u: DirectoryUser) => void;
+
+    searchValue: string;
+    onSearchValueChange: (v: string) => void;
+    isLoading?: boolean;
+
     placeholder?: string;
     emptyText?: string;
 }) {
-    const { users, value, onChange, placeholder = "Select user…", emptyText = "No users found." } = props;
+    const {
+        users,
+        value,
+        onChange,
+        searchValue,
+        onSearchValueChange,
+        isLoading,
+        placeholder = "Select user…",
+        emptyText = "No users found.",
+    } = props;
+
     const [open, setOpen] = React.useState(false);
 
     return (
@@ -439,9 +526,9 @@ function UserCombobox(props: {
 
             <PopoverContent className="w-[--radix-popover-trigger-width] p-0" align="start">
                 <Command>
-                    <CommandInput placeholder="Type name or ID…" />
+                    <CommandInput placeholder="Type name or ID…" value={searchValue} onValueChange={(v) => onSearchValueChange(v)} />
                     <CommandList>
-                        <CommandEmpty>{emptyText}</CommandEmpty>
+                        <CommandEmpty>{isLoading ? "Searching…" : emptyText}</CommandEmpty>
                         <CommandGroup>
                             {users.map((u) => {
                                 const selected = !!value && value.role === u.role && String(value.id) === String(u.id);
@@ -475,7 +562,7 @@ function UserCombobox(props: {
 
 const CounselorMessages: React.FC = () => {
     const session = getCurrentSession();
-    const token = session?.token ?? null;
+    const token = (session as any)?.token ?? null;
     const counselorName = session?.user && (session.user as any).name ? String((session.user as any).name) : "Counselor";
     const myUserId = session?.user?.id != null ? String(session.user.id) : "";
 
@@ -495,8 +582,12 @@ const CounselorMessages: React.FC = () => {
     const [draftConversations, setDraftConversations] = React.useState<Conversation[]>([]);
     const [showNewMessage, setShowNewMessage] = React.useState(false);
 
+    // recipients fetched from DB
     const [newRole, setNewRole] = React.useState<PeerRole>("student");
     const [newRecipient, setNewRecipient] = React.useState<DirectoryUser | null>(null);
+    const [recipientQuery, setRecipientQuery] = React.useState("");
+    const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([]);
+    const [recipientLoading, setRecipientLoading] = React.useState(false);
 
     const localIdRef = React.useRef(0);
     const bottomRef = React.useRef<HTMLDivElement | null>(null);
@@ -565,9 +656,6 @@ const CounselorMessages: React.FC = () => {
             .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
     }, [messages, activeConversationId]);
 
-    const directory = React.useMemo(() => buildDirectoryFromMessages(messages, myUserId), [messages, myUserId]);
-    const newRoleUsers = React.useMemo(() => directory[newRole] ?? [], [directory, newRole]);
-
     React.useEffect(() => {
         let mounted = true;
 
@@ -602,6 +690,42 @@ const CounselorMessages: React.FC = () => {
     React.useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [activeConversationId, activeMessages.length]);
+
+    // Fetch recipients from DB (debounced)
+    React.useEffect(() => {
+        if (!showNewMessage) return;
+
+        let cancelled = false;
+        const q = recipientQuery.trim();
+
+        const shouldFetch = q.length === 0 || q.length >= 2;
+
+        if (!shouldFetch) {
+            setRecipientResults([]);
+            setRecipientLoading(false);
+            return;
+        }
+
+        const t = window.setTimeout(async () => {
+            setRecipientLoading(true);
+            try {
+                const users = await trySearchUsersFromDb(newRole, q, token);
+                if (cancelled) return;
+                setRecipientResults(users);
+            } catch (err) {
+                if (cancelled) return;
+                setRecipientResults([]);
+                toast.error(err instanceof Error ? err.message : "Failed to search users.");
+            } finally {
+                if (!cancelled) setRecipientLoading(false);
+            }
+        }, q.length === 0 ? 0 : 300);
+
+        return () => {
+            cancelled = true;
+            window.clearTimeout(t);
+        };
+    }, [recipientQuery, newRole, showNewMessage, token]);
 
     const markConversationRead = async () => {
         if (!activeConversationId) return;
@@ -654,7 +778,12 @@ const CounselorMessages: React.FC = () => {
         const peerName = newRecipient.name;
 
         const conversationId = `new-${newRecipient.role}-${String(peerId)}-${Date.now()}`;
-        const subtitle = newRecipient.role === "counselor" ? "Counselor thread" : newRecipient.role === "guest" ? "Guest thread" : "Student thread";
+        const subtitle =
+            newRecipient.role === "counselor"
+                ? "Counselor thread"
+                : newRecipient.role === "guest"
+                    ? "Guest thread"
+                    : "Student thread";
         const nowIso = new Date().toISOString();
 
         const convo: Conversation = {
@@ -674,6 +803,8 @@ const CounselorMessages: React.FC = () => {
         setShowNewMessage(false);
 
         setNewRecipient(null);
+        setRecipientQuery("");
+        setRecipientResults([]);
     };
 
     const handleSend = async (e: React.FormEvent) => {
@@ -743,8 +874,8 @@ const CounselorMessages: React.FC = () => {
 
     // ===== Edit / Delete message =====
     const isMine = (m: UiMessage) => m.sender === "counselor" && String(m.senderId ?? "") === myUserId;
-    const canEdit = (m: UiMessage) => !["system"].includes(m.sender) && isMine(m);
-    const canDelete = (m: UiMessage) => !["system"].includes(m.sender); // counselor can delete any non-system message
+    const canEdit = (m: UiMessage) => m.sender !== "system" && isMine(m);
+    const canDelete = (m: UiMessage) => m.sender !== "system"; // counselor can delete any non-system message
 
     const openEdit = (m: UiMessage) => {
         setEditingMessage(m);
@@ -900,8 +1031,11 @@ const CounselorMessages: React.FC = () => {
                                                     <Select
                                                         value={newRole}
                                                         onValueChange={(v) => {
-                                                            setNewRole(v as PeerRole);
+                                                            const nextRole = v as PeerRole;
+                                                            setNewRole(nextRole);
                                                             setNewRecipient(null);
+                                                            setRecipientQuery("");
+                                                            setRecipientResults([]);
                                                         }}
                                                     >
                                                         <SelectTrigger className="h-9">
@@ -919,14 +1053,26 @@ const CounselorMessages: React.FC = () => {
                                                     <Label className="text-[0.70rem] font-medium text-slate-700">Recipient (required)</Label>
 
                                                     <UserCombobox
-                                                        users={newRoleUsers}
+                                                        users={recipientResults}
                                                         value={newRecipient}
                                                         onChange={(u) => setNewRecipient(u)}
+                                                        searchValue={recipientQuery}
+                                                        onSearchValueChange={(v) => {
+                                                            setRecipientQuery(v);
+                                                            setNewRecipient(null);
+                                                        }}
+                                                        isLoading={recipientLoading}
                                                         placeholder={`Type name or ID (${roleLabel(newRole)})…`}
-                                                        emptyText={`No ${roleLabel(newRole).toLowerCase()} users found in history.`}
+                                                        emptyText={
+                                                            recipientQuery.trim().length < 2
+                                                                ? "Type at least 2 characters to search."
+                                                                : `No ${roleLabel(newRole).toLowerCase()} found.`
+                                                        }
                                                     />
 
-                                                    <div className="text-[0.70rem] text-muted-foreground">Tip: Type a name or ID to filter, then click a user.</div>
+                                                    <div className="text-[0.70rem] text-muted-foreground">
+                                                        Tip: This searches your database (not message history). If nothing appears, confirm your backend endpoint.
+                                                    </div>
                                                 </div>
 
                                                 <Button type="button" className="mt-2 h-9 text-xs" onClick={startNewConversation} disabled={!newRecipient}>
@@ -977,7 +1123,8 @@ const CounselorMessages: React.FC = () => {
                                                             setActiveConversationId(c.id);
                                                             setMobileView("chat");
                                                         }}
-                                                        className={`w-full rounded-xl border p-3 text-left transition ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"}`}
+                                                        className={`w-full rounded-xl border p-3 text-left transition ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"
+                                                            }`}
                                                     >
                                                         <div className="flex items-center justify-between gap-3">
                                                             <div className="flex min-w-0 items-center gap-3">
@@ -1071,7 +1218,7 @@ const CounselorMessages: React.FC = () => {
                                             <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
                                         ) : (
                                             activeMessages.map((m) => {
-                                                const mine = isMine(m);
+                                                const mine = m.sender === "counselor" && String(m.senderId ?? "") === myUserId;
                                                 const system = m.sender === "system";
                                                 const align = system ? "justify-center" : mine ? "justify-end" : "justify-start";
 
@@ -1215,9 +1362,7 @@ const CounselorMessages: React.FC = () => {
                     <AlertDialogContent>
                         <AlertDialogHeader>
                             <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
-                            <AlertDialogDescription>
-                                This will remove the entire thread (all messages) from your inbox.
-                            </AlertDialogDescription>
+                            <AlertDialogDescription>This will remove the entire thread (all messages) from your inbox.</AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingConvo}>Cancel</AlertDialogCancel>
