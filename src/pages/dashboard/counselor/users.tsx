@@ -136,6 +136,54 @@ function getInitials(name?: string | null, email?: string | null): string {
     return (email?.[0] ?? "U").toUpperCase();
 }
 
+function getApiOrigin(): string {
+    if (!AUTH_API_BASE_URL) return "";
+    try {
+        return new URL(AUTH_API_BASE_URL).origin;
+    } catch {
+        return "";
+    }
+}
+
+function resolveAvatarSrc(raw?: string | null): string | null {
+    const s0 = typeof raw === "string" ? raw : "";
+    let s = s0.trim();
+    if (!s) return null;
+
+    // normalize any backslashes coming from storage paths
+    s = s.replace(/\\/g, "/");
+
+    // already absolute or special
+    if (/^(data:|blob:)/i.test(s)) return s;
+    if (/^https?:\/\//i.test(s)) return s;
+    if (s.startsWith("//")) return `${window.location.protocol}${s}`;
+
+    // make it a root path, then attach to API origin if present
+    const path = s.startsWith("/") ? s : `/${s}`;
+    const origin = getApiOrigin();
+    return origin ? `${origin}${path}` : path;
+}
+
+function pickAvatarUrl(u: any): string | null {
+    const candidates = [
+        u?.avatar_url,
+        u?.avatarUrl,
+        u?.avatar,
+        u?.profile_picture,
+        u?.profile_picture_url,
+        u?.profile_photo_url,
+        u?.photo_url,
+        u?.image_url,
+        u?.picture,
+        u?.photo,
+    ];
+
+    for (const c of candidates) {
+        if (typeof c === "string" && c.trim()) return c.trim();
+    }
+    return null;
+}
+
 function mapToDirectoryUser(raw: any): DirectoryUser | null {
     const u = raw?.user ?? raw;
 
@@ -149,12 +197,14 @@ function mapToDirectoryUser(raw: any): DirectoryUser | null {
     const roleRaw = readStr(u, "role").trim() || readStr(u, "user_role").trim();
     const roleNorm = normalizeRole(roleRaw);
 
+    const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null;
+
     return {
         id,
         name,
         email,
         role: roleRaw || roleNorm || "user",
-        avatar_url: typeof u?.avatar_url === "string" ? u.avatar_url : null,
+        avatar_url: avatarRaw,
 
         student_id: readStr(u, "student_id") || null,
         year_level: readStr(u, "year_level") || null,
@@ -438,17 +488,14 @@ const CounselorUsers: React.FC = () => {
                             </div>
                         ) : (
                             <>
-                                {/* Mobile: vertical cards */}
+                                {/* Mobile: horizontal-scroll rows (no truncation) */}
                                 <div className="space-y-3 sm:hidden">
                                     {filtered.map((u) => {
-                                        const avatarUrl =
-                                            typeof u.avatar_url === "string" && u.avatar_url.trim()
-                                                ? u.avatar_url.trim()
-                                                : null;
-
+                                        const avatarSrc = resolveAvatarSrc(u.avatar_url ?? null);
                                         const initials = getInitials(u.name, u.email);
+
                                         const r = normalizeRole(u.role ?? "");
-                                        const roleLabel = r.includes("student")
+                                        const roleLabelText = r.includes("student")
                                             ? "Student"
                                             : r.includes("guest")
                                                 ? "Guest"
@@ -456,63 +503,71 @@ const CounselorUsers: React.FC = () => {
 
                                         return (
                                             <div key={String(u.id)} className="rounded-xl border bg-white/70 p-3">
-                                                <div className="flex items-center gap-3">
-                                                    <Avatar className="h-10 w-10 border">
-                                                        {avatarUrl ? (
-                                                            <AvatarImage src={avatarUrl} alt={u.name} className="object-cover" />
-                                                        ) : (
-                                                            <AvatarFallback className="text-xs font-semibold">
-                                                                {initials}
-                                                            </AvatarFallback>
-                                                        )}
-                                                    </Avatar>
+                                                {/* Make mobile row data scroll horizontally instead of truncating */}
+                                                <div className="overflow-x-auto">
+                                                    <div className="min-w-max pr-2">
+                                                        <div className="flex items-center gap-3">
+                                                            <Avatar className="h-10 w-10 border">
+                                                                {avatarSrc ? (
+                                                                    <AvatarImage
+                                                                        src={avatarSrc}
+                                                                        alt={u.name}
+                                                                        className="object-cover"
+                                                                        loading="lazy"
+                                                                    />
+                                                                ) : (
+                                                                    <AvatarFallback className="text-xs font-semibold">
+                                                                        {initials}
+                                                                    </AvatarFallback>
+                                                                )}
+                                                            </Avatar>
 
-                                                    <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center justify-between gap-2">
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-sm font-semibold text-slate-900">
-                                                                    {u.name}
+                                                            <div className="flex items-center justify-between gap-4">
+                                                                <div className="space-y-0.5">
+                                                                    <div className="whitespace-nowrap text-sm font-semibold text-slate-900">
+                                                                        {u.name}
+                                                                    </div>
+                                                                    <div className="whitespace-nowrap text-xs text-muted-foreground">
+                                                                        {u.email}
+                                                                    </div>
                                                                 </div>
-                                                                <div className="truncate text-xs text-muted-foreground">
-                                                                    {u.email}
-                                                                </div>
+
+                                                                <Badge variant="secondary" className="shrink-0 whitespace-nowrap text-[0.70rem]">
+                                                                    {roleLabelText}
+                                                                </Badge>
                                                             </div>
-
-                                                            <Badge variant="secondary" className="shrink-0 text-[0.70rem]">
-                                                                {roleLabel}
-                                                            </Badge>
                                                         </div>
+
+                                                        {(u.student_id || u.program || u.year_level || u.course) ? (
+                                                            <div className="mt-3 space-y-1 text-xs text-muted-foreground">
+                                                                {u.student_id ? (
+                                                                    <div className="flex justify-between gap-6 whitespace-nowrap">
+                                                                        <span className="text-slate-700">Student ID</span>
+                                                                        <span>{u.student_id}</span>
+                                                                    </div>
+                                                                ) : null}
+                                                                {u.year_level ? (
+                                                                    <div className="flex justify-between gap-6 whitespace-nowrap">
+                                                                        <span className="text-slate-700">Year</span>
+                                                                        <span>{u.year_level}</span>
+                                                                    </div>
+                                                                ) : null}
+                                                                {u.program ? (
+                                                                    <div className="flex justify-between gap-6 whitespace-nowrap">
+                                                                        <span className="text-slate-700">Program</span>
+                                                                        <span>{u.program}</span>
+                                                                    </div>
+                                                                ) : null}
+                                                                {u.course ? (
+                                                                    <div className="flex justify-between gap-6 whitespace-nowrap">
+                                                                        <span className="text-slate-700">Course</span>
+                                                                        <span>{u.course}</span>
+                                                                    </div>
+                                                                ) : null}
+                                                            </div>
+                                                        ) : null}
                                                     </div>
                                                 </div>
-
-                                                {(u.student_id || u.program || u.year_level || u.course) ? (
-                                                    <div className="mt-3 space-y-1 text-xs text-muted-foreground">
-                                                        {u.student_id ? (
-                                                            <div className="flex justify-between gap-3">
-                                                                <span className="text-slate-700">Student ID</span>
-                                                                <span className="truncate">{u.student_id}</span>
-                                                            </div>
-                                                        ) : null}
-                                                        {u.year_level ? (
-                                                            <div className="flex justify-between gap-3">
-                                                                <span className="text-slate-700">Year</span>
-                                                                <span className="truncate">{u.year_level}</span>
-                                                            </div>
-                                                        ) : null}
-                                                        {u.program ? (
-                                                            <div className="flex justify-between gap-3">
-                                                                <span className="text-slate-700">Program</span>
-                                                                <span className="truncate text-right">{u.program}</span>
-                                                            </div>
-                                                        ) : null}
-                                                        {u.course ? (
-                                                            <div className="flex justify-between gap-3">
-                                                                <span className="text-slate-700">Course</span>
-                                                                <span className="truncate text-right">{u.course}</span>
-                                                            </div>
-                                                        ) : null}
-                                                    </div>
-                                                ) : null}
 
                                                 <Button
                                                     type="button"
@@ -546,14 +601,11 @@ const CounselorUsers: React.FC = () => {
 
                                         <TableBody>
                                             {filtered.map((u) => {
-                                                const avatarUrl =
-                                                    typeof u.avatar_url === "string" && u.avatar_url.trim()
-                                                        ? u.avatar_url.trim()
-                                                        : null;
-
+                                                const avatarSrc = resolveAvatarSrc(u.avatar_url ?? null);
                                                 const initials = getInitials(u.name, u.email);
+
                                                 const r = normalizeRole(u.role ?? "");
-                                                const roleLabel = r.includes("student")
+                                                const roleLabelText = r.includes("student")
                                                     ? "Student"
                                                     : r.includes("guest")
                                                         ? "Guest"
@@ -563,8 +615,13 @@ const CounselorUsers: React.FC = () => {
                                                     <TableRow key={String(u.id)}>
                                                         <TableCell>
                                                             <Avatar className="h-9 w-9 border">
-                                                                {avatarUrl ? (
-                                                                    <AvatarImage src={avatarUrl} alt={u.name} className="object-cover" />
+                                                                {avatarSrc ? (
+                                                                    <AvatarImage
+                                                                        src={avatarSrc}
+                                                                        alt={u.name}
+                                                                        className="object-cover"
+                                                                        loading="lazy"
+                                                                    />
                                                                 ) : (
                                                                     <AvatarFallback className="text-[0.7rem] font-semibold">
                                                                         {initials}
@@ -584,7 +641,7 @@ const CounselorUsers: React.FC = () => {
 
                                                         <TableCell>
                                                             <Badge variant="secondary" className="text-[0.70rem]">
-                                                                {roleLabel}
+                                                                {roleLabelText}
                                                             </Badge>
                                                         </TableCell>
 
