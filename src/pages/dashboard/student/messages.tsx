@@ -275,6 +275,12 @@ const formatTimestamp = (iso: string) => {
     return format(d, "MMM d, yyyy • h:mm a");
 };
 
+const formatTimeOnly = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return format(d, "h:mm a");
+};
+
 const formatShort = (iso?: string) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -422,7 +428,12 @@ function CounselorCombobox(props: {
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button variant="outline" role="combobox" aria-expanded={open} className="h-9 w-full justify-between">
+                <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    className="h-10 w-full justify-between sm:h-9"
+                >
                     <span className={cn("min-w-0 truncate text-left", !value ? "text-muted-foreground" : "")}>
                         {value ? `${value.name} • ID: ${value.id}` : placeholder}
                     </span>
@@ -514,7 +525,7 @@ const StudentMessages: React.FC = () => {
     const localIdRef = React.useRef(0);
     const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
-    // ✅ refs to keep refresh stable without re-fetching on convo change
+    // keep refresh stable without re-fetching on convo change
     const activeConversationIdRef = React.useRef<string>("");
     const draftConversationsRef = React.useRef<Conversation[]>([]);
 
@@ -931,27 +942,33 @@ const StudentMessages: React.FC = () => {
         <DashboardLayout title="Messages" description="Chat privately with your chosen counselor.">
             <div className="mx-auto w-full max-w-6xl">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
-                    <CardHeader className="space-y-2">
-                        <CardTitle className="text-base">Messages</CardTitle>
+                    <CardHeader className="space-y-2 p-4 sm:p-6">
+                        <CardTitle className="text-base">
+                            <span className="sm:hidden">Inbox</span>
+                            <span className="hidden sm:inline">Messages</span>
+                        </CardTitle>
                         <CardDescription className="text-xs">
-                            Choose a counselor to message. Each counselor has their own private thread.
+                            <span className="sm:hidden">Pick a counselor and start chatting.</span>
+                            <span className="hidden sm:inline">
+                                Choose a counselor to message. Each counselor has their own private thread.
+                            </span>
                         </CardDescription>
                     </CardHeader>
 
                     <CardContent className="p-0">
-                        <div className="grid min-h-[680px] grid-cols-1 md:grid-cols-[340px_1fr]">
+                        <div className="grid min-h-[640px] grid-cols-1 sm:min-h-[680px] md:grid-cols-[340px_1fr]">
                             {/* LEFT: conversation list */}
                             <div className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"}`}>
-                                <div className="p-4">
-                                    <div className="mb-3 flex items-center justify-between gap-3">
+                                <div className="p-3 sm:p-4">
+                                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                         <div className="text-sm font-semibold text-slate-900">Conversations</div>
 
-                                        <div className="flex items-center gap-2">
+                                        <div className="flex items-center justify-between gap-2 sm:justify-end">
                                             <Button
                                                 type="button"
                                                 variant="outline"
                                                 size="icon"
-                                                className="h-8 w-8"
+                                                className="h-10 w-10 sm:h-8 sm:w-8"
                                                 onClick={() => refreshMessages()}
                                                 disabled={isLoading}
                                                 aria-label="Refresh conversations"
@@ -960,13 +977,18 @@ const StudentMessages: React.FC = () => {
                                                 <RefreshCw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
                                             </Button>
 
-                                            <Badge variant="secondary" className="text-[0.70rem]">
+                                            <Badge variant="secondary" className="w-fit text-[0.70rem]">
                                                 Student
                                             </Badge>
                                         </div>
                                     </div>
 
-                                    <Button type="button" variant="outline" className="h-9 w-full text-xs" onClick={() => setShowNewMessage((v) => !v)}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-10 w-full text-[0.85rem] sm:h-9 sm:text-xs"
+                                        onClick={() => setShowNewMessage((v) => !v)}
+                                    >
                                         {showNewMessage ? "Close new message" : "Create new message"}
                                     </Button>
 
@@ -995,11 +1017,17 @@ const StudentMessages: React.FC = () => {
                                                     />
 
                                                     <div className="text-[0.70rem] text-muted-foreground">
-                                                        Tip: This searches your database (not message history).
+                                                        <span className="sm:hidden">Searches your database (not history).</span>
+                                                        <span className="hidden sm:inline">Tip: This searches your database (not message history).</span>
                                                     </div>
                                                 </div>
 
-                                                <Button type="button" className="mt-2 h-9 text-xs" onClick={startNewConversation} disabled={!newCounselor}>
+                                                <Button
+                                                    type="button"
+                                                    className="mt-2 h-10 text-[0.85rem] sm:h-9 sm:text-xs"
+                                                    onClick={startNewConversation}
+                                                    disabled={!newCounselor}
+                                                >
                                                     Start
                                                 </Button>
                                             </div>
@@ -1007,14 +1035,19 @@ const StudentMessages: React.FC = () => {
                                     ) : null}
 
                                     <div className="mt-3">
-                                        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search counselors…" className="h-9" />
+                                        <Input
+                                            value={search}
+                                            onChange={(e) => setSearch(e.target.value)}
+                                            placeholder="Search counselors…"
+                                            className="h-10 sm:h-9"
+                                        />
                                     </div>
                                 </div>
 
                                 <Separator />
 
-                                <ScrollArea className="h-[560px]">
-                                    <div className="space-y-2 p-4">
+                                <ScrollArea className="h-[520px] sm:h-[560px]">
+                                    <div className="space-y-2 p-3 sm:p-4">
                                         {isLoading ? (
                                             <div className="text-sm text-muted-foreground">Loading conversations…</div>
                                         ) : filteredConversations.length === 0 ? (
@@ -1031,29 +1064,38 @@ const StudentMessages: React.FC = () => {
                                                             setMobileView("chat");
                                                             requestAnimationFrame(() => textareaRef.current?.focus());
                                                         }}
-                                                        className={`w-full rounded-xl border p-3 text-left transition ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"}`}
+                                                        className={`w-full rounded-xl border p-2.5 text-left transition sm:p-3 ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"
+                                                            }`}
                                                     >
-                                                        <div className="flex items-center justify-between gap-3">
-                                                            <div className="flex min-w-0 items-center gap-3">
-                                                                <Avatar className="h-9 w-9 border">
-                                                                    <AvatarFallback className="text-xs font-semibold">{initials(c.counselorName)}</AvatarFallback>
+                                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                                            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                                                                <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
+                                                                    <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
+                                                                        {initials(c.counselorName)}
+                                                                    </AvatarFallback>
                                                                 </Avatar>
 
                                                                 <div className="min-w-0">
-                                                                    <div className="truncate text-sm font-semibold text-slate-900">{c.counselorName}</div>
-                                                                    <div className="truncate text-xs text-muted-foreground">{c.subtitle}</div>
+                                                                    <div className="truncate text-[0.92rem] font-semibold text-slate-900 sm:text-sm">
+                                                                        {c.counselorName}
+                                                                    </div>
+                                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">{c.subtitle}</div>
                                                                 </div>
                                                             </div>
 
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex items-center justify-between gap-2 sm:justify-end">
                                                                 {c.unreadCount > 0 ? (
                                                                     <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">{c.unreadCount}</Badge>
-                                                                ) : null}
-                                                                <span className="text-xs text-muted-foreground">{formatShort(c.lastTimestamp)}</span>
+                                                                ) : (
+                                                                    <span />
+                                                                )}
+                                                                <span className="text-[0.72rem] text-muted-foreground sm:text-xs">{formatShort(c.lastTimestamp)}</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="mt-2 truncate text-xs text-muted-foreground">{c.lastMessage || "No messages yet."}</div>
+                                                        <div className="mt-2 line-clamp-2 text-[0.72rem] text-muted-foreground sm:truncate sm:text-xs">
+                                                            {c.lastMessage || "No messages yet."}
+                                                        </div>
                                                     </button>
                                                 );
                                             })
@@ -1064,21 +1106,30 @@ const StudentMessages: React.FC = () => {
 
                             {/* RIGHT: chat */}
                             <div className={`flex flex-col ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
-                                <div className="flex items-center justify-between gap-3 border-b bg-white/70 p-4">
-                                    <div className="flex items-center gap-3">
-                                        <Button type="button" variant="outline" size="icon" className="md:hidden" onClick={() => setMobileView("list")} aria-label="Back">
+                                <div className="flex flex-col gap-3 border-b bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4">
+                                    <div className="flex items-center gap-2 sm:gap-3">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            className="md:hidden"
+                                            onClick={() => setMobileView("list")}
+                                            aria-label="Back"
+                                        >
                                             ←
                                         </Button>
 
                                         {activeConversation ? (
-                                            <div className="flex items-center gap-3">
-                                                <Avatar className="h-10 w-10 border">
-                                                    <AvatarFallback className="text-xs font-semibold">{initials(activeConversation.counselorName)}</AvatarFallback>
+                                            <div className="flex items-center gap-2 sm:gap-3">
+                                                <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
+                                                    <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
+                                                        {initials(activeConversation.counselorName)}
+                                                    </AvatarFallback>
                                                 </Avatar>
 
                                                 <div className="min-w-0">
                                                     <div className="truncate text-sm font-semibold text-slate-900">{activeConversation.counselorName}</div>
-                                                    <div className="truncate text-xs text-muted-foreground">Private thread</div>
+                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">Private thread</div>
                                                 </div>
                                             </div>
                                         ) : (
@@ -1086,54 +1137,62 @@ const StudentMessages: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-9 w-9"
-                                            onClick={() => refreshMessages()}
-                                            disabled={isLoading}
-                                            aria-label="Refresh messages"
-                                            title="Refresh"
-                                        >
-                                            <RefreshCw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
-                                        </Button>
+                                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+                                        <div className="flex items-center justify-between gap-2 sm:justify-end">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="h-10 w-10 sm:h-9 sm:w-9"
+                                                onClick={() => refreshMessages()}
+                                                disabled={isLoading}
+                                                aria-label="Refresh messages"
+                                                title="Refresh"
+                                            >
+                                                <RefreshCw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
+                                            </Button>
+
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button
+                                                        type="button"
+                                                        variant="outline"
+                                                        size="icon"
+                                                        className="h-10 w-10 sm:h-9 sm:w-9"
+                                                        disabled={!activeConversation}
+                                                    >
+                                                        <MoreVertical className="h-4 w-4" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem
+                                                        className="text-destructive focus:text-destructive"
+                                                        onSelect={(e) => {
+                                                            e.preventDefault();
+                                                            askDeleteConversation();
+                                                        }}
+                                                    >
+                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                        Delete conversation
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        </div>
 
                                         <Button
                                             type="button"
                                             variant="outline"
-                                            className="h-9 px-3 text-xs"
+                                            className="h-10 w-full text-[0.85rem] sm:h-9 sm:w-auto sm:px-3 sm:text-xs"
                                             onClick={markConversationRead}
                                             disabled={isLoading || isMarking || !activeConversation || !hasUnreadActive}
                                         >
                                             {isMarking ? "Marking…" : "Mark read"}
                                         </Button>
-
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button type="button" variant="outline" size="icon" className="h-9 w-9" disabled={!activeConversation}>
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem
-                                                    className="text-destructive focus:text-destructive"
-                                                    onSelect={(e) => {
-                                                        e.preventDefault();
-                                                        askDeleteConversation();
-                                                    }}
-                                                >
-                                                    <Trash2 className="mr-2 h-4 w-4" />
-                                                    Delete conversation
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
                                     </div>
                                 </div>
 
-                                <ScrollArea className="h-[520px] bg-linear-to-b from-muted/30 to-white">
-                                    <div className="space-y-3 p-4">
+                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
+                                    <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">Choose a counselor conversation.</div>
                                         ) : isLoading ? (
@@ -1154,12 +1213,17 @@ const StudentMessages: React.FC = () => {
 
                                                 return (
                                                     <div key={m.id} className={`flex ${align}`}>
-                                                        <div className="max-w-[86%]">
+                                                        <div className="max-w-[94%] sm:max-w-[86%]">
                                                             {!system ? (
-                                                                <div className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"}`}>
+                                                                <div
+                                                                    className={`mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
+                                                                        }`}
+                                                                >
                                                                     <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
                                                                     <span aria-hidden="true">•</span>
-                                                                    <span>{formatTimestamp(m.createdAt)}</span>
+
+                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
+                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
 
                                                                     {m.isUnread ? (
                                                                         <button
@@ -1174,7 +1238,7 @@ const StudentMessages: React.FC = () => {
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>
                                                                             <DropdownMenuTrigger asChild>
-                                                                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                                                                <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-6 sm:w-6">
                                                                                     <MoreVertical className="h-4 w-4" />
                                                                                 </Button>
                                                                             </DropdownMenuTrigger>
@@ -1208,10 +1272,17 @@ const StudentMessages: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             ) : (
-                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">{formatTimestamp(m.createdAt)}</div>
+                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
+                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
+                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
+                                                                </div>
                                                             )}
 
-                                                            <div className={`rounded-2xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${bubble}`}>{m.content}</div>
+                                                            <div
+                                                                className={`rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm ${bubble}`}
+                                                            >
+                                                                {m.content}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 );
@@ -1222,8 +1293,8 @@ const StudentMessages: React.FC = () => {
                                     </div>
                                 </ScrollArea>
 
-                                <form onSubmit={handleSend} className="border-t bg-white/80 p-4">
-                                    <div className="flex items-end gap-2">
+                                <form onSubmit={handleSend} className="border-t bg-white/80 p-3 sm:p-4">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2">
                                         <div className="flex-1">
                                             <Textarea
                                                 ref={textareaRef}
@@ -1231,11 +1302,15 @@ const StudentMessages: React.FC = () => {
                                                 onChange={(e) => setDraft(e.target.value)}
                                                 placeholder={activeConversation ? `Message ${activeConversation.counselorName}…` : "Select a counselor…"}
                                                 disabled={!activeConversation || isSending}
-                                                className="min-h-11 resize-none rounded-2xl"
+                                                className="min-h-12 resize-none rounded-2xl sm:min-h-11"
                                             />
                                         </div>
 
-                                        <Button type="submit" className="h-11 rounded-2xl px-5" disabled={!activeConversation || isSending || !draft.trim()}>
+                                        <Button
+                                            type="submit"
+                                            className="h-11 w-full rounded-2xl px-5 sm:w-auto"
+                                            disabled={!activeConversation || isSending || !draft.trim()}
+                                        >
                                             {isSending ? "Sending…" : "Send"}
                                         </Button>
                                     </div>
@@ -1275,7 +1350,11 @@ const StudentMessages: React.FC = () => {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingMsg}>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={confirmDeleteMessage} disabled={isDeletingMsg} className="bg-destructive text-white hover:bg-destructive/90">
+                            <AlertDialogAction
+                                onClick={confirmDeleteMessage}
+                                disabled={isDeletingMsg}
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                            >
                                 {isDeletingMsg ? "Deleting…" : "Delete"}
                             </AlertDialogAction>
                         </AlertDialogFooter>
@@ -1291,7 +1370,11 @@ const StudentMessages: React.FC = () => {
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingConvo}>Cancel</AlertDialogCancel>
-                            <AlertDialogAction onClick={confirmDeleteConversation} disabled={isDeletingConvo} className="bg-destructive text-white hover:bg-destructive/90">
+                            <AlertDialogAction
+                                onClick={confirmDeleteConversation}
+                                disabled={isDeletingConvo}
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                            >
                                 {isDeletingConvo ? "Deleting…" : "Delete conversation"}
                             </AlertDialogAction>
                         </AlertDialogFooter>
