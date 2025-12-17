@@ -329,6 +329,12 @@ const formatTimestamp = (iso: string) => {
     return format(d, "MMM d, yyyy • h:mm a");
 };
 
+const formatTimeOnly = (iso: string) => {
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return iso;
+    return format(d, "h:mm a");
+};
+
 const formatShort = (iso?: string) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -533,7 +539,7 @@ function UserCombobox(props: {
     return (
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
-                <Button variant="outline" role="combobox" aria-expanded={open} className="h-9 w-full justify-between">
+                <Button variant="outline" role="combobox" aria-expanded={open} className="h-10 w-full justify-between sm:h-9">
                     <span className={cn("min-w-0 truncate text-left", !value ? "text-muted-foreground" : "")}>
                         {value ? `${value.name} • ID: ${value.id}` : placeholder}
                     </span>
@@ -1041,27 +1047,40 @@ const CounselorMessages: React.FC = () => {
         <DashboardLayout title="Messages" description="Manage and respond to conversations.">
             <div className="mx-auto w-full max-w-6xl">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
-                    <CardHeader className="space-y-2">
-                        <CardTitle className="text-base">Counselor Inbox</CardTitle>
-                        <CardDescription className="text-xs">Create new messages and manage existing threads.</CardDescription>
+                    {/* Mobile-first padding; restores default desktop behavior via sm:p-6 */}
+                    <CardHeader className="space-y-2 p-4 sm:p-6">
+                        <CardTitle className="text-base">
+                            <span className="sm:hidden">Inbox</span>
+                            <span className="hidden sm:inline">Counselor Inbox</span>
+                        </CardTitle>
+                        <CardDescription className="text-xs">
+                            <span className="sm:hidden">Reply to threads and send new messages.</span>
+                            <span className="hidden sm:inline">Create new messages and manage existing threads.</span>
+                        </CardDescription>
                     </CardHeader>
 
                     <CardContent className="p-0">
-                        <div className="grid min-h-[700px] grid-cols-1 md:grid-cols-[360px_1fr]">
+                        <div className="grid min-h-[640px] grid-cols-1 md:min-h-[700px] md:grid-cols-[360px_1fr]">
                             {/* LEFT: conversations */}
                             <div className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"}`}>
-                                <div className="p-4">
-                                    <div className="mb-3 flex items-center justify-between gap-3">
+                                <div className="p-3 sm:p-4">
+                                    <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                         <div className="min-w-0">
                                             <div className="truncate text-sm font-semibold text-slate-900">Inbox</div>
                                             <div className="truncate text-xs text-muted-foreground">{counselorName}</div>
                                         </div>
-                                        <Badge variant="secondary" className="text-[0.70rem]">
+
+                                        <Badge variant="secondary" className="w-fit text-[0.70rem] sm:text-[0.70rem]">
                                             Counselor
                                         </Badge>
                                     </div>
 
-                                    <Button type="button" variant="outline" className="h-9 w-full text-xs" onClick={() => setShowNewMessage((v) => !v)}>
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        className="h-10 w-full text-[0.85rem] sm:h-9 sm:text-xs"
+                                        onClick={() => setShowNewMessage((v) => !v)}
+                                    >
                                         {showNewMessage ? "Close new message" : "Create new message"}
                                     </Button>
 
@@ -1080,7 +1099,7 @@ const CounselorMessages: React.FC = () => {
                                                             setRecipientResults([]);
                                                         }}
                                                     >
-                                                        <SelectTrigger className="h-9">
+                                                        <SelectTrigger className="h-10 sm:h-9">
                                                             <SelectValue placeholder="Select role" />
                                                         </SelectTrigger>
                                                         <SelectContent>
@@ -1114,11 +1133,19 @@ const CounselorMessages: React.FC = () => {
                                                     />
 
                                                     <div className="text-[0.70rem] text-muted-foreground">
-                                                        Tip: This searches your database (not message history). If nothing appears, confirm your backend endpoint.
+                                                        <span className="sm:hidden">Searches your database (not history).</span>
+                                                        <span className="hidden sm:inline">
+                                                            Tip: This searches your database (not message history). If nothing appears, confirm your backend endpoint.
+                                                        </span>
                                                     </div>
                                                 </div>
 
-                                                <Button type="button" className="mt-2 h-9 text-xs" onClick={startNewConversation} disabled={!newRecipient}>
+                                                <Button
+                                                    type="button"
+                                                    className="mt-2 h-10 text-[0.85rem] sm:h-9 sm:text-xs"
+                                                    onClick={startNewConversation}
+                                                    disabled={!newRecipient}
+                                                >
                                                     Start
                                                 </Button>
                                             </div>
@@ -1126,34 +1153,40 @@ const CounselorMessages: React.FC = () => {
                                     ) : null}
 
                                     <Tabs value={roleFilter} onValueChange={(v: any) => setRoleFilter(v as any)}>
-                                        <TabsList className="mt-3 grid w-full grid-cols-5">
-                                            <TabsTrigger value="all" className="text-xs">
+                                        {/* xs: horizontal scroll, START aligned (fixes hidden "All"); sm+: original 5-col grid */}
+                                        <TabsList className="mt-3 flex w-full justify-start gap-1 overflow-x-auto whitespace-nowrap px-1 sm:grid sm:grid-cols-5 sm:px-0">
+                                            <TabsTrigger value="all" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 All
                                             </TabsTrigger>
-                                            <TabsTrigger value="student" className="text-xs">
+                                            <TabsTrigger value="student" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Student
                                             </TabsTrigger>
-                                            <TabsTrigger value="guest" className="text-xs">
+                                            <TabsTrigger value="guest" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Guest
                                             </TabsTrigger>
-                                            <TabsTrigger value="counselor" className="text-xs">
+                                            <TabsTrigger value="counselor" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Counselor
                                             </TabsTrigger>
-                                            <TabsTrigger value="admin" className="text-xs">
+                                            <TabsTrigger value="admin" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Admin
                                             </TabsTrigger>
                                         </TabsList>
                                     </Tabs>
 
                                     <div className="mt-3">
-                                        <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search conversations…" className="h-9" />
+                                        <Input
+                                            value={search}
+                                            onChange={(e) => setSearch(e.target.value)}
+                                            placeholder="Search conversations…"
+                                            className="h-10 sm:h-9"
+                                        />
                                     </div>
                                 </div>
 
                                 <Separator />
 
-                                <ScrollArea className="h-[560px]">
-                                    <div className="space-y-2 p-4">
+                                <ScrollArea className="h-[520px] sm:h-[560px]">
+                                    <div className="space-y-2 p-3 sm:p-4">
                                         {isLoading ? (
                                             <div className="text-sm text-muted-foreground">Loading conversations…</div>
                                         ) : filteredConversations.length === 0 ? (
@@ -1169,30 +1202,38 @@ const CounselorMessages: React.FC = () => {
                                                             setActiveConversationId(c.id);
                                                             setMobileView("chat");
                                                         }}
-                                                        className={`w-full rounded-xl border p-3 text-left transition ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"
-                                                            }`}
+                                                        className={`w-full rounded-xl border p-2.5 text-left transition sm:p-3 ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"}`}
                                                     >
-                                                        <div className="flex items-center justify-between gap-3">
-                                                            <div className="flex min-w-0 items-center gap-3">
-                                                                <Avatar className="h-9 w-9 border">
-                                                                    <AvatarFallback className="text-xs font-semibold">{initials(c.peerName)}</AvatarFallback>
+                                                        {/* xs: stacked; sm+: original row */}
+                                                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
+                                                            <div className="flex min-w-0 items-center gap-2 sm:gap-3">
+                                                                <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
+                                                                    <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
+                                                                        {initials(c.peerName)}
+                                                                    </AvatarFallback>
                                                                 </Avatar>
 
                                                                 <div className="min-w-0">
-                                                                    <div className="truncate text-sm font-semibold text-slate-900">{c.peerName}</div>
-                                                                    <div className="truncate text-xs text-muted-foreground">{c.subtitle}</div>
+                                                                    <div className="truncate text-[0.92rem] font-semibold text-slate-900 sm:text-sm">
+                                                                        {c.peerName}
+                                                                    </div>
+                                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">{c.subtitle}</div>
                                                                 </div>
                                                             </div>
 
-                                                            <div className="flex items-center gap-2">
+                                                            <div className="flex items-center justify-between gap-2 sm:justify-end">
                                                                 {c.unreadCount > 0 ? (
                                                                     <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">{c.unreadCount}</Badge>
-                                                                ) : null}
-                                                                <span className="text-xs text-muted-foreground">{formatShort(c.lastTimestamp)}</span>
+                                                                ) : (
+                                                                    <span />
+                                                                )}
+                                                                <span className="text-[0.72rem] text-muted-foreground sm:text-xs">{formatShort(c.lastTimestamp)}</span>
                                                             </div>
                                                         </div>
 
-                                                        <div className="mt-2 truncate text-xs text-muted-foreground">{c.lastMessage || "No messages yet."}</div>
+                                                        <div className="mt-2 line-clamp-2 text-[0.72rem] text-muted-foreground sm:truncate sm:text-xs">
+                                                            {c.lastMessage || "No messages yet."}
+                                                        </div>
                                                     </button>
                                                 );
                                             })
@@ -1203,21 +1244,24 @@ const CounselorMessages: React.FC = () => {
 
                             {/* RIGHT: chat */}
                             <div className={`flex flex-col ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
-                                <div className="flex items-center justify-between gap-3 border-b bg-white/70 p-4">
-                                    <div className="flex items-center gap-3">
+                                {/* xs: vertical header; sm+: original row header */}
+                                <div className="flex flex-col gap-3 border-b bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4">
+                                    <div className="flex items-center gap-2 sm:gap-3">
                                         <Button type="button" variant="outline" size="icon" className="md:hidden" onClick={() => setMobileView("list")} aria-label="Back">
                                             ←
                                         </Button>
 
                                         {activeConversation ? (
-                                            <div className="flex items-center gap-3">
-                                                <Avatar className="h-10 w-10 border">
-                                                    <AvatarFallback className="text-xs font-semibold">{initials(activeConversation.peerName)}</AvatarFallback>
+                                            <div className="flex items-center gap-2 sm:gap-3">
+                                                <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
+                                                    <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
+                                                        {initials(activeConversation.peerName)}
+                                                    </AvatarFallback>
                                                 </Avatar>
 
                                                 <div className="min-w-0">
                                                     <div className="truncate text-sm font-semibold text-slate-900">{activeConversation.peerName}</div>
-                                                    <div className="truncate text-xs text-muted-foreground">
+                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
                                                         {roleLabel(activeConversation.peerRole)} • {activeConversation.subtitle}
                                                     </div>
                                                 </div>
@@ -1227,53 +1271,56 @@ const CounselorMessages: React.FC = () => {
                                         )}
                                     </div>
 
-                                    <div className="flex items-center gap-2">
-                                        <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="icon"
-                                            className="h-9 w-9"
-                                            onClick={handleRefresh}
-                                            aria-label="Refresh"
-                                            disabled={isLoading || isRefreshing}
-                                        >
-                                            <RefreshCw className={cn("h-4 w-4", isRefreshing ? "animate-spin" : "")} />
-                                        </Button>
+                                    {/* xs: stack actions vertically; sm+: original row */}
+                                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+                                        <div className="flex items-center justify-between gap-2 sm:justify-end">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="h-10 w-10 sm:h-9 sm:w-9"
+                                                onClick={handleRefresh}
+                                                aria-label="Refresh"
+                                                disabled={isLoading || isRefreshing}
+                                            >
+                                                <RefreshCw className={cn("h-4 w-4", isRefreshing ? "animate-spin" : "")} />
+                                            </Button>
+
+                                            <DropdownMenu>
+                                                <DropdownMenuTrigger asChild>
+                                                    <Button type="button" variant="outline" size="icon" className="h-10 w-10 sm:h-9 sm:w-9" disabled={!activeConversation}>
+                                                        <MoreVertical className="h-4 w-4" />
+                                                    </Button>
+                                                </DropdownMenuTrigger>
+                                                <DropdownMenuContent align="end">
+                                                    <DropdownMenuItem
+                                                        className="text-destructive focus:text-destructive"
+                                                        onSelect={(e) => {
+                                                            e.preventDefault();
+                                                            askDeleteConversation();
+                                                        }}
+                                                    >
+                                                        <Trash2 className="mr-2 h-4 w-4" />
+                                                        Delete conversation
+                                                    </DropdownMenuItem>
+                                                </DropdownMenuContent>
+                                            </DropdownMenu>
+                                        </div>
 
                                         <Button
                                             type="button"
                                             variant="outline"
-                                            className="h-9 px-3 text-xs"
+                                            className="h-10 w-full text-[0.85rem] sm:h-9 sm:w-auto sm:px-3 sm:text-xs"
                                             onClick={markConversationRead}
                                             disabled={!activeConversation || isMarking}
                                         >
                                             {isMarking ? "Marking…" : "Mark read"}
                                         </Button>
-
-                                        <DropdownMenu>
-                                            <DropdownMenuTrigger asChild>
-                                                <Button type="button" variant="outline" size="icon" className="h-9 w-9" disabled={!activeConversation}>
-                                                    <MoreVertical className="h-4 w-4" />
-                                                </Button>
-                                            </DropdownMenuTrigger>
-                                            <DropdownMenuContent align="end">
-                                                <DropdownMenuItem
-                                                    className="text-destructive focus:text-destructive"
-                                                    onSelect={(e) => {
-                                                        e.preventDefault();
-                                                        askDeleteConversation();
-                                                    }}
-                                                >
-                                                    <Trash2 className="mr-2 h-4 w-4" />
-                                                    Delete conversation
-                                                </DropdownMenuItem>
-                                            </DropdownMenuContent>
-                                        </DropdownMenu>
                                     </div>
                                 </div>
 
-                                <ScrollArea className="h-[520px] bg-linear-to-b from-muted/30 to-white">
-                                    <div className="space-y-3 p-4">
+                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
+                                    <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">Choose a conversation from the left.</div>
                                         ) : isLoading ? (
@@ -1294,15 +1341,15 @@ const CounselorMessages: React.FC = () => {
 
                                                 return (
                                                     <div key={m.id} className={`flex ${align}`}>
-                                                        <div className="max-w-[86%]">
+                                                        <div className="max-w-[94%] sm:max-w-[86%]">
                                                             {!system ? (
-                                                                <div
-                                                                    className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
-                                                                        }`}
-                                                                >
+                                                                <div className={`mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"}`}>
                                                                     <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
                                                                     <span aria-hidden="true">•</span>
-                                                                    <span>{formatTimestamp(m.createdAt)}</span>
+
+                                                                    {/* xs: time only; sm+: full timestamp */}
+                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
+                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
 
                                                                     {m.isUnread ? (
                                                                         <button
@@ -1317,7 +1364,7 @@ const CounselorMessages: React.FC = () => {
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>
                                                                             <DropdownMenuTrigger asChild>
-                                                                                <Button variant="ghost" size="icon" className="h-6 w-6">
+                                                                                <Button variant="ghost" size="icon" className="h-7 w-7 sm:h-6 sm:w-6">
                                                                                     <MoreVertical className="h-4 w-4" />
                                                                                 </Button>
                                                                             </DropdownMenuTrigger>
@@ -1351,10 +1398,15 @@ const CounselorMessages: React.FC = () => {
                                                                     )}
                                                                 </div>
                                                             ) : (
-                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">{formatTimestamp(m.createdAt)}</div>
+                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
+                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
+                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
+                                                                </div>
                                                             )}
 
-                                                            <div className={`rounded-2xl border px-3 py-2 text-sm leading-relaxed shadow-sm ${bubble}`}>{m.content}</div>
+                                                            <div className={`rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm ${bubble}`}>
+                                                                {m.content}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 );
@@ -1365,19 +1417,24 @@ const CounselorMessages: React.FC = () => {
                                     </div>
                                 </ScrollArea>
 
-                                <form onSubmit={handleSend} className="border-t bg-white/80 p-4">
-                                    <div className="flex items-end gap-2">
+                                {/* xs: vertical composer; sm+: original row */}
+                                <form onSubmit={handleSend} className="border-t bg-white/80 p-3 sm:p-4">
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2">
                                         <div className="flex-1">
                                             <Textarea
                                                 value={draft}
                                                 onChange={(e) => setDraft(e.target.value)}
                                                 placeholder={activeConversation ? `Message ${activeConversation.peerName}…` : "Select a conversation…"}
                                                 disabled={!activeConversation || isSending}
-                                                className="min-h-11 resize-none rounded-2xl"
+                                                className="min-h-12 resize-none rounded-2xl sm:min-h-11"
                                             />
                                         </div>
 
-                                        <Button type="submit" className="h-11 rounded-2xl px-5" disabled={!activeConversation || isSending || !draft.trim()}>
+                                        <Button
+                                            type="submit"
+                                            className="h-11 w-full rounded-2xl px-5 sm:h-11 sm:w-auto"
+                                            disabled={!activeConversation || isSending || !draft.trim()}
+                                        >
                                             {isSending ? "Sending…" : "Send"}
                                         </Button>
                                     </div>
