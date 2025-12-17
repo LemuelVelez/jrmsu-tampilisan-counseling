@@ -61,6 +61,7 @@ type UiMessage = {
     senderId?: number | string | null;
     recipientId?: number | string | null;
     recipientRole?: string | null;
+    userId?: number | string | null;
 };
 
 type Conversation = {
@@ -200,6 +201,11 @@ function extractUserName(u: any): string {
     return name || "Counselor";
 }
 
+/**
+ * ✅ MODIFIED:
+ * Try role-specific counselor directory endpoints FIRST (/counselors),
+ * then fallback to generic /users?role=counselor.
+ */
 async function trySearchCounselorsFromDb(query: string, token?: string | null): Promise<DirectoryCounselor[]> {
     const q = query.trim();
     const roleParam = encodeURIComponent("counselor");
@@ -207,19 +213,26 @@ async function trySearchCounselorsFromDb(query: string, token?: string | null): 
     const candidates: string[] = [];
     if (q.length > 0) {
         const qq = encodeURIComponent(q);
+
+        // ✅ counselor collection endpoints first
+        candidates.push(`/counselors?search=${qq}`);
+        candidates.push(`/counselors/search?q=${qq}`);
+        candidates.push(`/counselors?query=${qq}`);
+        candidates.push(`/counselors?q=${qq}`);
+
+        // fallback to generic users endpoints
         candidates.push(`/users?role=${roleParam}&search=${qq}`);
         candidates.push(`/users?role=${roleParam}&q=${qq}`);
         candidates.push(`/users/search?role=${roleParam}&q=${qq}`);
         candidates.push(`/search/users?role=${roleParam}&q=${qq}`);
-
-        candidates.push(`/counselors?search=${qq}`);
-        candidates.push(`/counselors/search?q=${qq}`);
-        candidates.push(`/counselors?query=${qq}`);
     } else {
-        candidates.push(`/users?role=${roleParam}&limit=20`);
-        candidates.push(`/users?role=${roleParam}&per_page=20`);
+        // ✅ counselor collection endpoints first
         candidates.push(`/counselors?limit=20`);
         candidates.push(`/counselors?per_page=20`);
+
+        // fallback to generic users endpoints
+        candidates.push(`/users?role=${roleParam}&limit=20`);
+        candidates.push(`/users?role=${roleParam}&per_page=20`);
     }
 
     let lastErr: any = null;
@@ -324,6 +337,7 @@ function mapDtoToUi(dto: StudentMessage, meName: string, index: number): UiMessa
         senderId: (dto as any).sender_id ?? null,
         recipientId: (dto as any).recipient_id ?? null,
         recipientRole: (dto as any).recipient_role ?? null,
+        userId: (dto as any).user_id ?? null,
     };
 }
 
@@ -458,6 +472,7 @@ const StudentMessages: React.FC = () => {
     const session = getCurrentSession();
     const token = (session as any)?.token ?? null;
     const meName = session?.user && (session.user as any).name ? String((session.user as any).name) : "You";
+    const myUserId = session?.user?.id != null ? String(session.user.id) : "";
 
     const [mobileView, setMobileView] = React.useState<"list" | "chat">("list");
 
@@ -716,6 +731,8 @@ const StudentMessages: React.FC = () => {
             createdAt: nowIso,
             isUnread: false,
 
+            senderId: myUserId || null,
+            userId: myUserId || null,
             recipientRole: "counselor",
             recipientId: counselorId,
         };
@@ -754,7 +771,14 @@ const StudentMessages: React.FC = () => {
     };
 
     // ===== Edit / Delete message (student can only edit/delete their own student/guest messages) =====
-    const isMineMessage = (m: UiMessage) => (m.sender === "student" || m.sender === "guest") && m.senderName === meName;
+    const isMineMessage = (m: UiMessage) => {
+        if (!(m.sender === "student" || m.sender === "guest")) return false;
+        if (!myUserId) return true; // fallback: keep behavior if id missing
+        const sid = m.senderId != null ? String(m.senderId) : "";
+        const uid = m.userId != null ? String(m.userId) : "";
+        return sid === myUserId || uid === myUserId;
+    };
+
     const canEdit = (m: UiMessage) => isMineMessage(m);
     const canDelete = (m: UiMessage) => isMineMessage(m);
 
@@ -1062,8 +1086,8 @@ const StudentMessages: React.FC = () => {
                                             <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
                                         ) : (
                                             activeMessages.map((m) => {
-                                                const mine = m.sender === "student" || m.sender === "guest";
                                                 const system = m.sender === "system";
+                                                const mine = !system && isMineMessage(m);
                                                 const align = system ? "justify-center" : mine ? "justify-end" : "justify-start";
 
                                                 const bubble = system
