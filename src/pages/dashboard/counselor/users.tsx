@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
+import { useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/DashboardLayout";
 import { toast } from "sonner";
 
@@ -23,7 +24,7 @@ import {
     TableRow,
 } from "@/components/ui/table";
 
-import { Loader2, RefreshCw, Search, Users } from "lucide-react";
+import { Loader2, RefreshCw, Search, Users, MessageCircle } from "lucide-react";
 
 type DirectoryUser = {
     id: string | number;
@@ -41,6 +42,8 @@ type DirectoryUser = {
 
     created_at?: string | null;
 };
+
+type PeerRole = "student" | "guest" | "counselor" | "admin";
 
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
@@ -227,6 +230,8 @@ async function fetchCounselorStudentAndGuestUsers(token?: string | null): Promis
 type RoleFilter = "all" | "student" | "guest";
 
 const CounselorUsers: React.FC = () => {
+    const navigate = useNavigate();
+
     const session = getCurrentSession();
     const token = (session as any)?.token ?? null;
 
@@ -325,11 +330,34 @@ const CounselorUsers: React.FC = () => {
                 )}
             >
                 <span className="truncate">{props.label}</span>
-                <Badge variant={active ? "secondary" : "secondary"} className="rounded-full text-[0.70rem]">
+                <Badge variant="secondary" className="rounded-full text-[0.70rem]">
                     {props.count}
                 </Badge>
             </Button>
         );
+    };
+
+    const startMessage = (u: DirectoryUser) => {
+        const roleNorm = normalizeRole(u.role ?? "");
+        let role: PeerRole | null = null;
+
+        if (roleNorm.includes("student")) role = "student";
+        else if (roleNorm.includes("guest")) role = "guest";
+
+        if (!role) {
+            toast.error("This page only supports messaging Students and Guests.");
+            return;
+        }
+
+        navigate("/dashboard/counselor/messages", {
+            state: {
+                autoStartConversation: {
+                    role,
+                    id: u.id,
+                    name: u.name,
+                },
+            },
+        });
     };
 
     return (
@@ -381,7 +409,6 @@ const CounselorUsers: React.FC = () => {
                             </div>
                         </div>
 
-                        {/* Mobile-first vertical layout: filters wrap and stay visible */}
                         <div className="flex flex-wrap gap-2">
                             <FilterButton value="all" label="All" count={counts.all} />
                             <FilterButton value="student" label="Students" count={counts.student} />
@@ -486,12 +513,23 @@ const CounselorUsers: React.FC = () => {
                                                         ) : null}
                                                     </div>
                                                 ) : null}
+
+                                                <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="mt-3 w-full gap-2"
+                                                    onClick={() => startMessage(u)}
+                                                >
+                                                    <MessageCircle className="h-4 w-4" />
+                                                    Message
+                                                </Button>
                                             </div>
                                         );
                                     })}
                                 </div>
 
-                                {/* Desktop/tablet: table (unchanged desktop behavior) */}
+                                {/* Desktop/tablet: table */}
                                 <div className="hidden overflow-auto rounded-md border bg-white sm:block">
                                     <Table>
                                         <TableHeader>
@@ -502,6 +540,7 @@ const CounselorUsers: React.FC = () => {
                                                 <TableHead className="w-[120px]">Role</TableHead>
                                                 <TableHead className="w-[140px]">Student ID</TableHead>
                                                 <TableHead>Program</TableHead>
+                                                <TableHead className="w-[130px] text-right">Action</TableHead>
                                             </TableRow>
                                         </TableHeader>
 
@@ -566,6 +605,19 @@ const CounselorUsers: React.FC = () => {
                                                             ) : (
                                                                 "—"
                                                             )}
+                                                        </TableCell>
+
+                                                        <TableCell className="text-right">
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                className="gap-2"
+                                                                onClick={() => startMessage(u)}
+                                                            >
+                                                                <MessageCircle className="h-4 w-4" />
+                                                                Message
+                                                            </Button>
                                                         </TableCell>
                                                     </TableRow>
                                                 );
