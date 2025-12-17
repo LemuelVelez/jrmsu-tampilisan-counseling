@@ -16,6 +16,7 @@ import CounselorOverview from "./pages/dashboard/counselor/overview";
 import CounselorIntake from "./pages/dashboard/counselor/intake";
 import CounselorAppointments from "./pages/dashboard/counselor/appointments";
 import CounselorMessages from "./pages/dashboard/counselor/messages";
+import CounselorSettings from "./pages/dashboard/counselor/settings";
 
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
@@ -114,9 +115,14 @@ function SettingsIndexRoute() {
 
   const role = normalizeRole(user.role ?? "");
 
-  // Only student has a dedicated settings page (and student dashboard includes guest)
+  // Student + guest
   if (role.includes("student") || role.includes("guest")) {
     return <Navigate to="/dashboard/student/settings" replace />;
+  }
+
+  // Counselor
+  if (role.includes("counselor") || role.includes("counsellor")) {
+    return <Navigate to="/dashboard/counselor/settings" replace />;
   }
 
   // Otherwise go to their dashboard home
@@ -193,6 +199,14 @@ function App() {
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorMessages />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/counselor/settings"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorSettings />
               </RequireRole>
             }
           />
