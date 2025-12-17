@@ -45,7 +45,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { cn } from "@/lib/utils";
-import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronsUpDown, MoreVertical, Pencil, RefreshCw, Trash2 } from "lucide-react";
 
 type PeerRole = "student" | "guest" | "counselor" | "admin";
 
@@ -584,6 +584,7 @@ const CounselorMessages: React.FC = () => {
     const myUserId = session?.user?.id != null ? String(session.user.id) : "";
 
     const [isLoading, setIsLoading] = React.useState(true);
+    const [isRefreshing, setIsRefreshing] = React.useState(false);
     const [isSending, setIsSending] = React.useState(false);
     const [isMarking, setIsMarking] = React.useState(false);
 
@@ -623,6 +624,44 @@ const CounselorMessages: React.FC = () => {
     // Delete conversation confirm
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false);
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false);
+
+    const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
+        const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing;
+
+        setBusy(true);
+        try {
+            const res = await fetchCounselorMessages();
+            const raw = Array.isArray(res.messages) ? res.messages : [];
+            const ui = raw.map(mapDtoToUi);
+
+            setMessages(ui);
+
+            const convs = buildConversations(ui, myUserId, counselorName);
+
+            // keep current selection if possible; otherwise fallback to first available
+            const current = activeConversationId;
+            const hasCurrentInServer = !!current && convs.some((c) => c.id === current);
+            const hasCurrentInDraft = !!current && draftConversations.some((d) => d.id === current);
+
+            if (!current) {
+                if (convs.length > 0) setActiveConversationId(convs[0].id);
+                else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id);
+            } else if (!hasCurrentInServer && !hasCurrentInDraft) {
+                if (convs.length > 0) setActiveConversationId(convs[0].id);
+                else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id);
+                else setActiveConversationId("");
+            }
+        } catch (err) {
+            toast.error(err instanceof Error ? err.message : "Failed to load counselor messages.");
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const handleRefresh = async () => {
+        if (isLoading || isRefreshing) return;
+        await loadMessages("refresh");
+    };
 
     const conversationsFromMessages = React.useMemo(
         () => buildConversations(messages, myUserId, counselorName),
@@ -677,23 +716,8 @@ const CounselorMessages: React.FC = () => {
         let mounted = true;
 
         const load = async () => {
-            setIsLoading(true);
-            try {
-                const res = await fetchCounselorMessages();
-                const raw = Array.isArray(res.messages) ? res.messages : [];
-                const ui = raw.map(mapDtoToUi);
-
-                if (!mounted) return;
-
-                setMessages(ui);
-
-                const convs = buildConversations(ui, myUserId, counselorName);
-                if (!activeConversationId && convs.length > 0) setActiveConversationId(convs[0].id);
-            } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Failed to load counselor messages.");
-            } finally {
-                if (mounted) setIsLoading(false);
-            }
+            if (!mounted) return;
+            await loadMessages("initial");
         };
 
         load();
@@ -1204,7 +1228,25 @@ const CounselorMessages: React.FC = () => {
                                     </div>
 
                                     <div className="flex items-center gap-2">
-                                        <Button type="button" variant="outline" className="h-9 px-3 text-xs" onClick={markConversationRead} disabled={!activeConversation || isMarking}>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            className="h-9 w-9"
+                                            onClick={handleRefresh}
+                                            aria-label="Refresh"
+                                            disabled={isLoading || isRefreshing}
+                                        >
+                                            <RefreshCw className={cn("h-4 w-4", isRefreshing ? "animate-spin" : "")} />
+                                        </Button>
+
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            className="h-9 px-3 text-xs"
+                                            onClick={markConversationRead}
+                                            disabled={!activeConversation || isMarking}
+                                        >
                                             {isMarking ? "Marking…" : "Mark read"}
                                         </Button>
 

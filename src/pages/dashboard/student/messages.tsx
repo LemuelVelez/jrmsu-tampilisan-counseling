@@ -44,7 +44,7 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 
 import { cn } from "@/lib/utils";
-import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
+import { Check, ChevronsUpDown, MoreVertical, Pencil, RefreshCw, Trash2 } from "lucide-react";
 
 type UiSender = "student" | "guest" | "counselor" | "system";
 
@@ -514,40 +514,67 @@ const StudentMessages: React.FC = () => {
     const localIdRef = React.useRef(0);
     const textareaRef = React.useRef<HTMLTextAreaElement | null>(null);
 
+    // ✅ refs to keep refresh stable without re-fetching on convo change
+    const activeConversationIdRef = React.useRef<string>("");
+    const draftConversationsRef = React.useRef<Conversation[]>([]);
+
+    React.useEffect(() => {
+        activeConversationIdRef.current = activeConversationId;
+    }, [activeConversationId]);
+
+    React.useEffect(() => {
+        draftConversationsRef.current = draftConversations;
+    }, [draftConversations]);
+
     React.useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }, [activeConversationId, messages.length]);
 
-    React.useEffect(() => {
-        let mounted = true;
-
-        const load = async () => {
+    const refreshMessages = React.useCallback(
+        async (isMounted?: () => boolean) => {
             setIsLoading(true);
             try {
                 const res = await fetchStudentMessages();
                 const raw = Array.isArray(res.messages) ? res.messages : [];
                 const ui = raw.map((m, idx) => mapDtoToUi(m, meName, idx));
 
-                if (!mounted) return;
+                if (isMounted && !isMounted()) return;
 
                 setMessages(ui);
 
                 const convs = buildConversations(ui);
-                if (!activeConversationId && convs.length > 0) setActiveConversationId(convs[0].id);
+
+                const currentActive = activeConversationIdRef.current;
+                const currentDrafts = draftConversationsRef.current;
+
+                const existsInMessages = !!currentActive && convs.some((c) => c.id === currentActive);
+                const existsInDrafts = !!currentActive && currentDrafts.some((d) => d.id === currentActive);
+
+                const nextActive =
+                    currentActive && (existsInMessages || existsInDrafts)
+                        ? currentActive
+                        : convs[0]?.id ?? currentDrafts[0]?.id ?? "";
+
+                if (nextActive !== currentActive) {
+                    setActiveConversationId(nextActive);
+                    if (!nextActive) setMobileView("list");
+                }
             } catch (err) {
                 toast.error(err instanceof Error ? err.message : "Failed to load your messages.");
             } finally {
-                if (mounted) setIsLoading(false);
+                if (!isMounted || isMounted()) setIsLoading(false);
             }
-        };
+        },
+        [meName],
+    );
 
-        load();
-
+    React.useEffect(() => {
+        let mounted = true;
+        refreshMessages(() => mounted);
         return () => {
             mounted = false;
         };
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [meName]);
+    }, [refreshMessages]);
 
     // Fetch counselors from DB (debounced) when creating new message
     React.useEffect(() => {
@@ -918,9 +945,25 @@ const StudentMessages: React.FC = () => {
                                 <div className="p-4">
                                     <div className="mb-3 flex items-center justify-between gap-3">
                                         <div className="text-sm font-semibold text-slate-900">Conversations</div>
-                                        <Badge variant="secondary" className="text-[0.70rem]">
-                                            Student
-                                        </Badge>
+
+                                        <div className="flex items-center gap-2">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                onClick={() => refreshMessages()}
+                                                disabled={isLoading}
+                                                aria-label="Refresh conversations"
+                                                title="Refresh"
+                                            >
+                                                <RefreshCw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
+                                            </Button>
+
+                                            <Badge variant="secondary" className="text-[0.70rem]">
+                                                Student
+                                            </Badge>
+                                        </div>
                                     </div>
 
                                     <Button type="button" variant="outline" className="h-9 w-full text-xs" onClick={() => setShowNewMessage((v) => !v)}>
@@ -1044,6 +1087,19 @@ const StudentMessages: React.FC = () => {
                                     </div>
 
                                     <div className="flex items-center gap-2">
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="icon"
+                                            className="h-9 w-9"
+                                            onClick={() => refreshMessages()}
+                                            disabled={isLoading}
+                                            aria-label="Refresh messages"
+                                            title="Refresh"
+                                        >
+                                            <RefreshCw className={cn("h-4 w-4", isLoading ? "animate-spin" : "")} />
+                                        </Button>
+
                                         <Button
                                             type="button"
                                             variant="outline"
