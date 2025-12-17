@@ -47,7 +47,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils";
 import { Check, ChevronsUpDown, MoreVertical, Pencil, Trash2 } from "lucide-react";
 
-type PeerRole = "student" | "guest" | "counselor";
+type PeerRole = "student" | "guest" | "counselor" | "admin";
 
 type UiMessage = {
     id: number | string;
@@ -208,8 +208,9 @@ function extractUserName(u: any): string {
 }
 
 /**
- * Use DB role fields if present. Returns null when it can't confidently map.
- * (We use this to filter results to the selected role, if the API returns mixed roles.)
+ * IMPORTANT:
+ * Role is the basis, NOT account_type.
+ * We only map explicit role-like fields (role / role_name / type).
  */
 function toPeerRole(role: any): PeerRole | null {
     if (role == null) return null;
@@ -218,12 +219,16 @@ function toPeerRole(role: any): PeerRole | null {
     if (r === "student") return "student";
     if (r === "guest") return "guest";
     if (r === "counselor") return "counselor";
+    if (r === "admin") return "admin";
 
     // common alternates
     if (r === "guidance" || r === "guidance_counselor" || r === "guidance counselor") return "counselor";
+    if (r === "administrator" || r === "superadmin" || r === "super_admin") return "admin";
+
     if (r === "students") return "student";
     if (r === "guests") return "guest";
     if (r === "counselors") return "counselor";
+    if (r === "admins") return "admin";
 
     return null;
 }
@@ -231,35 +236,40 @@ function toPeerRole(role: any): PeerRole | null {
 /**
  * Fetch users from DB (NOT from message history).
  *
- * IMPORTANT:
- * Since your exact Laravel endpoint is unknown from the frontend code shown,
- * this function tries several common routes + response shapes.
- * Adjust/lock to your real endpoint when you confirm it.
+ * ✅ FIXED:
+ * - We DO NOT use account_type for role mapping anymore.
+ * - Only the actual "role" (or role-like fields) is respected.
+ *
+ * ✅ ALSO:
+ * - Added "admin" recipient role support.
  */
 async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim();
     const roleParam = encodeURIComponent(role);
 
-    // Candidate endpoints (common Laravel patterns)
     const candidates: string[] = [];
 
     if (q.length > 0) {
         const qq = encodeURIComponent(q);
+
+        // role-specific collections first
+        candidates.push(`/${role}s?search=${qq}`); // /students, /guests, /counselors, /admins
+        candidates.push(`/${role}s/search?q=${qq}`);
+        candidates.push(`/${role}s?query=${qq}`);
+        candidates.push(`/${role}s?q=${qq}`);
+
+        // fallback to generic users endpoints
         candidates.push(`/users?role=${roleParam}&search=${qq}`);
         candidates.push(`/users?role=${roleParam}&q=${qq}`);
         candidates.push(`/users/search?role=${roleParam}&q=${qq}`);
         candidates.push(`/search/users?role=${roleParam}&q=${qq}`);
-
-        // role-specific collections
-        candidates.push(`/${role}s?search=${qq}`); // /students, /guests, /counselors
-        candidates.push(`/${role}s/search?q=${qq}`);
-        candidates.push(`/${role}s?query=${qq}`);
     } else {
-        // "initial list" when nothing typed (try to keep small)
-        candidates.push(`/users?role=${roleParam}&limit=20`);
-        candidates.push(`/users?role=${roleParam}&per_page=20`);
+        // initial list when nothing typed (try to keep small)
         candidates.push(`/${role}s?limit=20`);
         candidates.push(`/${role}s?per_page=20`);
+
+        candidates.push(`/users?role=${roleParam}&limit=20`);
+        candidates.push(`/users?role=${roleParam}&per_page=20`);
     }
 
     let lastErr: any = null;
@@ -271,27 +281,29 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
             if (!Array.isArray(arr)) continue;
 
             const mapped: DirectoryUser[] = arr
-                .map((raw) => raw?.user ?? raw) // sometimes nested
+                .map((raw) => raw?.user ?? raw)
                 .map((u: any) => {
                     const id = u?.id ?? u?.user_id ?? u?.account_id ?? u?.student_id ?? u?.counselor_id;
                     if (id == null || String(id).trim() === "") return null;
 
                     const name = extractUserName(u);
 
-                    // ✅ Use toPeerRole here (fixes unused var error)
+                    // ✅ Role ONLY (no account_type fallback)
                     const dbRole =
                         toPeerRole(u?.role) ??
                         toPeerRole(u?.role_name) ??
-                        toPeerRole(u?.account_type) ??
                         toPeerRole(u?.type);
 
-                    // If API returns role info and it's not the selected role, skip it.
-                    if (dbRole && dbRole !== role) return null;
+                    // If backend didn't provide a role, don't guess.
+                    if (!dbRole) return null;
+
+                    // Must match selected role exactly
+                    if (dbRole !== role) return null;
 
                     return {
                         id,
                         name,
-                        role: role,
+                        role: dbRole,
                     } as DirectoryUser;
                 })
                 .filter(Boolean) as DirectoryUser[];
@@ -334,7 +346,8 @@ const initials = (name: string) => {
     return parts.map((p) => p[0]?.toUpperCase()).join("") || "GC";
 };
 
-const roleLabel = (r: PeerRole) => (r === "counselor" ? "Counselor" : r === "guest" ? "Guest" : "Student");
+const roleLabel = (r: PeerRole) =>
+    r === "counselor" ? "Counselor" : r === "guest" ? "Guest" : r === "admin" ? "Admin" : "Student";
 
 function normalizeSender(sender: CounselorMessage["sender"]): UiMessage["sender"] {
     if (sender === "student" || sender === "guest" || sender === "counselor" || sender === "system") return sender;
@@ -359,6 +372,7 @@ function safeConversationId(dto: CounselorMessage): string {
 
     if ((sender === "student" || sender === "guest") && userId != null) return `${sender}-${userId}`;
     if ((recipientRole === "student" || recipientRole === "guest") && recipientId != null) return `${recipientRole}-${recipientId}`;
+    if (recipientRole === "admin" && recipientId != null) return `admin-${recipientId}`;
     if (userId != null) return `student-${userId}`;
 
     if (sender === "counselor" && recipientRole === "counselor" && senderId != null && recipientId != null) {
@@ -453,10 +467,10 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerId = peerMsg.senderId ?? peerMsg.userId ?? null;
         } else {
             const rr = (peerMsg.recipientRole ?? "counselor") as PeerRole;
-            peerRole = rr === "student" || rr === "guest" || rr === "counselor" ? rr : "counselor";
+            peerRole = rr === "student" || rr === "guest" || rr === "counselor" || rr === "admin" ? rr : "counselor";
             peerId = peerMsg.recipientId ?? null;
 
-            if (peerRole === "student" || peerRole === "guest") {
+            if (peerRole === "student" || peerRole === "guest" || peerRole === "admin") {
                 peerName = peerId ? `${roleLabel(peerRole)} #${peerId}` : roleLabel(peerRole);
             } else {
                 peerName = peerId ? `Counselor #${peerId}` : "Counselor Office";
@@ -464,7 +478,13 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
         }
 
         const subtitle =
-            peerRole === "counselor" ? "Counselor thread" : peerRole === "guest" ? "Guest thread" : "Student thread";
+            peerRole === "counselor"
+                ? "Counselor thread"
+                : peerRole === "guest"
+                    ? "Guest thread"
+                    : peerRole === "admin"
+                        ? "Admin thread"
+                        : "Student thread";
 
         conversations.push({
             id: conversationId,
@@ -783,7 +803,9 @@ const CounselorMessages: React.FC = () => {
                 ? "Counselor thread"
                 : newRecipient.role === "guest"
                     ? "Guest thread"
-                    : "Student thread";
+                    : newRecipient.role === "admin"
+                        ? "Admin thread"
+                        : "Student thread";
         const nowIso = new Date().toISOString();
 
         const convo: Conversation = {
@@ -1045,6 +1067,7 @@ const CounselorMessages: React.FC = () => {
                                                             <SelectItem value="student">Student</SelectItem>
                                                             <SelectItem value="guest">Guest</SelectItem>
                                                             <SelectItem value="counselor">Counselor</SelectItem>
+                                                            <SelectItem value="admin">Admin</SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
@@ -1083,7 +1106,7 @@ const CounselorMessages: React.FC = () => {
                                     ) : null}
 
                                     <Tabs value={roleFilter} onValueChange={(v: any) => setRoleFilter(v as any)}>
-                                        <TabsList className="mt-3 grid w-full grid-cols-4">
+                                        <TabsList className="mt-3 grid w-full grid-cols-5">
                                             <TabsTrigger value="all" className="text-xs">
                                                 All
                                             </TabsTrigger>
@@ -1095,6 +1118,9 @@ const CounselorMessages: React.FC = () => {
                                             </TabsTrigger>
                                             <TabsTrigger value="counselor" className="text-xs">
                                                 Counselor
+                                            </TabsTrigger>
+                                            <TabsTrigger value="admin" className="text-xs">
+                                                Admin
                                             </TabsTrigger>
                                         </TabsList>
                                     </Tabs>
