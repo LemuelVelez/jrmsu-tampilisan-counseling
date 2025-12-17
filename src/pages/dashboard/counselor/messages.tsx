@@ -149,30 +149,30 @@ async function tryUpdateMessageApi(messageId: number, content: string, token?: s
     }
 }
 
-async function tryDeleteConversationApi(conversationId: string, numericMessageIds: number[], token?: string | null) {
+/**
+ * Delete (hide) a conversation for the current user.
+ * IMPORTANT: We DO NOT fallback to deleting each message anymore.
+ * The backend now supports "delete conversation" semantics persistently.
+ */
+async function tryDeleteConversationApi(conversationId: string, token?: string | null) {
     const candidates = [
         `/messages/conversations/${encodeURIComponent(conversationId)}`,
         `/conversations/${encodeURIComponent(conversationId)}`,
         `/messages/thread/${encodeURIComponent(conversationId)}`,
     ];
 
+    let lastErr: any = null;
+
     for (const p of candidates) {
         try {
             await apiFetch(p, { method: "DELETE" }, token);
             return;
-        } catch {
-            // ignore and fallback
+        } catch (e) {
+            lastErr = e;
         }
     }
 
-    // fallback: delete each message
-    for (const id of numericMessageIds) {
-        try {
-            await tryDeleteMessageApi(id, token);
-        } catch {
-            // keep going
-        }
-    }
+    throw lastErr ?? new Error("Failed to delete conversation.");
 }
 
 function extractUsersArray(payload: any): any[] {
@@ -289,10 +289,7 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
                     const name = extractUserName(u);
 
                     // ✅ Role ONLY (no account_type fallback)
-                    const dbRole =
-                        toPeerRole(u?.role) ??
-                        toPeerRole(u?.role_name) ??
-                        toPeerRole(u?.type);
+                    const dbRole = toPeerRole(u?.role) ?? toPeerRole(u?.role_name) ?? toPeerRole(u?.type);
 
                     // If backend didn't provide a role, don't guess.
                     if (!dbRole) return null;
@@ -986,9 +983,6 @@ const CounselorMessages: React.FC = () => {
 
         const convoId = activeConversation.id;
         const toDelete = activeMessages;
-        const numericIds = toDelete
-            .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
-            .filter((n) => Number.isInteger(n)) as number[];
 
         const nextCandidate = conversations.filter((c) => c.id !== convoId)[0]?.id ?? "";
 
@@ -999,16 +993,18 @@ const CounselorMessages: React.FC = () => {
             draft: draftConversations.find((d) => d.id === convoId) ?? null,
         };
 
+        // optimistic UI
         setMessages((prev) => prev.filter((m) => m.conversationId !== convoId));
         setDraftConversations((prev) => prev.filter((d) => d.id !== convoId));
 
         try {
-            await tryDeleteConversationApi(convoId, numericIds, token);
+            await tryDeleteConversationApi(convoId, token);
             toast.success("Conversation deleted.");
             setDeleteConvoOpen(false);
             setActiveConversationId(nextCandidate);
             if (!nextCandidate) setMobileView("list");
         } catch (err) {
+            // rollback UI
             setMessages((prev) => [...prev, ...removedPayload.messages]);
             if (removedPayload.draft) setDraftConversations((prev) => [removedPayload.draft!, ...prev]);
             toast.error(err instanceof Error ? err.message : "Failed to delete conversation.");
@@ -1258,7 +1254,10 @@ const CounselorMessages: React.FC = () => {
                                                     <div key={m.id} className={`flex ${align}`}>
                                                         <div className="max-w-[86%]">
                                                             {!system ? (
-                                                                <div className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"}`}>
+                                                                <div
+                                                                    className={`mb-1 flex items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
+                                                                        }`}
+                                                                >
                                                                     <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
                                                                     <span aria-hidden="true">•</span>
                                                                     <span>{formatTimestamp(m.createdAt)}</span>
