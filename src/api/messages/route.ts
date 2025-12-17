@@ -15,10 +15,15 @@ export interface MessageDto {
     id: number | string;
 
     /**
-     * For student endpoints, this often refers to the student/guest user.
-     * For counselor endpoints, it may represent the peer or owner depending on backend implementation.
+     * Depending on backend implementation, this may represent the student/guest user
+     * or the message owner/peer.
      */
     user_id?: number | string;
+
+    /**
+     * Helpful for threading / ownership checks in UI.
+     */
+    sender_id?: number | string | null;
 
     sender: MessageSenderApi;
     sender_name?: string | null;
@@ -33,10 +38,13 @@ export interface MessageDto {
     created_at: string;
     updated_at?: string;
 
-    // Optional fields for threading/conversations (backend-dependent)
+    /**
+     * Optional fields for threading/conversations (backend-dependent)
+     */
     conversation_id?: number | string;
-    recipient_id?: number | string;
-    recipient_role?: string;
+    recipient_id?: number | string | null;
+    recipient_role?: "student" | "guest" | "counselor" | string | null;
+
     message_type?: string;
 
     [key: string]: unknown;
@@ -56,9 +64,16 @@ export interface GetStudentMessagesResponseDto {
 
 /**
  * Payload for creating a new student-authored message.
+ *
+ * Updated to match the dashboard student UI:
+ * - can include recipient_role/recipient_id (student -> counselor)
+ * - can include conversation_id (thread hint; backend may ignore/replace)
  */
 export interface CreateStudentMessagePayload {
     content: string;
+    recipient_role?: "counselor" | "student" | "guest";
+    recipient_id?: number | string;
+    conversation_id?: number | string;
 }
 
 /**
@@ -91,8 +106,6 @@ export interface MarkMessagesReadResponseDto {
 
 /**
  * Counselor inbox response.
- * Backend may return either a flat list of messages or thread-grouped messages.
- * We keep it compatible with a simple `messages` array for now.
  */
 export interface GetCounselorMessagesResponseDto {
     message?: string;
@@ -101,22 +114,14 @@ export interface GetCounselorMessagesResponseDto {
 
 /**
  * Counselor message payload.
- * We allow counselor to message: student, guest, or counselor.
- * (UI prevents invalid pairings like student↔student etc.)
+ * Matches counselor UI:
+ * - recipient_role + recipient_id required by UI flow
+ * - conversation_id included as a hint; backend may ignore/replace
  */
 export interface CreateCounselorMessagePayload {
     content: string;
-
-    /**
-     * Who the counselor is sending to.
-     * Optional because you said "do not mind backend"—this is ready for later.
-     */
     recipient_role?: "student" | "guest" | "counselor";
     recipient_id?: number | string;
-
-    /**
-     * Optional conversation/thread id (if your backend supports it later).
-     */
     conversation_id?: number | string;
 }
 
@@ -144,13 +149,19 @@ function resolveMessagesApiUrl(path: string): string {
 async function messagesApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveMessagesApiUrl(path);
 
+    const headers: Record<string, string> = {
+        Accept: "application/json",
+        ...(init.headers as Record<string, string> | undefined),
+    };
+
+    // Only set JSON content-type if we actually have a body
+    if (init.body != null && !headers["Content-Type"]) {
+        headers["Content-Type"] = "application/json";
+    }
+
     const response = await fetch(url, {
         ...init,
-        headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            ...(init.headers ?? {}),
-        },
+        headers,
         credentials: "include",
     });
 
@@ -233,8 +244,6 @@ export async function markStudentMessagesReadApi(
  * Fetch counselor inbox messages.
  *
  * GET /counselor/messages
- *
- * Note: backend shape may evolve (threads, pagination, etc.).
  */
 export async function getCounselorMessagesApi(): Promise<GetCounselorMessagesResponseDto> {
     return messagesApiFetch<GetCounselorMessagesResponseDto>("/counselor/messages", {

@@ -44,13 +44,12 @@ export async function fetchStudentMessages(): Promise<GetStudentMessagesResponse
  * High-level helper for sending a new message from the student/guest.
  *
  * Accepts either a full payload object or a simple string `content`.
+ * (Payload now supports recipient_role/recipient_id/conversation_id to match Student UI.)
  */
 export async function sendStudentMessage(
     input: string | SendStudentMessagePayload,
 ): Promise<CreateStudentMessageResponseDto> {
-    const payload: CreateStudentMessagePayload =
-        typeof input === "string" ? { content: input } : input;
-
+    const payload: CreateStudentMessagePayload = typeof input === "string" ? { content: input } : input;
     return createStudentMessageApi(payload);
 }
 
@@ -70,8 +69,6 @@ export async function markStudentMessagesAsRead(
 
 /**
  * High-level helper to fetch counselor inbox messages.
- *
- * Note: This is ready for counselor UI integration (threads/pagination later).
  */
 export async function fetchCounselorMessages(): Promise<GetCounselorMessagesResponseDto> {
     return getCounselorMessagesApi();
@@ -87,9 +84,7 @@ export async function fetchCounselorMessages(): Promise<GetCounselorMessagesResp
 export async function sendCounselorMessage(
     input: string | SendCounselorMessagePayload,
 ): Promise<CreateCounselorMessageResponseDto> {
-    const payload: CreateCounselorMessagePayload =
-        typeof input === "string" ? { content: input } : input;
-
+    const payload: CreateCounselorMessagePayload = typeof input === "string" ? { content: input } : input;
     return createCounselorMessageApi(payload);
 }
 
