@@ -86,12 +86,6 @@ const studentNavItems: NavItem[] = [
 
 /**
  * COUNSELOR NAV ITEMS
- *
- * Based on the student flows, counselors need:
- * - Intake: to review student intake forms & assessments
- * - Appointments: to manage evaluation requests / schedules
- * - Messages: to handle student conversations
- * Other utilities (Students, Reports, Settings) remain available.
  */
 const counselorNavItems: NavItem[] = [
     {
@@ -119,9 +113,9 @@ const counselorNavItems: NavItem[] = [
         icon: MessageCircle,
     },
     {
-        // Student directory & profile view
+        // Student/Guest directory
         title: "Students & Guests",
-        to: "/dashboard/counselor/students",
+        to: "/dashboard/counselor/users",
         icon: GraduationCap,
     },
     {
