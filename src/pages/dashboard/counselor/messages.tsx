@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React from "react";
+import { useLocation, useNavigate } from "react-router-dom";
 import DashboardLayout from "@/components/DashboardLayout";
 import { toast } from "sonner";
 import { format } from "date-fns";
@@ -82,6 +83,12 @@ type DirectoryUser = {
     id: number | string;
     name: string;
     role: PeerRole;
+};
+
+type AutoStartConversationPayload = {
+    role: PeerRole;
+    id: number | string;
+    name?: string;
 };
 
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined;
@@ -584,6 +591,9 @@ function UserCombobox(props: {
 }
 
 const CounselorMessages: React.FC = () => {
+    const location = useLocation();
+    const navigate = useNavigate();
+
     const session = getCurrentSession();
     const token = (session as any)?.token ?? null;
     const counselorName = session?.user && (session.user as any).name ? String((session.user as any).name) : "Counselor";
@@ -630,6 +640,19 @@ const CounselorMessages: React.FC = () => {
     // Delete conversation confirm
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false);
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false);
+
+    // Auto-start conversation when navigating from Users page
+    const autoStartRef = React.useRef<AutoStartConversationPayload | null>(null);
+    React.useEffect(() => {
+        const payload = (location.state as any)?.autoStartConversation as AutoStartConversationPayload | undefined;
+        if (!payload) return;
+
+        // Only allow student/guest auto-start from Users page
+        if (payload.role !== "student" && payload.role !== "guest") return;
+
+        autoStartRef.current = payload;
+
+    }, [location.state]);
 
     const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
         const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing;
@@ -691,6 +714,64 @@ const CounselorMessages: React.FC = () => {
 
         return merged;
     }, [conversationsFromMessages, draftConversations]);
+
+    // Handle auto-start once conversations are available
+    React.useEffect(() => {
+        const payload = autoStartRef.current;
+        if (!payload) return;
+        if (isLoading) return;
+
+        const targetRole = payload.role;
+        const targetId = String(payload.id);
+
+        const existing =
+            conversations.find(
+                (c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId,
+            ) ?? null;
+
+        if (existing) {
+            setActiveConversationId(existing.id);
+            setMobileView("chat");
+        } else {
+            const existingDraft =
+                draftConversations.find(
+                    (d) => d.peerRole === targetRole && String(d.peerId ?? "") === targetId,
+                ) ?? null;
+
+            if (existingDraft) {
+                setActiveConversationId(existingDraft.id);
+                setMobileView("chat");
+            } else {
+                const nowIso = new Date().toISOString();
+                const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`;
+
+                const subtitle =
+                    targetRole === "guest" ? "Guest thread" : "Student thread";
+
+                const convo: Conversation = {
+                    id: conversationId,
+                    peerRole: targetRole,
+                    peerName: payload.name ?? `${roleLabel(targetRole)} #${targetId}`,
+                    peerId: payload.id,
+                    subtitle,
+                    unreadCount: 0,
+                    lastMessage: "",
+                    lastTimestamp: nowIso,
+                };
+
+                setDraftConversations((prev) => [convo, ...prev]);
+                setActiveConversationId(conversationId);
+                setMobileView("chat");
+            }
+        }
+
+        // close "new message" pane if it was open
+        setShowNewMessage(false);
+
+        // clear pending auto-start and clear router state to avoid re-trigger
+        autoStartRef.current = null;
+        navigate("/dashboard/counselor/messages", { replace: true, state: {} });
+    }, [conversations, draftConversations, isLoading, navigate]);
 
     const filteredConversations = React.useMemo(() => {
         const q = search.trim().toLowerCase();
@@ -1204,7 +1285,6 @@ const CounselorMessages: React.FC = () => {
                                                         }}
                                                         className={`w-full rounded-xl border p-2.5 text-left transition sm:p-3 ${active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white"}`}
                                                     >
-                                                        {/* xs: stacked; sm+: original row */}
                                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                                             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                                                                 <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
@@ -1244,7 +1324,6 @@ const CounselorMessages: React.FC = () => {
 
                             {/* RIGHT: chat */}
                             <div className={`flex flex-col ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
-                                {/* xs: vertical header; sm+: original row header */}
                                 <div className="flex flex-col gap-3 border-b bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4">
                                     <div className="flex items-center gap-2 sm:gap-3">
                                         <Button type="button" variant="outline" size="icon" className="md:hidden" onClick={() => setMobileView("list")} aria-label="Back">
@@ -1271,7 +1350,6 @@ const CounselorMessages: React.FC = () => {
                                         )}
                                     </div>
 
-                                    {/* xs: stack actions vertically; sm+: original row */}
                                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
                                         <div className="flex items-center justify-between gap-2 sm:justify-end">
                                             <Button
@@ -1347,7 +1425,6 @@ const CounselorMessages: React.FC = () => {
                                                                     <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
                                                                     <span aria-hidden="true">•</span>
 
-                                                                    {/* xs: time only; sm+: full timestamp */}
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
                                                                     <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
 
@@ -1417,7 +1494,6 @@ const CounselorMessages: React.FC = () => {
                                     </div>
                                 </ScrollArea>
 
-                                {/* xs: vertical composer; sm+: original row */}
                                 <form onSubmit={handleSend} className="border-t bg-white/80 p-3 sm:p-4">
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2">
                                         <div className="flex-1">
