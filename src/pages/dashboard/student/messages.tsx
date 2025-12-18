@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
@@ -77,6 +77,7 @@ type Conversation = {
 type DirectoryCounselor = {
     id: number | string;
     name: string;
+    avatarUrl?: string | null;
 };
 
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined;
@@ -201,6 +202,77 @@ function extractUserName(u: any): string {
     return name || "Counselor";
 }
 
+function extractUserAvatarUrl(u: any): string | null {
+    const raw =
+        u?.avatar_url ??
+        u?.avatarUrl ??
+        u?.avatar ??
+        u?.profile_photo_url ??
+        u?.profilePhotoUrl ??
+        null;
+
+    if (raw == null) return null;
+
+    const s = String(raw).trim();
+    return s ? s : null;
+}
+
+// ✅ FIXED: TypeScript boolean type is `boolean` (not `bool`)
+function looksLikeFilePath(s: string): boolean {
+    return (
+        /\.[a-z0-9]{2,5}(\?.*)?$/i.test(s) ||
+        /(^|\/)(avatars|avatar|profile|profiles|images|uploads)(\/|$)/i.test(s)
+    );
+}
+
+/**
+ * Resolve avatar URLs so AvatarImage can actually load them:
+ * - keeps absolute urls (http/https, data:, blob:)
+ * - prefixes relative paths using the API origin
+ * - auto-prefixes "storage/" when the value looks like a file path
+ */
+function resolveAvatarSrc(raw?: string | null): string | undefined {
+    if (!raw) return undefined;
+
+    let s = String(raw).trim();
+    if (!s) return undefined;
+
+    s = s.replace(/\\/g, "/");
+
+    if (/^(data:|blob:)/i.test(s)) return s;
+    if (/^https?:\/\//i.test(s)) return s;
+
+    if (s.startsWith("//")) {
+        const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
+        return `${protocol}${s}`;
+    }
+
+    // If we don't have an API base, at least return a root-relative path.
+    if (!API_BASE_URL) {
+        if (!s.startsWith("/")) s = `/${s}`;
+        return s;
+    }
+
+    let origin = API_BASE_URL;
+    try {
+        origin = new URL(API_BASE_URL).origin;
+    } catch {
+        // keep as-is
+    }
+
+    // Normalize to a clean path segment (no leading slash)
+    let p = s.replace(/^\/+/, "");
+    const lower = p.toLowerCase();
+
+    const alreadyStorage = lower.startsWith("storage/") || lower.startsWith("api/storage/");
+    // ✅ FIXED: no weird casting needed; looksLikeFilePath already returns boolean
+    if (!alreadyStorage && looksLikeFilePath(p)) {
+        p = `storage/${p}`;
+    }
+
+    return `${origin}/${p}`;
+}
+
 /**
  * ✅ MODIFIED:
  * Try role-specific counselor directory endpoints FIRST (/counselors),
@@ -247,7 +319,11 @@ async function trySearchCounselorsFromDb(query: string, token?: string | null): 
                 .map((u: any) => {
                     const id = u?.id ?? u?.user_id ?? u?.counselor_id;
                     if (id == null || String(id).trim() === "") return null;
-                    return { id, name: extractUserName(u) } as DirectoryCounselor;
+
+                    const name = extractUserName(u);
+                    const avatarUrl = resolveAvatarSrc(extractUserAvatarUrl(u)) ?? null;
+
+                    return { id, name, avatarUrl } as DirectoryCounselor;
                 })
                 .filter(Boolean) as DirectoryCounselor[];
 
@@ -506,6 +582,10 @@ const StudentMessages: React.FC = () => {
     const [counselorResults, setCounselorResults] = React.useState<DirectoryCounselor[]>([]);
     const [counselorLoading, setCounselorLoading] = React.useState(false);
 
+    // ✅ NEW: cache counselor profiles so avatars can render (id -> counselor)
+    const [counselorById, setCounselorById] = React.useState<Record<string, DirectoryCounselor>>({});
+    const counselorByIdRef = React.useRef<Record<string, DirectoryCounselor>>({});
+
     // Edit message dialog
     const [editOpen, setEditOpen] = React.useState(false);
     const [editingMessage, setEditingMessage] = React.useState<UiMessage | null>(null);
@@ -528,6 +608,10 @@ const StudentMessages: React.FC = () => {
     // keep refresh stable without re-fetching on convo change
     const activeConversationIdRef = React.useRef<string>("");
     const draftConversationsRef = React.useRef<Conversation[]>([]);
+
+    React.useEffect(() => {
+        counselorByIdRef.current = counselorById;
+    }, [counselorById]);
 
     React.useEffect(() => {
         activeConversationIdRef.current = activeConversationId;
@@ -607,6 +691,13 @@ const StudentMessages: React.FC = () => {
                 const res = await trySearchCounselorsFromDb(q, token);
                 if (cancelled) return;
                 setCounselorResults(res);
+
+                // ✅ seed cache so avatars render immediately for selected counselor
+                setCounselorById((prev) => {
+                    const next = { ...prev };
+                    for (const c of res) next[String(c.id)] = c;
+                    return next;
+                });
             } catch (err) {
                 if (cancelled) return;
                 setCounselorResults([]);
@@ -623,6 +714,54 @@ const StudentMessages: React.FC = () => {
     }, [showNewMessage, counselorQuery, token]);
 
     const conversationsFromMessages = React.useMemo(() => buildConversations(messages), [messages]);
+
+    // ✅ Load counselor profiles (name + avatar) for conversations so AvatarImage can render
+    React.useEffect(() => {
+        let cancelled = false;
+
+        const ids = Array.from(
+            new Set(
+                conversationsFromMessages
+                    .map((c) => (c.counselorId != null ? String(c.counselorId).trim() : ""))
+                    .filter((id) => id !== "" && /^\d+$/.test(id)),
+            ),
+        );
+
+        const missing = ids.filter((id) => counselorByIdRef.current[id] == null);
+        if (missing.length === 0) return;
+
+        (async () => {
+            try {
+                // Fetch individually (robust across varying backend endpoints)
+                const found: Record<string, DirectoryCounselor> = {};
+
+                for (const id of missing) {
+                    if (cancelled) return;
+
+                    try {
+                        const res = await trySearchCounselorsFromDb(id, token);
+                        const exact = res.find((c) => String(c.id) === id) ?? res[0] ?? null;
+
+                        if (exact) found[id] = exact;
+                    } catch {
+                        // ignore per-id failure; fallback will stay initials
+                    }
+                }
+
+                if (cancelled) return;
+
+                if (Object.keys(found).length > 0) {
+                    setCounselorById((prev) => ({ ...prev, ...found }));
+                }
+            } catch {
+                // ignore
+            }
+        })();
+
+        return () => {
+            cancelled = true;
+        };
+    }, [conversationsFromMessages, token]);
 
     const conversations = React.useMemo(() => {
         const map = new Map<string, Conversation>();
@@ -645,7 +784,9 @@ const StudentMessages: React.FC = () => {
     const filteredConversations = React.useMemo(() => {
         const q = search.trim().toLowerCase();
         if (!q) return conversations;
-        return conversations.filter((c) => c.counselorName.toLowerCase().includes(q) || c.subtitle.toLowerCase().includes(q));
+        return conversations.filter(
+            (c) => c.counselorName.toLowerCase().includes(q) || c.subtitle.toLowerCase().includes(q),
+        );
     }, [conversations, search]);
 
     const activeConversation = React.useMemo(
@@ -683,7 +824,11 @@ const StudentMessages: React.FC = () => {
                 await markStudentMessagesAsRead();
             }
 
-            setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)));
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.conversationId === activeConversationId ? { ...m, isUnread: false } : m,
+                ),
+            );
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.");
         } finally {
@@ -732,6 +877,9 @@ const StudentMessages: React.FC = () => {
         setActiveConversationId(conversationId);
         setMobileView("chat");
         setShowNewMessage(false);
+
+        // ✅ seed cache for avatar immediately
+        setCounselorById((prev) => ({ ...prev, [String(newCounselor.id)]: newCounselor }));
 
         setNewCounselor(null);
         setCounselorQuery("");
@@ -938,6 +1086,16 @@ const StudentMessages: React.FC = () => {
         }
     };
 
+    const getCounselorUi = (c: Conversation | null) => {
+        if (!c) return { name: "", avatarUrl: null as string | null };
+        const idKey = c.counselorId != null ? String(c.counselorId).trim() : "";
+        const cached = idKey ? counselorById[idKey] : null;
+        return {
+            name: cached?.name ?? c.counselorName,
+            avatarUrl: cached?.avatarUrl ?? null,
+        };
+    };
+
     return (
         <DashboardLayout title="Messages" description="Chat privately with your chosen counselor.">
             <div className="mx-auto w-full max-w-6xl">
@@ -958,7 +1116,9 @@ const StudentMessages: React.FC = () => {
                     <CardContent className="p-0">
                         <div className="grid min-h-[640px] grid-cols-1 sm:min-h-[680px] md:grid-cols-[340px_1fr]">
                             {/* LEFT: conversation list */}
-                            <div className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"}`}>
+                            <div
+                                className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"}`}
+                            >
                                 <div className="p-3 sm:p-4">
                                     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                         <div className="text-sm font-semibold text-slate-900">Conversations</div>
@@ -996,7 +1156,9 @@ const StudentMessages: React.FC = () => {
                                         <div className="mt-3 rounded-xl border bg-white/60 p-3">
                                             <div className="grid grid-cols-1 gap-2">
                                                 <div className="space-y-1">
-                                                    <Label className="text-[0.70rem] font-medium text-slate-700">Counselor (required)</Label>
+                                                    <Label className="text-[0.70rem] font-medium text-slate-700">
+                                                        Counselor (required)
+                                                    </Label>
 
                                                     <CounselorCombobox
                                                         counselors={counselorResults}
@@ -1018,7 +1180,9 @@ const StudentMessages: React.FC = () => {
 
                                                     <div className="text-[0.70rem] text-muted-foreground">
                                                         <span className="sm:hidden">Searches your database (not history).</span>
-                                                        <span className="hidden sm:inline">Tip: This searches your database (not message history).</span>
+                                                        <span className="hidden sm:inline">
+                                                            Tip: This searches your database (not message history).
+                                                        </span>
                                                     </div>
                                                 </div>
 
@@ -1051,10 +1215,14 @@ const StudentMessages: React.FC = () => {
                                         {isLoading ? (
                                             <div className="text-sm text-muted-foreground">Loading conversations…</div>
                                         ) : filteredConversations.length === 0 ? (
-                                            <div className="rounded-lg border bg-white/60 p-4 text-sm text-muted-foreground">No conversations found.</div>
+                                            <div className="rounded-lg border bg-white/60 p-4 text-sm text-muted-foreground">
+                                                No conversations found.
+                                            </div>
                                         ) : (
                                             filteredConversations.map((c) => {
                                                 const active = c.id === activeConversationId;
+                                                const ui = getCounselorUi(c);
+
                                                 return (
                                                     <button
                                                         key={c.id}
@@ -1070,26 +1238,39 @@ const StudentMessages: React.FC = () => {
                                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                                             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                                                                 <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
+                                                                    {ui.avatarUrl ? (
+                                                                        <AvatarImage
+                                                                            src={ui.avatarUrl}
+                                                                            alt={ui.name}
+                                                                            loading="lazy"
+                                                                        />
+                                                                    ) : null}
                                                                     <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
-                                                                        {initials(c.counselorName)}
+                                                                        {initials(ui.name)}
                                                                     </AvatarFallback>
                                                                 </Avatar>
 
                                                                 <div className="min-w-0">
                                                                     <div className="truncate text-[0.92rem] font-semibold text-slate-900 sm:text-sm">
-                                                                        {c.counselorName}
+                                                                        {ui.name}
                                                                     </div>
-                                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">{c.subtitle}</div>
+                                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
+                                                                        {c.subtitle}
+                                                                    </div>
                                                                 </div>
                                                             </div>
 
                                                             <div className="flex items-center justify-between gap-2 sm:justify-end">
                                                                 {c.unreadCount > 0 ? (
-                                                                    <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">{c.unreadCount}</Badge>
+                                                                    <Badge className="h-6 min-w-6 justify-center rounded-full px-2 text-xs">
+                                                                        {c.unreadCount}
+                                                                    </Badge>
                                                                 ) : (
                                                                     <span />
                                                                 )}
-                                                                <span className="text-[0.72rem] text-muted-foreground sm:text-xs">{formatShort(c.lastTimestamp)}</span>
+                                                                <span className="text-[0.72rem] text-muted-foreground sm:text-xs">
+                                                                    {formatShort(c.lastTimestamp)}
+                                                                </span>
                                                             </div>
                                                         </div>
 
@@ -1121,16 +1302,34 @@ const StudentMessages: React.FC = () => {
 
                                         {activeConversation ? (
                                             <div className="flex items-center gap-2 sm:gap-3">
-                                                <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
-                                                    <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
-                                                        {initials(activeConversation.counselorName)}
-                                                    </AvatarFallback>
-                                                </Avatar>
+                                                {(() => {
+                                                    const ui = getCounselorUi(activeConversation);
+                                                    return (
+                                                        <>
+                                                            <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
+                                                                {ui.avatarUrl ? (
+                                                                    <AvatarImage
+                                                                        src={ui.avatarUrl}
+                                                                        alt={ui.name}
+                                                                        loading="lazy"
+                                                                    />
+                                                                ) : null}
+                                                                <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
+                                                                    {initials(ui.name)}
+                                                                </AvatarFallback>
+                                                            </Avatar>
 
-                                                <div className="min-w-0">
-                                                    <div className="truncate text-sm font-semibold text-slate-900">{activeConversation.counselorName}</div>
-                                                    <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">Private thread</div>
-                                                </div>
+                                                            <div className="min-w-0">
+                                                                <div className="truncate text-sm font-semibold text-slate-900">
+                                                                    {ui.name}
+                                                                </div>
+                                                                <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
+                                                                    Private thread
+                                                                </div>
+                                                            </div>
+                                                        </>
+                                                    );
+                                                })()}
                                             </div>
                                         ) : (
                                             <div className="text-sm text-muted-foreground">Select a counselor</div>
@@ -1194,11 +1393,17 @@ const StudentMessages: React.FC = () => {
                                 <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
                                     <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
-                                            <div className="py-10 text-center text-sm text-muted-foreground">Choose a counselor conversation.</div>
+                                            <div className="py-10 text-center text-sm text-muted-foreground">
+                                                Choose a counselor conversation.
+                                            </div>
                                         ) : isLoading ? (
-                                            <div className="py-10 text-center text-sm text-muted-foreground">Loading messages…</div>
+                                            <div className="py-10 text-center text-sm text-muted-foreground">
+                                                Loading messages…
+                                            </div>
                                         ) : activeMessages.length === 0 ? (
-                                            <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
+                                            <div className="py-10 text-center text-sm text-muted-foreground">
+                                                No messages yet.
+                                            </div>
                                         ) : (
                                             activeMessages.map((m) => {
                                                 const system = m.sender === "system";
@@ -1219,7 +1424,9 @@ const StudentMessages: React.FC = () => {
                                                                     className={`mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
                                                                         }`}
                                                                 >
-                                                                    <span className="font-medium text-slate-700">{mine ? "You" : m.senderName}</span>
+                                                                    <span className="font-medium text-slate-700">
+                                                                        {mine ? "You" : m.senderName}
+                                                                    </span>
                                                                     <span aria-hidden="true">•</span>
 
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
@@ -1278,9 +1485,7 @@ const StudentMessages: React.FC = () => {
                                                                 </div>
                                                             )}
 
-                                                            <div
-                                                                className={`rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm ${bubble}`}
-                                                            >
+                                                            <div className={`rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm ${bubble}`}>
                                                                 {m.content}
                                                             </div>
                                                         </div>
@@ -1300,7 +1505,11 @@ const StudentMessages: React.FC = () => {
                                                 ref={textareaRef}
                                                 value={draft}
                                                 onChange={(e) => setDraft(e.target.value)}
-                                                placeholder={activeConversation ? `Message ${activeConversation.counselorName}…` : "Select a counselor…"}
+                                                placeholder={
+                                                    activeConversation
+                                                        ? `Message ${getCounselorUi(activeConversation).name}…`
+                                                        : "Select a counselor…"
+                                                }
                                                 disabled={!activeConversation || isSending}
                                                 className="min-h-12 resize-none rounded-2xl sm:min-h-11"
                                             />
@@ -1366,7 +1575,9 @@ const StudentMessages: React.FC = () => {
                     <AlertDialogContent>
                         <AlertDialogHeader>
                             <AlertDialogTitle>Delete conversation?</AlertDialogTitle>
-                            <AlertDialogDescription>This will remove the entire thread (all messages) from your inbox.</AlertDialogDescription>
+                            <AlertDialogDescription>
+                                This will remove the entire thread (all messages) from your inbox.
+                            </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                             <AlertDialogCancel disabled={isDeletingConvo}>Cancel</AlertDialogCancel>
