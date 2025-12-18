@@ -21,7 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -63,8 +63,19 @@ type UiMessage = {
 
     senderId?: number | string | null;
     recipientId?: number | string | null;
-    recipientRole?: string | null;
+
+    /**
+     * ✅ FIX:
+     * Normalize recipientRole so it is always one of: student|guest|counselor|admin|null.
+     * This prevents wrong peerRole (e.g. "Student", "students") which breaks avatar backfill.
+     */
+    recipientRole?: PeerRole | null;
+
     userId?: number | string | null;
+
+    // ✅ avatar hints (best-effort)
+    senderAvatarUrl?: string | null;
+    recipientAvatarUrl?: string | null;
 };
 
 type Conversation = {
@@ -77,12 +88,16 @@ type Conversation = {
     unreadCount: number;
     lastMessage?: string;
     lastTimestamp?: string;
+
+    // ✅ avatar (best-effort)
+    peerAvatarUrl?: string | null;
 };
 
 type DirectoryUser = {
     id: number | string;
     name: string;
     role: PeerRole;
+    avatar_url?: string | null;
 };
 
 type AutoStartConversationPayload = {
@@ -98,6 +113,131 @@ function resolveApiUrl(path: string): string {
     if (!API_BASE_URL) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.");
     const trimmed = path.replace(/^\/+/, "");
     return `${API_BASE_URL}/${trimmed}`;
+}
+
+function getApiOrigin(): string {
+    if (!API_BASE_URL) return "";
+    try {
+        return new URL(API_BASE_URL).origin;
+    } catch {
+        return "";
+    }
+}
+
+function looksLikeFilePath(s: string): boolean {
+    return (
+        /\.[a-z0-9]{2,5}(\?.*)?$/i.test(s) ||
+        /(^|\/)(avatars|avatar|profile|profiles|images|uploads)(\/|$)/i.test(s)
+    );
+}
+
+/**
+ * Supports common Laravel avatar storage formats:
+ * - "avatars/foo.jpg"                 -> "/storage/avatars/foo.jpg"
+ * - "public/avatars/foo.jpg"          -> "/storage/avatars/foo.jpg"
+ * - "storage/app/public/avatars/..."  -> "/storage/avatars/..."
+ * - "/storage/avatars/foo.jpg"        -> "/storage/avatars/foo.jpg"
+ * - Absolute URLs stay untouched
+ *
+ * ✅ FIX:
+ * If backend accidentally returns absolute URLs containing "/api/storage/...",
+ * rewrite them to "/storage/..." because your public storage route is "/storage/*".
+ */
+function resolveAvatarSrc(raw?: string | null): string | null {
+    const s0 = typeof raw === "string" ? raw : "";
+    let s = s0.trim();
+    if (!s) return null;
+
+    s = s.replace(/\\/g, "/");
+
+    if (/^(data:|blob:)/i.test(s)) return s;
+
+    if (/^https?:\/\//i.test(s)) {
+        try {
+            const u = new URL(s);
+            const p = (u.pathname || "").replace(/\\/g, "/");
+
+            // normalize common wrong absolute paths
+            u.pathname = p
+                .replace(/^\/api\/storage\//i, "/storage/")
+                .replace(/^\/api\/public\/storage\//i, "/storage/")
+                .replace(/^\/storage\/app\/public\//i, "/storage/");
+
+            return u.toString();
+        } catch {
+            return s;
+        }
+    }
+
+    if (s.startsWith("//")) return `${window.location.protocol}${s}`;
+
+    s = s.replace(/^storage\/app\/public\//i, "");
+    s = s.replace(/^public\//i, "");
+
+    const normalized = s.replace(/^\/+/, "");
+    const alreadyStorage =
+        normalized.toLowerCase().startsWith("storage/") ||
+        normalized.toLowerCase().startsWith("api/storage/");
+
+    let path = normalized;
+    if (!alreadyStorage && looksLikeFilePath(normalized)) {
+        path = `storage/${normalized}`;
+    }
+
+    // also normalize relative "api/storage/..." to "storage/..."
+    path = path.replace(/^api\/storage\//i, "storage/");
+
+    const finalPath = path.startsWith("/") ? path : `/${path}`;
+    const origin = getApiOrigin();
+    return origin ? `${origin}${finalPath}` : finalPath;
+}
+
+function pickAvatarUrl(obj: any): string | null {
+    const candidates = [
+        obj?.avatar_url,
+        obj?.avatarUrl,
+        obj?.avatar,
+        obj?.profile_picture,
+        obj?.profile_picture_url,
+        obj?.profile_photo_url,
+        obj?.photo_url,
+        obj?.image_url,
+        obj?.picture,
+        obj?.photo,
+
+        // message-shaped payloads
+        obj?.sender_avatar_url,
+        obj?.sender_avatar,
+        obj?.recipient_avatar_url,
+        obj?.recipient_avatar,
+    ];
+
+    for (const c of candidates) {
+        if (typeof c === "string" && c.trim()) return c.trim();
+    }
+
+    // nested objects
+    const nested = [
+        obj?.user,
+        obj?.sender_user,
+        obj?.senderUser,
+        obj?.sender,
+        obj?.recipient_user,
+        obj?.recipientUser,
+        obj?.recipient,
+    ];
+
+    for (const n of nested) {
+        if (!n) continue;
+        const v =
+            (typeof n?.avatar_url === "string" && n.avatar_url.trim()) ||
+            (typeof n?.profile_photo_url === "string" && n.profile_photo_url.trim()) ||
+            (typeof n?.photo_url === "string" && n.photo_url.trim()) ||
+            "";
+        if (v) return String(v).trim();
+    }
+
+    return null;
 }
 
 async function apiFetch(path: string, init: RequestInit, token?: string | null): Promise<unknown> {
@@ -240,6 +380,10 @@ function toPeerRole(role: any): PeerRole | null {
     return null;
 }
 
+function normalizeRecipientRole(raw: any): PeerRole | null {
+    return toPeerRole(raw);
+}
+
 /**
  * Fetch users from DB (NOT from message history).
  *
@@ -249,6 +393,9 @@ function toPeerRole(role: any): PeerRole | null {
  *
  * ✅ ALSO:
  * - Added "admin" recipient role support.
+ *
+ * ✅ AVATAR:
+ * - Map avatar_url so draft conversations can show images immediately.
  */
 async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim();
@@ -259,19 +406,16 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
     if (q.length > 0) {
         const qq = encodeURIComponent(q);
 
-        // role-specific collections first
-        candidates.push(`/${role}s?search=${qq}`); // /students, /guests, /counselors, /admins
+        candidates.push(`/${role}s?search=${qq}`);
         candidates.push(`/${role}s/search?q=${qq}`);
         candidates.push(`/${role}s?query=${qq}`);
         candidates.push(`/${role}s?q=${qq}`);
 
-        // fallback to generic users endpoints
         candidates.push(`/users?role=${roleParam}&search=${qq}`);
         candidates.push(`/users?role=${roleParam}&q=${qq}`);
         candidates.push(`/users/search?role=${roleParam}&q=${qq}`);
         candidates.push(`/search/users?role=${roleParam}&q=${qq}`);
     } else {
-        // initial list when nothing typed (try to keep small)
         candidates.push(`/${role}s?limit=20`);
         candidates.push(`/${role}s?per_page=20`);
 
@@ -288,31 +432,29 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
             if (!Array.isArray(arr)) continue;
 
             const mapped: DirectoryUser[] = arr
-                .map((raw) => raw?.user ?? raw)
-                .map((u: any) => {
+                .map((raw: any) => {
+                    const u = raw?.user ?? raw;
+
                     const id = u?.id ?? u?.user_id ?? u?.account_id ?? u?.student_id ?? u?.counselor_id;
                     if (id == null || String(id).trim() === "") return null;
 
                     const name = extractUserName(u);
 
-                    // ✅ Role ONLY (no account_type fallback)
                     const dbRole = toPeerRole(u?.role) ?? toPeerRole(u?.role_name) ?? toPeerRole(u?.type);
-
-                    // If backend didn't provide a role, don't guess.
                     if (!dbRole) return null;
-
-                    // Must match selected role exactly
                     if (dbRole !== role) return null;
+
+                    const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null;
 
                     return {
                         id,
                         name,
                         role: dbRole,
+                        avatar_url: avatarRaw,
                     } as DirectoryUser;
                 })
                 .filter(Boolean) as DirectoryUser[];
 
-            // de-dupe
             const seen = new Set<string>();
             const deduped = mapped.filter((u) => {
                 const key = `${u.role}-${String(u.id)}`;
@@ -328,6 +470,52 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
     }
 
     throw lastErr ?? new Error("Failed to search users from database.");
+}
+
+/**
+ * ✅ Fetch a single user's avatar by (role, id) for conversations coming from message history
+ * (where the inbox API may not include avatar fields).
+ */
+async function tryFetchUserAvatarById(
+    role: PeerRole,
+    id: number | string,
+    token?: string | null,
+    signal?: AbortSignal,
+): Promise<string | null> {
+    const sid = String(id).trim();
+    if (!sid) return null;
+
+    const roleParam = encodeURIComponent(role);
+    const q = encodeURIComponent(sid);
+
+    const candidates = [
+        `/${role}s?search=${q}&limit=1`,
+        `/${role}s?q=${q}&limit=1`,
+        `/${role}s?query=${q}&limit=1`,
+        `/users?role=${roleParam}&search=${q}&limit=1`,
+        `/users?role=${roleParam}&q=${q}&limit=1`,
+    ];
+
+    for (const path of candidates) {
+        try {
+            const data = await apiFetch(path, { method: "GET", signal }, token);
+            const arr = extractUsersArray(data);
+            if (!Array.isArray(arr) || arr.length === 0) continue;
+
+            const found =
+                arr
+                    .map((raw: any) => raw?.user ?? raw)
+                    .find((u: any) => String(u?.id ?? u?.user_id ?? u?.account_id ?? "").trim() === sid) ??
+                (arr[0]?.user ?? arr[0]);
+
+            const avatarRaw = pickAvatarUrl(found) ?? null;
+            return avatarRaw;
+        } catch {
+            // keep trying next candidate
+        }
+    }
+
+    return null;
 }
 
 const formatTimestamp = (iso: string) => {
@@ -375,14 +563,17 @@ function safeConversationId(dto: CounselorMessage): string {
     const sender = normalizeSender(dto.sender);
     const senderId = (dto as any).sender_id ?? null;
 
-    const recipientRole = (dto as any).recipient_role ?? null;
+    const recipientRoleRaw = (dto as any).recipient_role ?? (dto as any).recipientRole ?? null;
+    const recipientRole = normalizeRecipientRole(recipientRoleRaw);
+
     const recipientId = (dto as any).recipient_id ?? null;
 
     const userId = (dto as any).user_id ?? dto.user_id ?? null;
 
     if ((sender === "student" || sender === "guest") && userId != null) return `${sender}-${userId}`;
-    if ((recipientRole === "student" || recipientRole === "guest") && recipientId != null) return `${recipientRole}-${recipientId}`;
-    if (recipientRole === "admin" && recipientId != null) return `admin-${recipientId}`;
+    if ((recipientRole === "student" || recipientRole === "guest" || recipientRole === "admin") && recipientId != null) {
+        return `${recipientRole}-${recipientId}`;
+    }
     if (userId != null) return `student-${userId}`;
 
     if (sender === "counselor" && recipientRole === "counselor" && senderId != null && recipientId != null) {
@@ -413,6 +604,20 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
 
     const createdAt = dto.created_at ?? new Date(0).toISOString();
 
+    const senderAvatarUrl =
+        pickAvatarUrl(dto as any) ??
+        pickAvatarUrl((dto as any)?.sender) ??
+        pickAvatarUrl((dto as any)?.user) ??
+        null;
+
+    const recipientAvatarUrl =
+        pickAvatarUrl((dto as any)?.recipient) ??
+        pickAvatarUrl((dto as any)?.recipient_user) ??
+        (typeof (dto as any)?.recipient_avatar_url === "string" ? (dto as any).recipient_avatar_url : null);
+
+    const recipientRoleRaw = (dto as any).recipient_role ?? (dto as any).recipientRole ?? null;
+    const recipientRole = normalizeRecipientRole(recipientRoleRaw);
+
     return {
         id: dto.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`,
         conversationId: safeConversationId(dto),
@@ -424,8 +629,11 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
 
         senderId: (dto as any).sender_id ?? null,
         recipientId: (dto as any).recipient_id ?? null,
-        recipientRole: (dto as any).recipient_role ?? null,
+        recipientRole,
         userId: (dto as any).user_id ?? null,
+
+        senderAvatarUrl,
+        recipientAvatarUrl,
     };
 }
 
@@ -476,8 +684,8 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
 
             peerId = peerMsg.senderId ?? peerMsg.userId ?? null;
         } else {
-            const rr = (peerMsg.recipientRole ?? "counselor") as PeerRole;
-            peerRole = rr === "student" || rr === "guest" || rr === "counselor" || rr === "admin" ? rr : "counselor";
+            const rr = peerMsg.recipientRole ?? "counselor";
+            peerRole = rr;
             peerId = peerMsg.recipientId ?? null;
 
             if (peerRole === "student" || peerRole === "guest" || peerRole === "admin") {
@@ -496,6 +704,11 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
                         ? "Admin thread"
                         : "Student thread";
 
+        const peerAvatarUrl =
+            !mySentCounselor && peerMsg.sender !== "system"
+                ? (peerMsg.senderAvatarUrl ?? null)
+                : (peerMsg.recipientAvatarUrl ?? null);
+
         conversations.push({
             id: conversationId,
             peerRole,
@@ -505,6 +718,7 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             unreadCount,
             lastMessage: last?.content ?? "",
             lastTimestamp: last?.createdAt ?? "",
+            peerAvatarUrl,
         });
     }
 
@@ -516,6 +730,11 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
     });
 
     return conversations;
+}
+
+function peerKey(role: PeerRole, id?: number | string | null): string | null {
+    if (id == null || String(id).trim() === "") return null;
+    return `${role}-${String(id)}`;
 }
 
 function UserCombobox(props: {
@@ -623,6 +842,11 @@ const CounselorMessages: React.FC = () => {
     const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([]);
     const [recipientLoading, setRecipientLoading] = React.useState(false);
 
+    // ✅ avatar cache for conversations built from message history
+    const [avatarByPeerKey, setAvatarByPeerKey] = React.useState<Record<string, string | null>>({});
+    const avatarCacheRef = React.useRef(new Map<string, string | null>());
+    const avatarInflightRef = React.useRef(new Set<string>());
+
     const localIdRef = React.useRef(0);
     const bottomRef = React.useRef<HTMLDivElement | null>(null);
 
@@ -651,7 +875,6 @@ const CounselorMessages: React.FC = () => {
         if (payload.role !== "student" && payload.role !== "guest") return;
 
         autoStartRef.current = payload;
-
     }, [location.state]);
 
     const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
@@ -667,7 +890,6 @@ const CounselorMessages: React.FC = () => {
 
             const convs = buildConversations(ui, myUserId, counselorName);
 
-            // keep current selection if possible; otherwise fallback to first available
             const current = activeConversationId;
             const hasCurrentInServer = !!current && convs.some((c) => c.id === current);
             const hasCurrentInDraft = !!current && draftConversations.some((d) => d.id === current);
@@ -715,6 +937,48 @@ const CounselorMessages: React.FC = () => {
         return merged;
     }, [conversationsFromMessages, draftConversations]);
 
+    // ✅ Backfill avatars for conversations that come from message history (no avatar fields)
+    React.useEffect(() => {
+        const controller = new AbortController();
+
+        const todo = conversations
+            .map((c) => {
+                const key = peerKey(c.peerRole, c.peerId);
+                if (!key) return null;
+
+                const already =
+                    c.peerAvatarUrl ||
+                    avatarByPeerKey[key] ||
+                    avatarCacheRef.current.has(key) ||
+                    avatarInflightRef.current.has(key);
+
+                if (already) return null;
+                return { key, role: c.peerRole, id: c.peerId! };
+            })
+            .filter(Boolean) as Array<{ key: string; role: PeerRole; id: number | string }>;
+
+        if (todo.length === 0) return () => controller.abort();
+
+        (async () => {
+            for (const item of todo) {
+                if (controller.signal.aborted) return;
+
+                avatarInflightRef.current.add(item.key);
+                try {
+                    const avatarRaw = await tryFetchUserAvatarById(item.role, item.id, token, controller.signal);
+                    avatarCacheRef.current.set(item.key, avatarRaw);
+                    setAvatarByPeerKey((prev) => ({ ...prev, [item.key]: avatarRaw }));
+                } finally {
+                    avatarInflightRef.current.delete(item.key);
+                }
+            }
+        })().catch(() => {
+            // silent
+        });
+
+        return () => controller.abort();
+    }, [conversations, token, avatarByPeerKey]);
+
     // Handle auto-start once conversations are available
     React.useEffect(() => {
         const payload = autoStartRef.current;
@@ -725,18 +989,14 @@ const CounselorMessages: React.FC = () => {
         const targetId = String(payload.id);
 
         const existing =
-            conversations.find(
-                (c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId,
-            ) ?? null;
+            conversations.find((c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId) ?? null;
 
         if (existing) {
             setActiveConversationId(existing.id);
             setMobileView("chat");
         } else {
             const existingDraft =
-                draftConversations.find(
-                    (d) => d.peerRole === targetRole && String(d.peerId ?? "") === targetId,
-                ) ?? null;
+                draftConversations.find((d) => d.peerRole === targetRole && String(d.peerId ?? "") === targetId) ?? null;
 
             if (existingDraft) {
                 setActiveConversationId(existingDraft.id);
@@ -745,8 +1005,7 @@ const CounselorMessages: React.FC = () => {
                 const nowIso = new Date().toISOString();
                 const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`;
 
-                const subtitle =
-                    targetRole === "guest" ? "Guest thread" : "Student thread";
+                const subtitle = targetRole === "guest" ? "Guest thread" : "Student thread";
 
                 const convo: Conversation = {
                     id: conversationId,
@@ -757,6 +1016,7 @@ const CounselorMessages: React.FC = () => {
                     unreadCount: 0,
                     lastMessage: "",
                     lastTimestamp: nowIso,
+                    peerAvatarUrl: null,
                 };
 
                 setDraftConversations((prev) => [convo, ...prev]);
@@ -765,10 +1025,8 @@ const CounselorMessages: React.FC = () => {
             }
         }
 
-        // close "new message" pane if it was open
         setShowNewMessage(false);
 
-        // clear pending auto-start and clear router state to avoid re-trigger
         autoStartRef.current = null;
         navigate("/dashboard/counselor/messages", { replace: true, state: {} });
     }, [conversations, draftConversations, isLoading, navigate]);
@@ -925,12 +1183,19 @@ const CounselorMessages: React.FC = () => {
             unreadCount: 0,
             lastMessage: "",
             lastTimestamp: nowIso,
+            peerAvatarUrl: newRecipient.avatar_url ?? null,
         };
 
         setDraftConversations((prev) => [convo, ...prev]);
         setActiveConversationId(conversationId);
         setMobileView("chat");
         setShowNewMessage(false);
+
+        const k = peerKey(convo.peerRole, convo.peerId);
+        if (k && convo.peerAvatarUrl) {
+            avatarCacheRef.current.set(k, convo.peerAvatarUrl);
+            setAvatarByPeerKey((prev) => ({ ...prev, [k]: convo.peerAvatarUrl! }));
+        }
 
         setNewRecipient(null);
         setRecipientQuery("");
@@ -1005,7 +1270,7 @@ const CounselorMessages: React.FC = () => {
     // ===== Edit / Delete message =====
     const isMine = (m: UiMessage) => m.sender === "counselor" && String(m.senderId ?? "") === myUserId;
     const canEdit = (m: UiMessage) => m.sender !== "system" && isMine(m);
-    const canDelete = (m: UiMessage) => m.sender !== "system"; // counselor can delete any non-system message
+    const canDelete = (m: UiMessage) => m.sender !== "system";
 
     const openEdit = (m: UiMessage) => {
         setEditingMessage(m);
@@ -1104,7 +1369,6 @@ const CounselorMessages: React.FC = () => {
             draft: draftConversations.find((d) => d.id === convoId) ?? null,
         };
 
-        // optimistic UI
         setMessages((prev) => prev.filter((m) => m.conversationId !== convoId));
         setDraftConversations((prev) => prev.filter((d) => d.id !== convoId));
 
@@ -1115,7 +1379,6 @@ const CounselorMessages: React.FC = () => {
             setActiveConversationId(nextCandidate);
             if (!nextCandidate) setMobileView("list");
         } catch (err) {
-            // rollback UI
             setMessages((prev) => [...prev, ...removedPayload.messages]);
             if (removedPayload.draft) setDraftConversations((prev) => [removedPayload.draft!, ...prev]);
             toast.error(err instanceof Error ? err.message : "Failed to delete conversation.");
@@ -1124,11 +1387,17 @@ const CounselorMessages: React.FC = () => {
         }
     };
 
+    // ===== Avatar helpers per conversation =====
+    const getConversationAvatarSrc = (c: Conversation): string | null => {
+        const k = peerKey(c.peerRole, c.peerId);
+        const raw = c.peerAvatarUrl ?? (k ? avatarByPeerKey[k] : null) ?? null;
+        return resolveAvatarSrc(raw);
+    };
+
     return (
         <DashboardLayout title="Messages" description="Manage and respond to conversations.">
             <div className="mx-auto w-full max-w-6xl">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
-                    {/* Mobile-first padding; restores default desktop behavior via sm:p-6 */}
                     <CardHeader className="space-y-2 p-4 sm:p-6">
                         <CardTitle className="text-base">
                             <span className="sm:hidden">Inbox</span>
@@ -1234,7 +1503,6 @@ const CounselorMessages: React.FC = () => {
                                     ) : null}
 
                                     <Tabs value={roleFilter} onValueChange={(v: any) => setRoleFilter(v as any)}>
-                                        {/* xs: horizontal scroll, START aligned (fixes hidden "All"); sm+: original 5-col grid */}
                                         <TabsList className="mt-3 flex w-full justify-start gap-1 overflow-x-auto whitespace-nowrap px-1 sm:grid sm:grid-cols-5 sm:px-0">
                                             <TabsTrigger value="all" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 All
@@ -1275,6 +1543,8 @@ const CounselorMessages: React.FC = () => {
                                         ) : (
                                             filteredConversations.map((c) => {
                                                 const active = c.id === activeConversationId;
+                                                const avatarSrc = getConversationAvatarSrc(c);
+
                                                 return (
                                                     <button
                                                         key={c.id}
@@ -1288,6 +1558,12 @@ const CounselorMessages: React.FC = () => {
                                                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                                             <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                                                                 <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
+                                                                    <AvatarImage
+                                                                        src={avatarSrc ?? undefined}
+                                                                        alt={c.peerName}
+                                                                        className="object-cover"
+                                                                        loading="lazy"
+                                                                    />
                                                                     <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
                                                                         {initials(c.peerName)}
                                                                     </AvatarFallback>
@@ -1333,6 +1609,12 @@ const CounselorMessages: React.FC = () => {
                                         {activeConversation ? (
                                             <div className="flex items-center gap-2 sm:gap-3">
                                                 <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
+                                                    <AvatarImage
+                                                        src={getConversationAvatarSrc(activeConversation) ?? undefined}
+                                                        alt={activeConversation.peerName}
+                                                        className="object-cover"
+                                                        loading="lazy"
+                                                    />
                                                     <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
                                                         {initials(activeConversation.peerName)}
                                                     </AvatarFallback>
