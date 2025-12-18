@@ -9,7 +9,13 @@ import { getCurrentSession } from "@/lib/authentication";
 import { normalizeRole } from "@/lib/role";
 import { cn } from "@/lib/utils";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -45,15 +51,31 @@ type DirectoryUser = {
 
 type PeerRole = "student" | "guest" | "counselor" | "admin";
 
+function isAbortError(err: unknown): boolean {
+    const e = err as any;
+    return (
+        e?.name === "AbortError" ||
+        e?.code === 20 ||
+        (typeof e?.message === "string" &&
+            e.message.toLowerCase().includes("aborted"))
+    );
+}
+
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
+        );
     }
     const trimmed = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmed}`;
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}, token?: string | null): Promise<T> {
+async function apiFetch<T>(
+    path: string,
+    init: RequestInit = {},
+    token?: string | null,
+): Promise<T> {
     const url = resolveApiUrl(path);
 
     const res = await fetch(url, {
@@ -145,6 +167,22 @@ function getApiOrigin(): string {
     }
 }
 
+function looksLikeFilePath(s: string): boolean {
+    // Heuristic: contains a file extension OR common avatar folders
+    return (
+        /\.[a-z0-9]{2,5}(\?.*)?$/i.test(s) ||
+        /(^|\/)(avatars|avatar|profile|profiles|images|uploads)(\/|$)/i.test(s)
+    );
+}
+
+/**
+ * Supports common Laravel avatar storage formats:
+ * - "avatars/foo.jpg"                 -> "/storage/avatars/foo.jpg"
+ * - "public/avatars/foo.jpg"          -> "/storage/avatars/foo.jpg"
+ * - "storage/app/public/avatars/..."  -> "/storage/avatars/..."
+ * - "/storage/avatars/foo.jpg"        -> "/storage/avatars/foo.jpg"
+ * - Absolute URLs stay untouched
+ */
 function resolveAvatarSrc(raw?: string | null): string | null {
     const s0 = typeof raw === "string" ? raw : "";
     let s = s0.trim();
@@ -158,10 +196,25 @@ function resolveAvatarSrc(raw?: string | null): string | null {
     if (/^https?:\/\//i.test(s)) return s;
     if (s.startsWith("//")) return `${window.location.protocol}${s}`;
 
-    // make it a root path, then attach to API origin if present
-    const path = s.startsWith("/") ? s : `/${s}`;
+    // Strip common Laravel prefixes
+    s = s.replace(/^storage\/app\/public\//i, "");
+    s = s.replace(/^public\//i, "");
+
+    const normalized = s.replace(/^\/+/, "");
+    const alreadyStorage =
+        normalized.toLowerCase().startsWith("storage/") ||
+        normalized.toLowerCase().startsWith("api/storage/");
+
+    let path = normalized;
+
+    if (!alreadyStorage && looksLikeFilePath(normalized)) {
+        path = `storage/${normalized}`;
+    }
+
+    const finalPath = path.startsWith("/") ? path : `/${path}`;
+
     const origin = getApiOrigin();
-    return origin ? `${origin}${path}` : path;
+    return origin ? `${origin}${finalPath}` : finalPath;
 }
 
 function pickAvatarUrl(u: any): string | null {
@@ -218,9 +271,12 @@ function mapToDirectoryUser(raw: any): DirectoryUser | null {
 
 /**
  * Tries multiple endpoints and merges results for student + guest.
- * This keeps the UI working even if the backend route name differs across environments.
+ * signal is used so we can abort in-flight loads on unmount/refresh.
  */
-async function fetchCounselorStudentAndGuestUsers(token?: string | null): Promise<DirectoryUser[]> {
+async function fetchCounselorStudentAndGuestUsers(
+    token?: string | null,
+    signal?: AbortSignal,
+): Promise<DirectoryUser[]> {
     const endpoints = [
         // counselor-scoped
         "/counselor/users?roles=student,guest",
@@ -243,8 +299,16 @@ async function fetchCounselorStudentAndGuestUsers(token?: string | null): Promis
     let lastErr: any = null;
 
     for (const path of endpoints) {
+        if (signal?.aborted) {
+            throw new DOMException("Aborted", "AbortError");
+        }
+
         try {
-            const data = await apiFetch<any>(path, { method: "GET" }, token);
+            const data = await apiFetch<any>(
+                path,
+                { method: "GET", signal },
+                token,
+            );
             const arr = extractUsersArray(data);
 
             const mapped = arr
@@ -268,6 +332,7 @@ async function fetchCounselorStudentAndGuestUsers(token?: string | null): Promis
                 merged.push(u);
             }
         } catch (e) {
+            if (isAbortError(e)) throw e;
             lastErr = e;
             // keep trying next candidate
         }
@@ -293,26 +358,60 @@ const CounselorUsers: React.FC = () => {
 
     const [users, setUsers] = React.useState<DirectoryUser[]>([]);
 
+    // ✅ Prevent unhandled promises / state updates after unmount
+    const abortRef = React.useRef<AbortController | null>(null);
+    const mountedRef = React.useRef(true);
+
+    React.useEffect(() => {
+        mountedRef.current = true;
+        return () => {
+            mountedRef.current = false;
+            abortRef.current?.abort();
+            abortRef.current = null;
+        };
+    }, []);
+
     const load = React.useCallback(
         async (mode: "initial" | "refresh") => {
-            if (mode === "initial") setIsLoading(true);
-            else setIsRefreshing(true);
+            // Abort any previous in-flight load
+            abortRef.current?.abort();
+            abortRef.current = new AbortController();
+
+            if (mode === "initial") {
+                if (mountedRef.current) setIsLoading(true);
+            } else {
+                if (mountedRef.current) setIsRefreshing(true);
+            }
 
             try {
-                const res = await fetchCounselorStudentAndGuestUsers(token);
-                setUsers(res);
+                const res = await fetchCounselorStudentAndGuestUsers(
+                    token,
+                    abortRef.current.signal,
+                );
+                if (mountedRef.current) setUsers(res);
             } catch (err) {
-                toast.error(err instanceof Error ? err.message : "Failed to load users.");
+                // Ignore aborts (navigation/refresh)
+                if (isAbortError(err)) return;
+
+                if (mountedRef.current) {
+                    toast.error(err instanceof Error ? err.message : "Failed to load users.");
+                }
             } finally {
-                setIsLoading(false);
-                setIsRefreshing(false);
+                if (mountedRef.current) {
+                    setIsLoading(false);
+                    setIsRefreshing(false);
+                }
             }
         },
         [token],
     );
 
     React.useEffect(() => {
-        void load("initial");
+        // ✅ Ensure no unhandled rejection even if something escapes
+        load("initial").catch((e) => {
+            // This should be extremely rare now; keep it quiet but visible in dev
+            console.error("[CounselorUsers] load(initial) unhandled:", e);
+        });
     }, [load]);
 
     const filtered = React.useMemo(() => {
@@ -444,7 +543,11 @@ const CounselorUsers: React.FC = () => {
                                     type="button"
                                     variant="outline"
                                     size="sm"
-                                    onClick={() => load("refresh")}
+                                    onClick={() => {
+                                        load("refresh").catch((e) => {
+                                            console.error("[CounselorUsers] load(refresh) unhandled:", e);
+                                        });
+                                    }}
                                     disabled={isRefreshing || isLoading}
                                     className="h-9 w-full gap-2 sm:w-auto"
                                     aria-label="Refresh"
@@ -488,11 +591,17 @@ const CounselorUsers: React.FC = () => {
                             </div>
                         ) : (
                             <>
-                                {/* Mobile: horizontal-scroll rows (no truncation) */}
+                                {/* Mobile */}
                                 <div className="space-y-3 sm:hidden">
                                     {filtered.map((u) => {
-                                        const avatarSrc = resolveAvatarSrc(u.avatar_url ?? null);
                                         const initials = getInitials(u.name, u.email);
+
+                                        const avatarUrlRaw =
+                                            typeof u.avatar_url === "string" && u.avatar_url.trim()
+                                                ? u.avatar_url.trim()
+                                                : null;
+
+                                        const avatarSrc = resolveAvatarSrc(avatarUrlRaw);
 
                                         const r = normalizeRole(u.role ?? "");
                                         const roleLabelText = r.includes("student")
@@ -502,24 +611,23 @@ const CounselorUsers: React.FC = () => {
                                                 : (u.role || "User");
 
                                         return (
-                                            <div key={String(u.id)} className="rounded-xl border bg-white/70 p-3">
-                                                {/* Make mobile row data scroll horizontally instead of truncating */}
+                                            <div
+                                                key={String(u.id)}
+                                                className="rounded-xl border bg-white/70 p-3"
+                                            >
                                                 <div className="overflow-x-auto">
                                                     <div className="min-w-max pr-2">
                                                         <div className="flex items-center gap-3">
                                                             <Avatar className="h-10 w-10 border">
-                                                                {avatarSrc ? (
-                                                                    <AvatarImage
-                                                                        src={avatarSrc}
-                                                                        alt={u.name}
-                                                                        className="object-cover"
-                                                                        loading="lazy"
-                                                                    />
-                                                                ) : (
-                                                                    <AvatarFallback className="text-xs font-semibold">
-                                                                        {initials}
-                                                                    </AvatarFallback>
-                                                                )}
+                                                                <AvatarImage
+                                                                    src={avatarSrc ?? undefined}
+                                                                    alt={u.name ?? "User avatar"}
+                                                                    className="object-cover"
+                                                                    loading="lazy"
+                                                                />
+                                                                <AvatarFallback className="text-xs font-semibold">
+                                                                    {initials}
+                                                                </AvatarFallback>
                                                             </Avatar>
 
                                                             <div className="flex items-center justify-between gap-4">
@@ -532,7 +640,10 @@ const CounselorUsers: React.FC = () => {
                                                                     </div>
                                                                 </div>
 
-                                                                <Badge variant="secondary" className="shrink-0 whitespace-nowrap text-[0.70rem]">
+                                                                <Badge
+                                                                    variant="secondary"
+                                                                    className="shrink-0 whitespace-nowrap text-[0.70rem]"
+                                                                >
                                                                     {roleLabelText}
                                                                 </Badge>
                                                             </div>
@@ -542,7 +653,9 @@ const CounselorUsers: React.FC = () => {
                                                             <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                                                                 {u.student_id ? (
                                                                     <div className="flex justify-between gap-6 whitespace-nowrap">
-                                                                        <span className="text-slate-700">Student ID</span>
+                                                                        <span className="text-slate-700">
+                                                                            Student ID
+                                                                        </span>
                                                                         <span>{u.student_id}</span>
                                                                     </div>
                                                                 ) : null}
@@ -584,7 +697,7 @@ const CounselorUsers: React.FC = () => {
                                     })}
                                 </div>
 
-                                {/* Desktop/tablet: table */}
+                                {/* Desktop/tablet */}
                                 <div className="hidden overflow-auto rounded-md border bg-white sm:block">
                                     <Table>
                                         <TableHeader>
@@ -601,8 +714,14 @@ const CounselorUsers: React.FC = () => {
 
                                         <TableBody>
                                             {filtered.map((u) => {
-                                                const avatarSrc = resolveAvatarSrc(u.avatar_url ?? null);
                                                 const initials = getInitials(u.name, u.email);
+
+                                                const avatarUrlRaw =
+                                                    typeof u.avatar_url === "string" && u.avatar_url.trim()
+                                                        ? u.avatar_url.trim()
+                                                        : null;
+
+                                                const avatarSrc = resolveAvatarSrc(avatarUrlRaw);
 
                                                 const r = normalizeRole(u.role ?? "");
                                                 const roleLabelText = r.includes("student")
@@ -615,24 +734,25 @@ const CounselorUsers: React.FC = () => {
                                                     <TableRow key={String(u.id)}>
                                                         <TableCell>
                                                             <Avatar className="h-9 w-9 border">
-                                                                {avatarSrc ? (
-                                                                    <AvatarImage
-                                                                        src={avatarSrc}
-                                                                        alt={u.name}
-                                                                        className="object-cover"
-                                                                        loading="lazy"
-                                                                    />
-                                                                ) : (
-                                                                    <AvatarFallback className="text-[0.7rem] font-semibold">
-                                                                        {initials}
-                                                                    </AvatarFallback>
-                                                                )}
+                                                                <AvatarImage
+                                                                    src={avatarSrc ?? undefined}
+                                                                    alt={u.name ?? "User avatar"}
+                                                                    className="object-cover"
+                                                                    loading="lazy"
+                                                                />
+                                                                <AvatarFallback className="text-[0.7rem] font-semibold">
+                                                                    {initials}
+                                                                </AvatarFallback>
                                                             </Avatar>
                                                         </TableCell>
 
                                                         <TableCell className="text-sm">
-                                                            <div className="font-medium text-foreground">{u.name}</div>
-                                                            <div className="text-xs text-muted-foreground">ID: {String(u.id)}</div>
+                                                            <div className="font-medium text-foreground">
+                                                                {u.name}
+                                                            </div>
+                                                            <div className="text-xs text-muted-foreground">
+                                                                ID: {String(u.id)}
+                                                            </div>
                                                         </TableCell>
 
                                                         <TableCell className="text-sm text-muted-foreground">
@@ -655,7 +775,9 @@ const CounselorUsers: React.FC = () => {
                                                                     <div className="truncate">{u.program}</div>
                                                                     {(u.year_level || u.course) ? (
                                                                         <div className="truncate text-xs">
-                                                                            {[u.year_level, u.course].filter(Boolean).join(" • ")}
+                                                                            {[u.year_level, u.course]
+                                                                                .filter(Boolean)
+                                                                                .join(" • ")}
                                                                         </div>
                                                                     ) : null}
                                                                 </div>
