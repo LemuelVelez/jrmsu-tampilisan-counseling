@@ -68,6 +68,57 @@ const EMPTY_SESSION: AuthSession = {
 let currentSession: AuthSession = readSessionFromStorage();
 const subscribers = new Set<SessionSubscriber>();
 
+function looksLikeFilePath(s: string): boolean {
+    return (
+        /\.[a-z0-9]{2,5}(\?.*)?$/i.test(s) ||
+        /(^|\/)(avatars|avatar|profile|profiles|images|uploads)(\/|$)/i.test(s)
+    );
+}
+
+/**
+ * ✅ FIX: Normalize avatar_url so UI components using <AvatarImage src="...">
+ * actually load an image (and don't fall back to initials).
+ */
+function resolveAbsoluteAvatarUrl(raw: unknown): string | null {
+    if (raw == null) return null;
+
+    let s = String(raw).trim();
+    if (!s) return null;
+
+    s = s.replace(/\\/g, "/");
+
+    if (/^(data:|blob:)/i.test(s)) return s;
+    if (/^https?:\/\//i.test(s)) return s;
+
+    if (s.startsWith("//")) {
+        const protocol = typeof window !== "undefined" ? window.location.protocol : "https:";
+        return `${protocol}${s}`;
+    }
+
+    // If we don't have a configured API base, return a root-relative path.
+    if (!AUTH_API_BASE_URL) {
+        if (!s.startsWith("/")) s = `/${s}`;
+        return s;
+    }
+
+    let origin = AUTH_API_BASE_URL;
+    try {
+        origin = new URL(AUTH_API_BASE_URL).origin;
+    } catch {
+        // keep as-is
+    }
+
+    let p = s.replace(/^\/+/, "");
+    const lower = p.toLowerCase();
+
+    const alreadyStorage = lower.startsWith("storage/") || lower.startsWith("api/storage/");
+    if (!alreadyStorage && looksLikeFilePath(p)) {
+        p = `storage/${p}`;
+    }
+
+    return `${origin}/${p}`;
+}
+
 function readSessionFromStorage(): AuthSession {
     if (typeof window === "undefined") {
         return { ...EMPTY_SESSION };
@@ -149,6 +200,10 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
             ? String(anyDto.gender)
             : null;
 
+    const avatar_url = resolveAbsoluteAvatarUrl(
+        anyDto.avatar_url ?? (dto as any).avatar_url ?? anyDto.avatarUrl ?? null,
+    );
+
     return {
         ...dto,
         id: dto.id,
@@ -156,6 +211,7 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
         email: dto.email,
         role: (role as Role | null) ?? null,
         gender,
+        avatar_url,
     };
 }
 
@@ -417,8 +473,10 @@ export async function uploadCurrentUserAvatar(
     // Persist and notify listeners (e.g. Settings page, nav avatar)
     setSession(nextSession);
 
+    const resolved = resolveAbsoluteAvatarUrl(body.avatar_url ?? user.avatar_url ?? "") ?? "";
+
     return {
-        avatarUrl: body.avatar_url ?? "",
+        avatarUrl: resolved,
         raw: body,
     };
 }
