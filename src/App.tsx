@@ -20,6 +20,10 @@ import CounselorSettings from "./pages/dashboard/counselor/settings";
 import CounselorUsers from "./pages/dashboard/counselor/users";
 import CounselorAnalytics from "./pages/dashboard/counselor/analytics";
 
+// ✅ NEW: Referral module pages (Counselor)
+import CounselorReferrals from "./pages/dashboard/counselor/referrals";
+import CounselorReferralDetails from "./pages/dashboard/counselor/referral-details";
+
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
@@ -198,6 +202,27 @@ function App() {
               </RequireRole>
             }
           />
+
+          {/* ✅ NEW: Counselor referrals list */}
+          <Route
+            path="/dashboard/counselor/referrals"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorReferrals />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ NEW: Counselor referral details */}
+          <Route
+            path="/dashboard/counselor/referrals/:id"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorReferralDetails />
+              </RequireRole>
+            }
+          />
+
           <Route
             path="/dashboard/counselor/users"
             element={

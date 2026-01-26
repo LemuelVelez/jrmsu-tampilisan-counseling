@@ -126,6 +126,10 @@ const studentNavItems: NavItem[] = [
 
 /**
  * COUNSELOR NAV ITEMS
+ *
+ * ✅ Referral details page will be routed as:
+ * /dashboard/counselor/referrals/:id
+ * so this menu item stays ACTIVE while viewing a specific referral.
  */
 const counselorNavItems: NavItem[] = [
     {
@@ -239,7 +243,9 @@ const navConfig: Record<RoleKey, { label: string; items: NavItem[] }> = {
 };
 
 function useAuthSession(): AuthSession {
-    const [session, setSession] = React.useState<AuthSession>(() => getCurrentSession());
+    const [session, setSession] = React.useState<AuthSession>(() =>
+        getCurrentSession()
+    );
 
     React.useEffect(() => {
         const unsubscribe = subscribeToSession((nextSession) => {
@@ -256,9 +262,13 @@ function trimSlash(s: string) {
     return s.replace(/\/+$/, "");
 }
 
-async function fetchNotificationCounts(authToken?: string | null): Promise<NotificationCounts> {
+async function fetchNotificationCounts(
+    authToken?: string | null
+): Promise<NotificationCounts> {
     if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
+        throw new Error(
+            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file."
+        );
     }
 
     // ✅ matches backend: GET /notifications/counts
@@ -296,7 +306,10 @@ export const NavMain: React.FC = () => {
 
     if (normalizedRole.includes("admin")) {
         roleKey = "admin";
-    } else if (normalizedRole.includes("counselor") || normalizedRole.includes("counsellor")) {
+    } else if (
+        normalizedRole.includes("counselor") ||
+        normalizedRole.includes("counsellor")
+    ) {
         roleKey = "counselor";
     } else if (
         normalizedRole.includes("dean") ||
@@ -324,7 +337,10 @@ export const NavMain: React.FC = () => {
         null;
 
     const shouldFetchCounts =
-        !!user && (roleKey === "student" || roleKey === "counselor" || roleKey === "referralUser");
+        !!user &&
+        (roleKey === "student" ||
+            roleKey === "counselor" ||
+            roleKey === "referralUser");
 
     const refreshCounts = React.useCallback(async () => {
         if (!shouldFetchCounts) return;
@@ -376,7 +392,8 @@ export const NavMain: React.FC = () => {
 
                         const isActive = item.exact
                             ? currentPath === itemPath
-                            : currentPath === itemPath || currentPath.startsWith(itemPath + "/");
+                            : currentPath === itemPath ||
+                            currentPath.startsWith(itemPath + "/");
 
                         const badgeText = getBadgeForItem(item.badgeKey);
 
@@ -392,7 +409,10 @@ export const NavMain: React.FC = () => {
                                             : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
                                     )}
                                 >
-                                    <Link to={item.to} className="flex w-full items-center gap-2">
+                                    <Link
+                                        to={item.to}
+                                        className="flex w-full items-center gap-2"
+                                    >
                                         <Icon />
                                         <span className="flex-1">{item.title}</span>
 
