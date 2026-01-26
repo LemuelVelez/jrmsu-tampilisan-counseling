@@ -2,18 +2,57 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import DashboardLayout from "@/components/DashboardLayout";
-import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { format, parseISO } from "date-fns";
 import {
     AlertCircle,
+    BarChart3,
     ClipboardList as ClipboardListIcon,
     FileDown,
     Loader2,
+    ShieldAlert,
     Trash2,
     UserCircle2,
 } from "lucide-react";
+
+import { jsPDF } from "jspdf";
+
+import { AUTH_API_BASE_URL } from "@/api/auth/route";
+import type { IntakeAssessmentDto, MentalFrequencyApi } from "@/api/intake/route";
+
+import {
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import {
+    Tabs,
+    TabsContent,
+    TabsList,
+    TabsTrigger,
+} from "@/components/ui/tabs";
+import { Input } from "@/components/ui/input";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "@/components/ui/select";
+import { Progress } from "@/components/ui/progress";
+import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+} from "@/components/ui/table";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 import {
     Dialog,
@@ -34,11 +73,6 @@ import {
     AlertDialogCancel,
     AlertDialogAction,
 } from "@/components/ui/alert-dialog";
-
-import { jsPDF } from "jspdf";
-
-import { AUTH_API_BASE_URL } from "@/api/auth/route";
-import type { IntakeAssessmentDto, MentalFrequencyApi } from "@/api/intake/route";
 
 const FREQUENCY_SCORES: Record<MentalFrequencyApi, number> = {
     not_at_all: 0,
@@ -79,6 +113,13 @@ const MH_QUESTIONS: Record<(typeof MH_KEYS)[number], string> = {
     mh_motor: "Moving/speaking slowly, or the opposite — fidgety/restless",
     mh_self_harm: "Thoughts that you would be better off dead or of hurting yourself",
 };
+
+type ReportRangePreset = "all" | "7d" | "30d" | "90d";
+type ReportConsentFilter = "all" | "consented" | "no_consent";
+
+// ✅ Shared runtime + typing source (fixes eslint "only used as type")
+const SEVERITY_BANDS = ["Minimal", "Mild", "Moderate", "Moderately severe", "Severe"] as const;
+type SeverityBand = (typeof SEVERITY_BANDS)[number];
 
 function resolveApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
@@ -243,7 +284,7 @@ function calculatePhqScore(
     return { score, answered };
 }
 
-function phqSeverityLabel(score: number): string {
+function phqSeverityLabel(score: number): SeverityBand {
     if (score <= 4) return "Minimal";
     if (score <= 9) return "Mild";
     if (score <= 14) return "Moderate";
@@ -262,6 +303,37 @@ function sanitizeFilename(name: string): string {
         .replace(/\s+/g, " ")
         .trim()
         .slice(0, 90);
+}
+
+function severityBadgeClass(severity: string): string {
+    switch (severity) {
+        case "Minimal":
+            return "border-emerald-200 bg-emerald-50 text-emerald-800";
+        case "Mild":
+            return "border-sky-200 bg-sky-50 text-sky-800";
+        case "Moderate":
+            return "border-amber-200 bg-amber-50 text-amber-900";
+        case "Moderately severe":
+            return "border-orange-200 bg-orange-50 text-orange-900";
+        case "Severe":
+            return "border-red-200 bg-red-50 text-red-700";
+        default:
+            return "border-border bg-muted text-foreground";
+    }
+}
+
+function rangeLabel(preset: ReportRangePreset): string {
+    if (preset === "all") return "All time";
+    if (preset === "7d") return "Last 7 days";
+    if (preset === "30d") return "Last 30 days";
+    return "Last 90 days";
+}
+
+function presetStartMs(preset: ReportRangePreset): number | null {
+    if (preset === "all") return null;
+    const now = Date.now();
+    const days = preset === "7d" ? 7 : preset === "30d" ? 30 : 90;
+    return now - days * 24 * 60 * 60 * 1000;
 }
 
 function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
@@ -524,6 +596,183 @@ function downloadAssessmentPdf(assessment: IntakeAssessmentDto): void {
     }
 }
 
+function downloadAssessmentReportPdf(
+    items: IntakeAssessmentDto[],
+    opts: { preset: ReportRangePreset; consent: ReportConsentFilter; search: string },
+): void {
+    try {
+        const doc = new jsPDF({ unit: "pt", format: "a4", compress: true });
+
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const pageHeight = doc.internal.pageSize.getHeight();
+
+        const margin = 32;
+        const maxW = pageWidth - margin * 2;
+
+        const title = "Assessment Report (Score/Statistics-Based)";
+        const subtitle = `Range: ${rangeLabel(opts.preset)} • Consent: ${opts.consent === "all" ? "All" : opts.consent === "consented" ? "Consented only" : "No consent only"
+            }${opts.search.trim() ? ` • Search: "${opts.search.trim()}"` : ""}`;
+
+        // Summary stats
+        const scores = items.map((a) => calculatePhqScore(a).score);
+        const avg = scores.length ? scores.reduce((s, n) => s + n, 0) / scores.length : 0;
+
+        const severityCounts = SEVERITY_BANDS.reduce((acc, sev) => {
+            acc[sev] = 0;
+            return acc;
+        }, {} as Record<SeverityBand, number>);
+
+        for (const a of items) {
+            const sc = calculatePhqScore(a).score;
+            const sev = phqSeverityLabel(sc);
+            severityCounts[sev] = (severityCounts[sev] ?? 0) + 1;
+        }
+
+        const consented = items.filter((a) => a.consent === true).length;
+        const noConsent = items.length - consented;
+
+        const flagged = items.filter((a) => {
+            const v = a.mh_self_harm as MentalFrequencyApi | null | undefined;
+            return v === "more_than_half" || v === "nearly_every_day";
+        });
+
+        // Header
+        doc.setFillColor(245, 158, 11);
+        doc.rect(0, 0, pageWidth, 54, "F");
+
+        doc.setTextColor(255, 255, 255);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text("JRMSU Guidance & Counseling Office", margin, 22);
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.text("Confidential • Internal Counselor Report", margin, 40);
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(9);
+        doc.text(`Generated: ${format(new Date(), "MMM d, yyyy – h:mm a")}`, pageWidth - margin, 22, {
+            align: "right",
+        });
+
+        // Body
+        let y = 78;
+
+        doc.setTextColor(17, 24, 39);
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(12);
+        doc.text(title, margin, y);
+        y += 18;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        const subtitleLines = doc.splitTextToSize(subtitle, maxW);
+        doc.text(subtitleLines, margin, y);
+        y += subtitleLines.length * 12 + 10;
+
+        // Summary block
+        doc.setDrawColor(229, 231, 235);
+        doc.setFillColor(249, 250, 251);
+        doc.roundedRect(margin, y, maxW, 92, 10, 10, "FD");
+
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(180, 83, 9);
+        doc.text("Summary", margin + 14, y + 20);
+
+        doc.setTextColor(17, 24, 39);
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+
+        const leftX = margin + 14;
+        const rightX = margin + maxW / 2 + 8;
+        doc.text(`Total submissions: ${items.length}`, leftX, y + 40);
+        doc.text(`Average score: ${avg.toFixed(1)} / 27`, rightX, y + 40);
+
+        doc.text(`Consented: ${consented}`, leftX, y + 58);
+        doc.text(`No consent: ${noConsent}`, rightX, y + 58);
+
+        doc.text(`Self-harm high-frequency flags: ${flagged.length}`, leftX, y + 76);
+
+        y += 108;
+
+        // Severity distribution
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(180, 83, 9);
+        doc.text("Severity distribution", margin, y);
+        y += 10;
+
+        doc.setDrawColor(229, 231, 235);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 16;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(17, 24, 39);
+
+        for (const sev of SEVERITY_BANDS) {
+            const count = severityCounts[sev] ?? 0;
+            const pct = items.length ? Math.round((count / items.length) * 100) : 0;
+            doc.text(`${sev}: ${count} (${pct}%)`, margin, y);
+            y += 14;
+        }
+
+        y += 6;
+
+        // Flagged list (short)
+        doc.setFont("helvetica", "bold");
+        doc.setFontSize(10);
+        doc.setTextColor(180, 83, 9);
+        doc.text("Flagged for immediate attention (self-harm item)", margin, y);
+        y += 10;
+
+        doc.setDrawColor(229, 231, 235);
+        doc.line(margin, y, pageWidth - margin, y);
+        y += 16;
+
+        doc.setFont("helvetica", "normal");
+        doc.setFontSize(9);
+        doc.setTextColor(17, 24, 39);
+
+        if (flagged.length === 0) {
+            doc.text("None in the selected range.", margin, y);
+            y += 14;
+        } else {
+            const take = flagged.slice(0, 10);
+            for (const a of take) {
+                const name = getStudentDisplayName(a);
+                const created = formatDateTime(a.created_at);
+                const v = prettyFrequency(a.mh_self_harm as MentalFrequencyApi | null | undefined);
+                doc.text(`• ${name} — ${created} — Self-harm: ${v}`, margin, y);
+                y += 14;
+                if (y > pageHeight - 60) break;
+            }
+            if (flagged.length > take.length && y <= pageHeight - 40) {
+                doc.setTextColor(75, 85, 99);
+                doc.text(`(+${flagged.length - take.length} more not shown)`, margin, y);
+                y += 14;
+            }
+        }
+
+        // Footer note
+        doc.setTextColor(75, 85, 99);
+        doc.setFontSize(8);
+        doc.text(
+            "PHQ-9 style scoring for triage only; not a diagnosis. Treat student data as confidential.",
+            margin,
+            pageHeight - 22,
+        );
+
+        const fileName = sanitizeFilename(
+            `assessment-report-${format(new Date(), "yyyy-MM-dd")}.pdf`,
+        );
+        doc.save(fileName);
+    } catch {
+        toast.error("Failed to generate report PDF. Please try again.");
+    }
+}
+
 const CounselorIntake: React.FC = () => {
     const [assessments, setAssessments] = React.useState<IntakeAssessmentDto[]>([]);
     const [isLoadingAssessments, setIsLoadingAssessments] = React.useState(false);
@@ -537,6 +786,11 @@ const CounselorIntake: React.FC = () => {
     const [deleteOpen, setDeleteOpen] = React.useState(false);
     const [deleteTarget, setDeleteTarget] = React.useState<IntakeAssessmentDto | null>(null);
     const [isDeleting, setIsDeleting] = React.useState(false);
+
+    // ✅ Report filters
+    const [reportRange, setReportRange] = React.useState<ReportRangePreset>("30d");
+    const [reportConsent, setReportConsent] = React.useState<ReportConsentFilter>("all");
+    const [reportSearch, setReportSearch] = React.useState("");
 
     const reloadAssessments = React.useCallback(async () => {
         setIsLoadingAssessments(true);
@@ -567,6 +821,11 @@ const CounselorIntake: React.FC = () => {
     const closeAssessmentDialog = () => {
         setIsDialogOpen(false);
         setSelectedAssessment(null);
+    };
+
+    const openAssessmentDialog = (assessment: IntakeAssessmentDto) => {
+        setSelectedAssessment(assessment);
+        setIsDialogOpen(true);
     };
 
     const askDelete = (assessment: IntakeAssessmentDto) => {
@@ -602,27 +861,181 @@ const CounselorIntake: React.FC = () => {
         : { score: 0, answered: 0 };
     const dialogSeverity = selectedAssessment ? phqSeverityLabel(dialogScore.score) : "—";
 
+    const reportFiltered = React.useMemo(() => {
+        const startMs = presetStartMs(reportRange);
+
+        const q = reportSearch.trim().toLowerCase();
+
+        return assessments.filter((a) => {
+            // date range
+            if (startMs != null) {
+                const t = a.created_at ? Date.parse(a.created_at) : NaN;
+                if (!Number.isNaN(t) && t < startMs) return false;
+            }
+
+            // consent filter
+            if (reportConsent === "consented" && a.consent !== true) return false;
+            if (reportConsent === "no_consent" && a.consent === true) return false;
+
+            // search
+            if (q) {
+                const name = getStudentDisplayName(a).toLowerCase();
+                const uid = String(a.user_id ?? "").toLowerCase();
+                const sid = String((a as any)?.student_id ?? "").toLowerCase();
+                if (!name.includes(q) && !uid.includes(q) && !sid.includes(q)) {
+                    return false;
+                }
+            }
+
+            return true;
+        });
+    }, [assessments, reportRange, reportConsent, reportSearch]);
+
+    const reportStats = React.useMemo(() => {
+        const total = reportFiltered.length;
+
+        const uniqueStudents = new Set<string>();
+        let consented = 0;
+
+        const scoreRows = reportFiltered.map((a) => {
+            const { score, answered } = calculatePhqScore(a);
+            uniqueStudents.add(String(a.user_id ?? a.id));
+            if (a.consent === true) consented += 1;
+
+            const severity = phqSeverityLabel(score);
+
+            const selfHarm = a.mh_self_harm as MentalFrequencyApi | null | undefined;
+            const isFlagged =
+                selfHarm === "more_than_half" || selfHarm === "nearly_every_day";
+
+            return {
+                assessment: a,
+                score,
+                answered,
+                severity,
+                isFlagged,
+            };
+        });
+
+        const averageScore =
+            scoreRows.length > 0
+                ? scoreRows.reduce((sum, r) => sum + r.score, 0) / scoreRows.length
+                : 0;
+
+        const answeredAvg =
+            scoreRows.length > 0
+                ? scoreRows.reduce((sum, r) => sum + r.answered, 0) / scoreRows.length
+                : 0;
+
+        const severityCounts: Record<SeverityBand, number> = {
+            Minimal: 0,
+            Mild: 0,
+            Moderate: 0,
+            "Moderately severe": 0,
+            Severe: 0,
+        };
+
+        for (const r of scoreRows) {
+            const k = r.severity as SeverityBand;
+            if (k in severityCounts) severityCounts[k] += 1;
+        }
+
+        const flagged = scoreRows.filter((r) => r.isFlagged);
+
+        // Item stats
+        const itemStats = MH_KEYS.map((key) => {
+            const counts: Record<MentalFrequencyApi, number> = {
+                not_at_all: 0,
+                several_days: 0,
+                more_than_half: 0,
+                nearly_every_day: 0,
+            };
+
+            let answered = 0;
+            let sumScore = 0;
+
+            for (const a of reportFiltered) {
+                const v = a[key] as MentalFrequencyApi | null | undefined;
+                if (!v) continue;
+                if (!(v in FREQUENCY_SCORES)) continue;
+                counts[v] += 1;
+                answered += 1;
+                sumScore += FREQUENCY_SCORES[v];
+            }
+
+            const avgItem = answered > 0 ? sumScore / answered : 0;
+
+            // most common frequency
+            const freqOrder: MentalFrequencyApi[] = [
+                "not_at_all",
+                "several_days",
+                "more_than_half",
+                "nearly_every_day",
+            ];
+            let top: MentalFrequencyApi | null = null;
+            let topCount = -1;
+            for (const f of freqOrder) {
+                if (counts[f] > topCount) {
+                    top = f;
+                    topCount = counts[f];
+                }
+            }
+
+            return {
+                key,
+                question: MH_QUESTIONS[key],
+                answered,
+                avgItem,
+                mostCommon: top,
+                counts,
+            };
+        });
+
+        // Order report rows by newest
+        scoreRows.sort((a, b) => {
+            const ta = a.assessment.created_at ? Date.parse(a.assessment.created_at) : 0;
+            const tb = b.assessment.created_at ? Date.parse(b.assessment.created_at) : 0;
+            return tb - ta;
+        });
+
+        return {
+            total,
+            uniqueStudents: uniqueStudents.size,
+            consented,
+            noConsent: total - consented,
+            averageScore,
+            answeredAvg,
+            severityCounts,
+            flagged,
+            scoreRows,
+            itemStats,
+        };
+    }, [reportFiltered]);
+
     return (
         <DashboardLayout
             title="Intake"
-            description="Review mental health needs assessment submissions (Steps 1–3). Counseling requests are managed in Appointments."
+            description="Review mental health needs assessment submissions (Steps 1–3) and generate score/statistics-based assessment reports."
         >
             <div className="flex w-full justify-center">
-                <div className="w-full max-w-5xl space-y-4">
-                    <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="space-y-1 text-xs text-amber-900">
-                            <p className="font-semibold">Guidance &amp; Counseling – Intake (Assessments)</p>
-                            <p className="text-[0.7rem] text-amber-900/80">
-                                Counseling requests are now handled as{" "}
-                                <span className="font-medium">appointments</span>. Go to{" "}
-                                <Link to="/dashboard/counselor/appointments" className="font-semibold underline">
-                                    Appointments
-                                </Link>{" "}
-                                to schedule or reschedule.
-                            </p>
-                        </div>
+                <div className="w-full max-w-6xl space-y-4">
+                    <Alert className="border-amber-100 bg-amber-50/70">
+                        <AlertTitle className="text-sm font-semibold text-amber-900">
+                            Guidance &amp; Counseling – Intake (Assessments)
+                        </AlertTitle>
+                        <AlertDescription className="text-xs text-amber-900/80">
+                            Counseling requests are now handled as{" "}
+                            <span className="font-medium">appointments</span>. Go to{" "}
+                            <Link
+                                to="/dashboard/counselor/appointments"
+                                className="font-semibold underline"
+                            >
+                                Appointments
+                            </Link>{" "}
+                            to schedule or reschedule.
+                        </AlertDescription>
 
-                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:gap-2">
+                        <div className="mt-3 flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
                             <Button
                                 type="button"
                                 size="sm"
@@ -643,34 +1056,39 @@ const CounselorIntake: React.FC = () => {
                                 )}
                             </Button>
 
-                            <Button asChild type="button" size="sm" className="w-full text-xs sm:w-auto">
+                            <Button
+                                asChild
+                                type="button"
+                                size="sm"
+                                className="w-full text-xs sm:w-auto"
+                            >
                                 <Link to="/dashboard/counselor/appointments">Open Appointments</Link>
                             </Button>
                         </div>
-                    </div>
+                    </Alert>
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-1">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold text-amber-900">
                                 <ClipboardListIcon className="h-4 w-4 text-amber-600" />
-                                Needs assessments (Steps 1–3)
+                                Intake assessments (Steps 1–3)
                             </CardTitle>
-                            <p className="text-xs text-muted-foreground">
-                                This list shows consent, demographic snapshots, and mental health questionnaire responses
-                                submitted by students. Scores are shown for triage and{" "}
-                                <span className="font-medium">are not diagnostic labels</span>.
-                            </p>
+                            <CardDescription className="text-xs">
+                                View individual submissions and generate{" "}
+                                <span className="font-medium">assessment reports</span> using PHQ-9 style scores.
+                                Scores are for triage only and <span className="font-medium">are not diagnostic labels</span>.
+                            </CardDescription>
                         </CardHeader>
 
                         <CardContent className="space-y-3">
                             {assessmentsError && (
-                                <div className="flex items-start gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-[0.75rem] text-red-800">
-                                    <AlertCircle className="mt-px h-3.5 w-3.5" />
-                                    <div>
-                                        <p className="font-medium">Unable to load assessment submissions.</p>
-                                        <p className="text-[0.7rem] opacity-90">{assessmentsError}</p>
-                                    </div>
-                                </div>
+                                <Alert className="border-red-200 bg-red-50">
+                                    <AlertCircle className="h-4 w-4" />
+                                    <AlertTitle className="text-sm">Unable to load assessment submissions</AlertTitle>
+                                    <AlertDescription className="text-xs text-red-800/90">
+                                        {assessmentsError}
+                                    </AlertDescription>
+                                </Alert>
                             )}
 
                             {isLoadingAssessments && !assessments.length ? (
@@ -680,121 +1098,621 @@ const CounselorIntake: React.FC = () => {
                                 </div>
                             ) : null}
 
-                            {!isLoadingAssessments && assessments.length === 0 && !assessmentsError && (
-                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-6 text-center text-xs text-muted-foreground">
-                                    No assessment submissions have been recorded yet.
-                                    <br />
-                                    Once students submit the intake assessment, they will appear here.
-                                </div>
-                            )}
+                            <Tabs defaultValue="submissions" className="w-full">
+                                <TabsList className="grid w-full grid-cols-2">
+                                    <TabsTrigger value="submissions" className="text-xs">
+                                        Submissions
+                                    </TabsTrigger>
+                                    <TabsTrigger value="report" className="text-xs">
+                                        <span className="inline-flex items-center gap-1.5">
+                                            <BarChart3 className="h-3.5 w-3.5" />
+                                            Assessment Report
+                                        </span>
+                                    </TabsTrigger>
+                                </TabsList>
 
-                            {!isLoadingAssessments && assessments.length > 0 && (
-                                <div className="space-y-2">
-                                    {assessments.map((assessment) => {
-                                        const studentName = getStudentDisplayName(assessment);
-                                        const created = formatDateTime(assessment.created_at);
-                                        const { score, answered } = calculatePhqScore(assessment);
-                                        const severity = phqSeverityLabel(score);
-                                        const hasConsent = assessment.consent === true;
-
-                                        return (
-                                            <div
-                                                key={assessment.id}
-                                                className="flex flex-col gap-2 rounded-md border border-amber-50 bg-amber-50/40 px-3 py-2.5 text-xs sm:flex-row sm:items-start sm:justify-between"
-                                            >
-                                                <div className="space-y-1">
-                                                    <div className="flex flex-wrap items-center gap-1.5 text-[0.8rem] font-semibold text-amber-900">
-                                                        <UserCircle2 className="h-3.5 w-3.5 text-amber-700" />
-                                                        <span>{studentName}</span>
-                                                        {hasConsent ? (
-                                                            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[0.65rem] font-medium text-emerald-800">
-                                                                Consent given
-                                                            </span>
-                                                        ) : (
-                                                            <span className="rounded-full bg-red-100 px-2 py-0.5 text-[0.65rem] font-medium text-red-800">
-                                                                No consent on record
-                                                            </span>
-                                                        )}
-                                                    </div>
-
-                                                    <div className="flex flex-wrap gap-x-3 gap-y-1 text-[0.7rem] text-muted-foreground">
-                                                        <span>
-                                                            <span className="font-medium">Age:</span>{" "}
-                                                            {typeof assessment.age === "number" ? assessment.age : "—"}
-                                                        </span>
-                                                        <span>
-                                                            <span className="font-medium">Gender:</span>{" "}
-                                                            {formatGender(assessment.gender ?? undefined)}
-                                                        </span>
-                                                        <span>
-                                                            <span className="font-medium">Occupation:</span>{" "}
-                                                            {assessment.occupation?.trim() || "—"}
-                                                        </span>
-                                                        <span>
-                                                            <span className="font-medium">Living situation:</span>{" "}
-                                                            {formatLivingSituation(
-                                                                assessment.living_situation ?? undefined,
-                                                                assessment.living_situation_other ?? undefined,
-                                                            )}
-                                                        </span>
-                                                    </div>
-
-                                                    <p className="text-[0.65rem] text-muted-foreground">Submitted: {created}</p>
-                                                </div>
-
-                                                <div className="mt-1 flex flex-col items-start gap-2 text-[0.7rem] text-muted-foreground sm:items-end">
-                                                    <div className="rounded-md bg-white/90 px-3 py-1.5 shadow-inner shadow-amber-50/70">
-                                                        <p className="text-[0.7rem] font-semibold text-amber-900">
-                                                            Questionnaire summary
-                                                        </p>
-                                                        <p className="text-[0.7rem] text-amber-900">
-                                                            Score: <span className="font-semibold">{score}</span>{" "}
-                                                            <span className="text-[0.65rem] text-muted-foreground">
-                                                                ({answered} of 9 answered)
-                                                            </span>
-                                                        </p>
-                                                        <p className="text-[0.7rem] text-amber-900">
-                                                            Severity band: <span className="font-semibold">{severity}</span>
-                                                        </p>
-                                                        <p className="mt-1 text-[0.6rem] text-muted-foreground">
-                                                            Based on PHQ-9 style scoring for{" "}
-                                                            <span className="font-medium">triage only</span>; not a diagnosis or
-                                                            clinical label.
-                                                        </p>
-                                                    </div>
-
-                                                    <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            className="h-8 border-amber-200 bg-white/80 text-[0.7rem] text-amber-900 hover:bg-amber-50"
-                                                            onClick={() => {
-                                                                setSelectedAssessment(assessment);
-                                                                setIsDialogOpen(true);
-                                                            }}
-                                                        >
-                                                            View / Download
-                                                        </Button>
-
-                                                        <Button
-                                                            type="button"
-                                                            size="sm"
-                                                            variant="outline"
-                                                            className="h-8 border-red-200 bg-white/80 text-[0.7rem] text-red-700 hover:bg-red-50"
-                                                            onClick={() => askDelete(assessment)}
-                                                            disabled={isDeleting}
-                                                        >
-                                                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
-                                                            Delete
-                                                        </Button>
-                                                    </div>
-                                                </div>
+                                {/* ---------------- SUBMISSIONS ---------------- */}
+                                <TabsContent value="submissions" className="space-y-3">
+                                    {!isLoadingAssessments &&
+                                        assessments.length === 0 &&
+                                        !assessmentsError && (
+                                            <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-6 text-center text-xs text-muted-foreground">
+                                                No assessment submissions have been recorded yet.
+                                                <br />
+                                                Once students submit the intake assessment, they will appear here.
                                             </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
+                                        )}
+
+                                    {!isLoadingAssessments && assessments.length > 0 && (
+                                        <div className="rounded-md border bg-background">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead className="text-xs">Student</TableHead>
+                                                        <TableHead className="text-xs">Submitted</TableHead>
+                                                        <TableHead className="text-xs">Consent</TableHead>
+                                                        <TableHead className="text-xs">Score</TableHead>
+                                                        <TableHead className="text-xs">Severity</TableHead>
+                                                        <TableHead className="text-right text-xs">Actions</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+
+                                                <TableBody>
+                                                    {assessments.map((assessment) => {
+                                                        const studentName = getStudentDisplayName(assessment);
+                                                        const created = formatDateTime(assessment.created_at);
+
+                                                        const { score, answered } = calculatePhqScore(assessment);
+                                                        const severity = phqSeverityLabel(score);
+
+                                                        const hasConsent = assessment.consent === true;
+
+                                                        return (
+                                                            <TableRow key={assessment.id}>
+                                                                <TableCell className="py-3">
+                                                                    <div className="flex items-center gap-2">
+                                                                        <UserCircle2 className="h-4 w-4 text-amber-700" />
+                                                                        <div className="space-y-0.5">
+                                                                            <p className="text-xs font-semibold text-foreground">
+                                                                                {studentName}
+                                                                            </p>
+                                                                            <p className="text-[0.7rem] text-muted-foreground">
+                                                                                Age:{" "}
+                                                                                {typeof assessment.age === "number"
+                                                                                    ? assessment.age
+                                                                                    : "—"}{" "}
+                                                                                • Gender: {formatGender(assessment.gender ?? undefined)}
+                                                                            </p>
+                                                                        </div>
+                                                                    </div>
+                                                                </TableCell>
+
+                                                                <TableCell className="text-xs text-muted-foreground">
+                                                                    {created}
+                                                                </TableCell>
+
+                                                                <TableCell>
+                                                                    {hasConsent ? (
+                                                                        <Badge
+                                                                            variant="outline"
+                                                                            className="border-emerald-200 bg-emerald-50 text-[0.7rem] text-emerald-800"
+                                                                        >
+                                                                            Consented
+                                                                        </Badge>
+                                                                    ) : (
+                                                                        <Badge
+                                                                            variant="outline"
+                                                                            className="border-red-200 bg-red-50 text-[0.7rem] text-red-700"
+                                                                        >
+                                                                            No consent
+                                                                        </Badge>
+                                                                    )}
+                                                                </TableCell>
+
+                                                                <TableCell className="text-xs">
+                                                                    <span className="font-semibold">{score}</span>{" "}
+                                                                    <span className="text-[0.7rem] text-muted-foreground">
+                                                                        /27 • {answered}/9
+                                                                    </span>
+                                                                </TableCell>
+
+                                                                <TableCell>
+                                                                    <Badge
+                                                                        variant="outline"
+                                                                        className={`text-[0.7rem] ${severityBadgeClass(
+                                                                            severity,
+                                                                        )}`}
+                                                                    >
+                                                                        {severity}
+                                                                    </Badge>
+                                                                </TableCell>
+
+                                                                <TableCell className="text-right">
+                                                                    <div className="flex flex-wrap justify-end gap-2">
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 text-[0.7rem]"
+                                                                            onClick={() => openAssessmentDialog(assessment)}
+                                                                        >
+                                                                            View
+                                                                        </Button>
+
+                                                                        <Button
+                                                                            type="button"
+                                                                            size="sm"
+                                                                            variant="outline"
+                                                                            className="h-8 border-red-200 bg-white text-[0.7rem] text-red-700 hover:bg-red-50"
+                                                                            onClick={() => askDelete(assessment)}
+                                                                            disabled={isDeleting}
+                                                                        >
+                                                                            <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                                                                            Delete
+                                                                        </Button>
+                                                                    </div>
+                                                                </TableCell>
+                                                            </TableRow>
+                                                        );
+                                                    })}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    )}
+                                </TabsContent>
+
+                                {/* ---------------- REPORT ---------------- */}
+                                <TabsContent value="report" className="space-y-4">
+                                    <div className="grid gap-3 rounded-md border bg-muted/30 p-3 sm:grid-cols-3">
+                                        <div className="space-y-1">
+                                            <p className="text-[0.7rem] font-medium text-muted-foreground">
+                                                Search student
+                                            </p>
+                                            <Input
+                                                value={reportSearch}
+                                                onChange={(e) => setReportSearch(e.target.value)}
+                                                placeholder="Name, user ID, student ID…"
+                                                className="h-9 text-xs"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <p className="text-[0.7rem] font-medium text-muted-foreground">
+                                                Date range
+                                            </p>
+                                            <Select
+                                                value={reportRange}
+                                                onValueChange={(v) => setReportRange(v as ReportRangePreset)}
+                                            >
+                                                <SelectTrigger className="h-9 text-xs">
+                                                    <SelectValue placeholder="Select range" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All time</SelectItem>
+                                                    <SelectItem value="7d">Last 7 days</SelectItem>
+                                                    <SelectItem value="30d">Last 30 days</SelectItem>
+                                                    <SelectItem value="90d">Last 90 days</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <p className="text-[0.7rem] font-medium text-muted-foreground">
+                                                Consent filter
+                                            </p>
+                                            <Select
+                                                value={reportConsent}
+                                                onValueChange={(v) => setReportConsent(v as ReportConsentFilter)}
+                                            >
+                                                <SelectTrigger className="h-9 text-xs">
+                                                    <SelectValue placeholder="Select consent" />
+                                                </SelectTrigger>
+                                                <SelectContent>
+                                                    <SelectItem value="all">All submissions</SelectItem>
+                                                    <SelectItem value="consented">Consented only</SelectItem>
+                                                    <SelectItem value="no_consent">No consent only</SelectItem>
+                                                </SelectContent>
+                                            </Select>
+                                        </div>
+                                    </div>
+
+                                    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                        <div className="space-y-0.5">
+                                            <p className="text-sm font-semibold text-foreground">
+                                                Report summary
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {rangeLabel(reportRange)} • {reportConsent === "all"
+                                                    ? "All consent states"
+                                                    : reportConsent === "consented"
+                                                        ? "Consented only"
+                                                        : "No consent only"}{" "}
+                                                • {reportStats.total} submission(s)
+                                            </p>
+                                        </div>
+
+                                        <Button
+                                            type="button"
+                                            size="sm"
+                                            onClick={() =>
+                                                downloadAssessmentReportPdf(reportFiltered, {
+                                                    preset: reportRange,
+                                                    consent: reportConsent,
+                                                    search: reportSearch,
+                                                })
+                                            }
+                                            disabled={reportStats.total === 0}
+                                            className="w-full text-xs sm:w-auto"
+                                        >
+                                            <FileDown className="mr-2 h-4 w-4" />
+                                            Download Report PDF
+                                        </Button>
+                                    </div>
+
+                                    {reportStats.total === 0 ? (
+                                        <div className="rounded-md border border-dashed bg-background px-4 py-6 text-center text-xs text-muted-foreground">
+                                            No submissions match the selected filters.
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                                                <Card>
+                                                    <CardHeader className="space-y-1 pb-2">
+                                                        <CardTitle className="text-xs text-muted-foreground">
+                                                            Submissions
+                                                        </CardTitle>
+                                                    </CardHeader>
+                                                    <CardContent>
+                                                        <p className="text-2xl font-semibold">{reportStats.total}</p>
+                                                        <p className="text-[0.7rem] text-muted-foreground">
+                                                            Filtered rows
+                                                        </p>
+                                                    </CardContent>
+                                                </Card>
+
+                                                <Card>
+                                                    <CardHeader className="space-y-1 pb-2">
+                                                        <CardTitle className="text-xs text-muted-foreground">
+                                                            Unique students
+                                                        </CardTitle>
+                                                    </CardHeader>
+                                                    <CardContent>
+                                                        <p className="text-2xl font-semibold">{reportStats.uniqueStudents}</p>
+                                                        <p className="text-[0.7rem] text-muted-foreground">
+                                                            Based on user_id
+                                                        </p>
+                                                    </CardContent>
+                                                </Card>
+
+                                                <Card>
+                                                    <CardHeader className="space-y-1 pb-2">
+                                                        <CardTitle className="text-xs text-muted-foreground">
+                                                            Average score
+                                                        </CardTitle>
+                                                    </CardHeader>
+                                                    <CardContent>
+                                                        <p className="text-2xl font-semibold">
+                                                            {reportStats.averageScore.toFixed(1)}
+                                                        </p>
+                                                        <p className="text-[0.7rem] text-muted-foreground">
+                                                            / 27 (triage only)
+                                                        </p>
+                                                    </CardContent>
+                                                </Card>
+
+                                                <Card>
+                                                    <CardHeader className="space-y-1 pb-2">
+                                                        <CardTitle className="text-xs text-muted-foreground">
+                                                            Answer completeness
+                                                        </CardTitle>
+                                                    </CardHeader>
+                                                    <CardContent>
+                                                        <p className="text-2xl font-semibold">
+                                                            {reportStats.answeredAvg.toFixed(1)}
+                                                        </p>
+                                                        <p className="text-[0.7rem] text-muted-foreground">
+                                                            Avg answered / 9 items
+                                                        </p>
+                                                    </CardContent>
+                                                </Card>
+                                            </div>
+
+                                            <div className="grid gap-3 lg:grid-cols-2">
+                                                <Card className="border-amber-100/80 bg-white/80">
+                                                    <CardHeader className="space-y-1">
+                                                        <CardTitle className="text-sm">
+                                                            Severity distribution
+                                                        </CardTitle>
+                                                        <CardDescription className="text-xs">
+                                                            Based on PHQ-9 style bands (triage only).
+                                                        </CardDescription>
+                                                    </CardHeader>
+
+                                                    <CardContent className="space-y-3">
+                                                        {SEVERITY_BANDS.map((sev) => {
+                                                            const count = reportStats.severityCounts[sev] ?? 0;
+                                                            const pct = reportStats.total
+                                                                ? Math.round((count / reportStats.total) * 100)
+                                                                : 0;
+
+                                                            return (
+                                                                <div key={sev} className="space-y-1">
+                                                                    <div className="flex items-center justify-between text-xs">
+                                                                        <div className="flex items-center gap-2">
+                                                                            <Badge
+                                                                                variant="outline"
+                                                                                className={`text-[0.7rem] ${severityBadgeClass(
+                                                                                    sev,
+                                                                                )}`}
+                                                                            >
+                                                                                {sev}
+                                                                            </Badge>
+                                                                            <span className="text-muted-foreground">
+                                                                                {count} student(s)
+                                                                            </span>
+                                                                        </div>
+                                                                        <span className="text-muted-foreground">{pct}%</span>
+                                                                    </div>
+
+                                                                    <Progress value={pct} className="h-2" />
+                                                                </div>
+                                                            );
+                                                        })}
+
+                                                        <div className="pt-2 text-[0.7rem] text-muted-foreground">
+                                                            Consented:{" "}
+                                                            <span className="font-medium text-foreground">
+                                                                {reportStats.consented}
+                                                            </span>{" "}
+                                                            • No consent:{" "}
+                                                            <span className="font-medium text-foreground">
+                                                                {reportStats.noConsent}
+                                                            </span>
+                                                        </div>
+                                                    </CardContent>
+                                                </Card>
+
+                                                <Card className="border-amber-100/80 bg-white/80">
+                                                    <CardHeader className="space-y-1">
+                                                        <CardTitle className="flex items-center gap-2 text-sm">
+                                                            <ShieldAlert className="h-4 w-4 text-amber-700" />
+                                                            High-attention flags
+                                                        </CardTitle>
+                                                        <CardDescription className="text-xs">
+                                                            Flags are based on the self-harm item being “More than half” or “Nearly every day”.
+                                                            Follow your office protocol immediately.
+                                                        </CardDescription>
+                                                    </CardHeader>
+
+                                                    <CardContent className="space-y-3">
+                                                        {reportStats.flagged.length === 0 ? (
+                                                            <div className="rounded-md border bg-muted/30 px-3 py-3 text-xs text-muted-foreground">
+                                                                No flagged submissions in the selected range.
+                                                            </div>
+                                                        ) : (
+                                                            <div className="space-y-2">
+                                                                <div className="flex items-center justify-between">
+                                                                    <Badge
+                                                                        variant="outline"
+                                                                        className="border-red-200 bg-red-50 text-red-700"
+                                                                    >
+                                                                        {reportStats.flagged.length} flagged
+                                                                    </Badge>
+                                                                    <span className="text-[0.7rem] text-muted-foreground">
+                                                                        Showing newest first
+                                                                    </span>
+                                                                </div>
+
+                                                                <div className="rounded-md border bg-background">
+                                                                    <Table>
+                                                                        <TableHeader>
+                                                                            <TableRow>
+                                                                                <TableHead className="text-xs">Student</TableHead>
+                                                                                <TableHead className="text-xs">Submitted</TableHead>
+                                                                                <TableHead className="text-xs text-right">Action</TableHead>
+                                                                            </TableRow>
+                                                                        </TableHeader>
+
+                                                                        <TableBody>
+                                                                            {reportStats.flagged.slice(0, 6).map((row) => {
+                                                                                const a = row.assessment;
+                                                                                return (
+                                                                                    <TableRow key={a.id}>
+                                                                                        <TableCell className="py-3">
+                                                                                            <div className="space-y-0.5">
+                                                                                                <p className="text-xs font-semibold">
+                                                                                                    {getStudentDisplayName(a)}
+                                                                                                </p>
+                                                                                                <p className="text-[0.7rem] text-muted-foreground">
+                                                                                                    Self-harm:{" "}
+                                                                                                    <span className="font-medium text-foreground">
+                                                                                                        {prettyFrequency(
+                                                                                                            a.mh_self_harm as MentalFrequencyApi | null | undefined,
+                                                                                                        )}
+                                                                                                    </span>
+                                                                                                </p>
+                                                                                            </div>
+                                                                                        </TableCell>
+                                                                                        <TableCell className="text-xs text-muted-foreground">
+                                                                                            {formatDateTime(a.created_at)}
+                                                                                        </TableCell>
+                                                                                        <TableCell className="text-right">
+                                                                                            <Button
+                                                                                                size="sm"
+                                                                                                variant="outline"
+                                                                                                className="h-8 text-[0.7rem]"
+                                                                                                onClick={() => openAssessmentDialog(a)}
+                                                                                            >
+                                                                                                View details
+                                                                                            </Button>
+                                                                                        </TableCell>
+                                                                                    </TableRow>
+                                                                                );
+                                                                            })}
+                                                                        </TableBody>
+                                                                    </Table>
+                                                                </div>
+
+                                                                {reportStats.flagged.length > 6 && (
+                                                                    <p className="text-[0.7rem] text-muted-foreground">
+                                                                        +{reportStats.flagged.length - 6} more flagged submission(s) not shown.
+                                                                    </p>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </CardContent>
+                                                </Card>
+                                            </div>
+
+                                            <Card className="border-amber-100/80 bg-white/80">
+                                                <CardHeader className="space-y-1">
+                                                    <CardTitle className="text-sm">
+                                                        Item-level statistics
+                                                    </CardTitle>
+                                                    <CardDescription className="text-xs">
+                                                        Average per item is scored 0–3 (Not at all → Nearly every day).
+                                                    </CardDescription>
+                                                </CardHeader>
+
+                                                <CardContent>
+                                                    <div className="rounded-md border bg-background">
+                                                        <Table>
+                                                            <TableHeader>
+                                                                <TableRow>
+                                                                    <TableHead className="text-xs">Question</TableHead>
+                                                                    <TableHead className="text-xs">Answered</TableHead>
+                                                                    <TableHead className="text-xs">Average</TableHead>
+                                                                    <TableHead className="text-xs">Most common</TableHead>
+                                                                </TableRow>
+                                                            </TableHeader>
+
+                                                            <TableBody>
+                                                                {reportStats.itemStats.map((row) => {
+                                                                    const mostCommonLabel = row.mostCommon
+                                                                        ? MENTAL_FREQUENCY_LABELS[row.mostCommon]
+                                                                        : "—";
+                                                                    return (
+                                                                        <TableRow key={String(row.key)}>
+                                                                            <TableCell className="py-3">
+                                                                                <div className="space-y-0.5">
+                                                                                    <p className="text-xs font-medium text-foreground">
+                                                                                        {row.question}
+                                                                                    </p>
+                                                                                    <p className="text-[0.7rem] text-muted-foreground">
+                                                                                        {String(row.key)}
+                                                                                    </p>
+                                                                                </div>
+                                                                            </TableCell>
+                                                                            <TableCell className="text-xs">
+                                                                                {row.answered} / {reportStats.total}
+                                                                            </TableCell>
+                                                                            <TableCell className="text-xs font-semibold">
+                                                                                {row.avgItem.toFixed(2)}
+                                                                            </TableCell>
+                                                                            <TableCell className="text-xs text-muted-foreground">
+                                                                                {mostCommonLabel}
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    );
+                                                                })}
+                                                            </TableBody>
+                                                        </Table>
+                                                    </div>
+
+                                                    <div className="mt-3 rounded-md border border-amber-100 bg-amber-50/60 px-3 py-2 text-[0.7rem] text-amber-900/90">
+                                                        <span className="font-semibold">Reminder:</span> These statistics are for
+                                                        counselor triage/reporting only and do not represent a clinical diagnosis.
+                                                    </div>
+                                                </CardContent>
+                                            </Card>
+
+                                            <Card className="border-amber-100/80 bg-white/80">
+                                                <CardHeader className="space-y-1">
+                                                    <CardTitle className="text-sm">Filtered submission list</CardTitle>
+                                                    <CardDescription className="text-xs">
+                                                        This table matches your filters and is useful for quick review and verification.
+                                                    </CardDescription>
+                                                </CardHeader>
+
+                                                <CardContent>
+                                                    <div className="rounded-md border bg-background">
+                                                        <Table>
+                                                            <TableHeader>
+                                                                <TableRow>
+                                                                    <TableHead className="text-xs">Student</TableHead>
+                                                                    <TableHead className="text-xs">Submitted</TableHead>
+                                                                    <TableHead className="text-xs">Score</TableHead>
+                                                                    <TableHead className="text-xs">Severity</TableHead>
+                                                                    <TableHead className="text-xs">Consent</TableHead>
+                                                                    <TableHead className="text-right text-xs">Action</TableHead>
+                                                                </TableRow>
+                                                            </TableHeader>
+
+                                                            <TableBody>
+                                                                {reportStats.scoreRows.slice(0, 12).map((row) => {
+                                                                    const a = row.assessment;
+                                                                    return (
+                                                                        <TableRow key={a.id}>
+                                                                            <TableCell className="py-3">
+                                                                                <div className="space-y-0.5">
+                                                                                    <p className="text-xs font-semibold">
+                                                                                        {getStudentDisplayName(a)}
+                                                                                    </p>
+                                                                                    <p className="text-[0.7rem] text-muted-foreground">
+                                                                                        User ID: {String(a.user_id ?? "—")}
+                                                                                    </p>
+                                                                                </div>
+                                                                            </TableCell>
+
+                                                                            <TableCell className="text-xs text-muted-foreground">
+                                                                                {formatDateTime(a.created_at)}
+                                                                            </TableCell>
+
+                                                                            <TableCell className="text-xs">
+                                                                                <span className="font-semibold">{row.score}</span>{" "}
+                                                                                <span className="text-[0.7rem] text-muted-foreground">
+                                                                                    /27 • {row.answered}/9
+                                                                                </span>
+                                                                            </TableCell>
+
+                                                                            <TableCell>
+                                                                                <Badge
+                                                                                    variant="outline"
+                                                                                    className={`text-[0.7rem] ${severityBadgeClass(
+                                                                                        row.severity,
+                                                                                    )}`}
+                                                                                >
+                                                                                    {row.severity}
+                                                                                </Badge>
+                                                                            </TableCell>
+
+                                                                            <TableCell>
+                                                                                {a.consent === true ? (
+                                                                                    <Badge
+                                                                                        variant="outline"
+                                                                                        className="border-emerald-200 bg-emerald-50 text-[0.7rem] text-emerald-800"
+                                                                                    >
+                                                                                        Yes
+                                                                                    </Badge>
+                                                                                ) : (
+                                                                                    <Badge
+                                                                                        variant="outline"
+                                                                                        className="border-red-200 bg-red-50 text-[0.7rem] text-red-700"
+                                                                                    >
+                                                                                        No
+                                                                                    </Badge>
+                                                                                )}
+                                                                            </TableCell>
+
+                                                                            <TableCell className="text-right">
+                                                                                <Button
+                                                                                    type="button"
+                                                                                    size="sm"
+                                                                                    variant="outline"
+                                                                                    className="h-8 text-[0.7rem]"
+                                                                                    onClick={() => openAssessmentDialog(a)}
+                                                                                >
+                                                                                    View
+                                                                                </Button>
+                                                                            </TableCell>
+                                                                        </TableRow>
+                                                                    );
+                                                                })}
+                                                            </TableBody>
+                                                        </Table>
+                                                    </div>
+
+                                                    {reportStats.scoreRows.length > 12 && (
+                                                        <p className="mt-2 text-[0.7rem] text-muted-foreground">
+                                                            Showing 12 of {reportStats.scoreRows.length} matched submission(s).
+                                                        </p>
+                                                    )}
+                                                </CardContent>
+                                            </Card>
+                                        </>
+                                    )}
+                                </TabsContent>
+                            </Tabs>
                         </CardContent>
                     </Card>
                 </div>
@@ -818,7 +1736,9 @@ const CounselorIntake: React.FC = () => {
                                         </p>
                                         <p>
                                             <span className="font-medium">Age:</span>{" "}
-                                            {typeof selectedAssessment.age === "number" ? selectedAssessment.age : "—"}
+                                            {typeof selectedAssessment.age === "number"
+                                                ? selectedAssessment.age
+                                                : "—"}
                                         </p>
                                         <p>
                                             <span className="font-medium">Gender:</span>{" "}
@@ -847,7 +1767,12 @@ const CounselorIntake: React.FC = () => {
                                         </p>
                                         <p>
                                             <span className="font-medium">Severity band:</span>{" "}
-                                            <span className="font-semibold">{dialogSeverity}</span>
+                                            <Badge
+                                                variant="outline"
+                                                className={`text-[0.7rem] ${severityBadgeClass(dialogSeverity)}`}
+                                            >
+                                                {dialogSeverity}
+                                            </Badge>
                                         </p>
                                         <p className="text-[0.7rem] text-muted-foreground">
                                             Based on PHQ-9 style scoring for triage only; not a diagnosis or clinical label.
@@ -858,29 +1783,30 @@ const CounselorIntake: React.FC = () => {
                                 <div className="space-y-2">
                                     <p className="text-xs font-semibold text-amber-900">Item-by-item responses</p>
 
-                                    <div className="overflow-x-auto rounded-md border">
-                                        <div className="min-w-[640px]">
-                                            <div className="grid grid-cols-[1fr_220px] bg-muted/50 px-3 py-2 text-[0.7rem] font-medium">
-                                                <div>Question</div>
-                                                <div className="text-right">Answer</div>
-                                            </div>
+                                    <div className="rounded-md border bg-background">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead className="text-xs">Question</TableHead>
+                                                    <TableHead className="text-right text-xs">Answer</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
 
-                                            <div className="divide-y">
+                                            <TableBody>
                                                 {MH_KEYS.map((key) => (
-                                                    <div
-                                                        key={String(key)}
-                                                        className="grid grid-cols-[1fr_220px] gap-3 px-3 py-2 text-[0.75rem]"
-                                                    >
-                                                        <div className="text-muted-foreground">{MH_QUESTIONS[key]}</div>
-                                                        <div className="text-right font-medium text-amber-900">
+                                                    <TableRow key={String(key)}>
+                                                        <TableCell className="py-3 text-xs text-muted-foreground">
+                                                            {MH_QUESTIONS[key]}
+                                                        </TableCell>
+                                                        <TableCell className="py-3 text-right text-xs font-medium text-amber-900">
                                                             {prettyFrequency(
                                                                 selectedAssessment[key] as MentalFrequencyApi | null | undefined,
                                                             )}
-                                                        </div>
-                                                    </div>
+                                                        </TableCell>
+                                                    </TableRow>
                                                 ))}
-                                            </div>
-                                        </div>
+                                            </TableBody>
+                                        </Table>
                                     </div>
                                 </div>
                             </div>
