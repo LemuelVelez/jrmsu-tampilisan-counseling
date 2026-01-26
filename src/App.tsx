@@ -24,6 +24,10 @@ import CounselorAnalytics from "./pages/dashboard/counselor/analytics";
 import CounselorReferrals from "./pages/dashboard/counselor/referrals";
 import CounselorReferralDetails from "./pages/dashboard/counselor/referral-details";
 
+// ✅ NEW: Referral-user pages
+import ReferralUserMessages from "./pages/dashboard/referral-user/messages";
+import ReferralUserReferrals from "./pages/dashboard/referral-user/referrals";
+
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
 import StudentEvaluation from "./pages/dashboard/student/evaluation";
@@ -244,6 +248,33 @@ function App() {
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorSettings />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ Referral-user routes (referral user only) */}
+          {/* Default referral-user entry → referrals list */}
+          <Route
+            path="/dashboard/referral-user"
+            element={
+              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+                <ReferralUserReferrals />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/referral-user/referrals"
+            element={
+              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+                <ReferralUserReferrals />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/referral-user/messages"
+            element={
+              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+                <ReferralUserMessages />
               </RequireRole>
             }
           />
