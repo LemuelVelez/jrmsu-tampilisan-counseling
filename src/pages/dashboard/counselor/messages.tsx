@@ -1754,7 +1754,7 @@ const CounselorMessages: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <ScrollArea className="h-[480px] bg-gradient-to-b from-muted/30 to-white sm:h-[520px]">
+                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
                                     <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">

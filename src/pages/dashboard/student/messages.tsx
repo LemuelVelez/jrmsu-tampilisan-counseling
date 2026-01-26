@@ -1400,7 +1400,7 @@ const StudentMessages: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <ScrollArea className="h-[480px] bg-gradient-to-b from-muted/30 to-white sm:h-[520px]">
+                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
                                     <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">
@@ -1437,7 +1437,12 @@ const StudentMessages: React.FC = () => {
                                                 return (
                                                     <div key={m.id} className={cn("flex", align)}>
                                                         <div className="max-w-lg sm:max-w-xl">
-                                                            {!system ? (
+                                                            {system ? (
+                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
+                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
+                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
+                                                                </div>
+                                                            ) : (
                                                                 <div
                                                                     className={cn(
                                                                         "mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground",
@@ -1503,11 +1508,6 @@ const StudentMessages: React.FC = () => {
                                                                             </DropdownMenuContent>
                                                                         </DropdownMenu>
                                                                     )}
-                                                                </div>
-                                                            ) : (
-                                                                <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
-                                                                    <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
-                                                                    <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
                                                                 </div>
                                                             )}
 
