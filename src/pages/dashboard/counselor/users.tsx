@@ -514,7 +514,7 @@ const CounselorUsers: React.FC = () => {
             title="Users"
             description="View student and guest accounts in your system."
         >
-            <div className="mx-auto w-full max-w-6xl space-y-6">
+            <div className="mx-auto w-full px-4 space-y-6">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
                     <CardHeader className="space-y-3">
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">

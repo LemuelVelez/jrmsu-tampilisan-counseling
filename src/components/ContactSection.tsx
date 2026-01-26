@@ -3,20 +3,16 @@ import React from "react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
-// Prefer the VITE_GMAIL_ADDRESS_RECEPIENT env var (exposed to the browser),
-// with a fallback to a non-VITE version if you also inject it some other way.
 const CONTACT_EMAIL: string =
     (import.meta as any).env?.VITE_GMAIL_ADDRESS_RECEPIENT ??
     (import.meta as any).env?.GMAIL_ADDRESS_RECEPIENT ??
     "";
 
-// Phone number from env, with a sensible fallback if not set
 const PHONE_NUMBER: string =
     (import.meta as any).env?.VITE_PHONE_NUMBER ??
     (import.meta as any).env?.PHONE_NUMBER ??
     "(+63) 000 000 0000";
 
-// Optional fallback to show in the UI if env is not set
 const DISPLAY_EMAIL = CONTACT_EMAIL || "guidance.office@example.edu";
 
 const buildGmailComposeUrl = (to: string, subject?: string, body?: string) => {
@@ -25,12 +21,8 @@ const buildGmailComposeUrl = (to: string, subject?: string, body?: string) => {
     params.set("fs", "1");
     params.set("to", to);
 
-    if (subject) {
-        params.set("su", subject);
-    }
-    if (body) {
-        params.set("body", body);
-    }
+    if (subject) params.set("su", subject);
+    if (body) params.set("body", body);
 
     return `https://mail.google.com/mail/?${params.toString()}`;
 };
@@ -48,15 +40,13 @@ const ContactSection: React.FC = () => {
         const message = String(formData.get("message") ?? "").trim();
 
         if (!CONTACT_EMAIL) {
-            // If the env var is not wired up yet, we avoid trying to send.
             alert(
                 "The contact email is not configured yet. Please set VITE_GMAIL_ADDRESS_RECEPIENT in your .env file."
             );
             return;
         }
 
-        const subject = `Contact form: ${topic || "General inquiry"
-            } from ${name || "JRMSU student"}`;
+        const subject = `E-Guidance system inquiry: ${topic || "General inquiry"} from ${name || "JRMSU student"}`;
 
         const bodyLines = [
             `Name: ${name || "N/A"}`,
@@ -73,15 +63,12 @@ const ContactSection: React.FC = () => {
             bodyLines.join("\n")
         );
 
-        // Open Gmail compose in a new tab
         window.open(gmailUrl, "_blank", "noopener,noreferrer");
-
-        // Optionally reset the form
         form.reset();
     };
 
     return (
-        <section id="contact" className="mx-auto max-w-6xl px-4 md:px-8">
+        <section id="contact" className="mx-auto px-4 md:px-8">
             <div className="grid gap-8 rounded-3xl border border-amber-100/80 bg-white/80 p-6 shadow-sm shadow-amber-100/70 backdrop-blur md:grid-cols-[minmax(0,1.1fr)_minmax(0,1fr)] md:p-8">
                 {/* Left: contact details */}
                 <div className="space-y-4 md:space-y-6">
@@ -94,9 +81,9 @@ const ContactSection: React.FC = () => {
                     </h2>
 
                     <p className="text-sm text-muted-foreground md:text-base">
-                        For urgent concerns, in-person appointments, or questions about using
-                        the eCounseling system, you can reach the campus guidance team using
-                        the details below or by sending a quick message.
+                        For urgent concerns, in-person appointments, or questions about using the{" "}
+                        <span className="font-medium text-amber-900">E-Guidance Appointment System</span>,
+                        you can reach the campus guidance team using the details below or send a quick message.
                     </p>
 
                     <dl className="grid gap-4 text-sm text-muted-foreground sm:grid-cols-2">
@@ -159,8 +146,8 @@ const ContactSection: React.FC = () => {
                             Send a quick message
                         </CardTitle>
                         <p className="text-xs text-muted-foreground">
-                            This form is for general questions about the eCounseling system. For
-                            counseling requests, please use the{" "}
+                            This form is for general questions about the E-Guidance Appointment System.
+                            For appointment requests, please use the{" "}
                             <span className="font-medium text-amber-900">Student Portal</span>{" "}
                             after signing in.
                         </p>
@@ -238,8 +225,7 @@ const ContactSection: React.FC = () => {
                             </Button>
 
                             <p className="pt-1 text-[0.7rem] text-muted-foreground">
-                                When you submit, a new Gmail compose window will open with a message
-                                addressed to the guidance office at{" "}
+                                When you submit, a new Gmail compose window will open addressed to{" "}
                                 <span className="font-medium text-amber-900">{DISPLAY_EMAIL}</span>.
                             </p>
                         </form>

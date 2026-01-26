@@ -292,7 +292,7 @@ const AdminOverview: React.FC = () => {
             title="Overview"
             description="Admin dashboard overview for User Management."
         >
-            <div className="mx-auto w-full max-w-6xl space-y-4">
+            <div className="mx-auto w-full px-4 space-y-4">
                 <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1 text-xs text-amber-900">
                         <p className="font-semibold">Admin Overview</p>

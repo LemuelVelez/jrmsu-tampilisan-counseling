@@ -583,7 +583,7 @@ const CounselorOverview: React.FC = () => {
             title="Overview"
             description="At-a-glance summary of Intake, Appointments, Messages, and Users."
         >
-            <div className="mx-auto w-full max-w-6xl space-y-4">
+            <div className="mx-auto w-full px-4 space-y-4">
                 <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1 text-xs text-amber-900">
                         <p className="font-semibold">Guidance &amp; Counseling – Overview</p>

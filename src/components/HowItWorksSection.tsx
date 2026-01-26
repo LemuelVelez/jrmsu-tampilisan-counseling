@@ -4,39 +4,36 @@ import { Card, CardContent } from "@/components/ui/card";
 const steps = [
     {
         step: "1",
-        title: "Students submit a secure intake",
-        body: "Students log in with their account, read the consent notice, and submit a short, structured intake describing their concern and preferred schedule.",
+        title: "Students submit an appointment request",
+        body: "Students log in, read the consent notice, and submit a short request describing their concern, preferred schedule, and availability.",
     },
     {
         step: "2",
-        title: "Guidance counselors triage & schedule",
-        body: "Counselors review new requests in a unified queue, apply priority labels, and confirm appointments with email reminders.",
+        title: "Guidance counselors review & confirm",
+        body: "Counselors review requests, prioritize as needed, and confirm the appointment schedule using the dashboard queue.",
     },
     {
         step: "3",
-        title: "Sessions & case notes are documented",
-        body: "Each session is captured using standardized note templates, keeping records consistent, auditable, and easy to follow over time.",
+        title: "Secure updates & messaging",
+        body: "Students receive updates and can message the counselor/office for clarifications, follow-ups, or rescheduling—without using external chat apps.",
     },
     {
         step: "4",
-        title: "Follow-ups, referrals & reports",
-        body: "Counselors schedule follow-ups, manage referrals, and administrators view de-identified dashboards to improve staffing and services.",
+        title: "Referrals & reporting support",
+        body: "The system supports referrals from authorized staff and provides records for reports and analytics while keeping sensitive details protected.",
     },
 ];
 
 const HowItWorksSection: React.FC = () => {
     return (
-        <section
-            id="how-it-works"
-            className="mx-auto max-w-6xl space-y-6 px-4 md:px-8"
-        >
+        <section id="how-it-works" className="mx-auto px-4 space-y-6 md:px-8">
             <div className="space-y-2 text-center">
                 <h2 className="text-balance text-2xl font-semibold tracking-tight text-amber-900 md:text-3xl">
-                    How the eCounseling flow works
+                    How the E-Guidance Appointment System works
                 </h2>
                 <p className="mx-auto max-w-2xl text-sm text-muted-foreground md:text-base">
-                    From first contact to closure, each step is designed to be clear,
-                    timely, and aligned with privacy and mental health policies.
+                    The platform focuses on requesting, scheduling, messaging, referrals, and reporting —
+                    counseling sessions are conducted outside the system through official guidance processes.
                 </p>
             </div>
 

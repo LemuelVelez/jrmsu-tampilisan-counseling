@@ -1396,7 +1396,7 @@ const CounselorMessages: React.FC = () => {
 
     return (
         <DashboardLayout title="Messages" description="Manage and respond to conversations.">
-            <div className="mx-auto w-full max-w-6xl">
+            <div className="mx-auto w-full px-4">
                 <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
                     <CardHeader className="space-y-2 p-4 sm:p-6">
                         <CardTitle className="text-base">

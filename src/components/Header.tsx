@@ -38,17 +38,17 @@ const Header: React.FC = () => {
 
     return (
         <header className="sticky top-0 z-40 border-b bg-background/80 backdrop-blur">
-            <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-3 md:px-8">
+            <div className="mx-auto flex items-center justify-between px-4 py-3 md:px-8">
                 {/* Logo / brand */}
                 <Link to="/" className="flex items-center gap-2">
                     <img
                         src={ecounselingLogo}
-                        alt="eCounseling logo"
+                        alt="E-Guidance Appointment System logo"
                         className="h-9 w-9"
                     />
                     <div className="flex flex-col leading-tight">
                         <span className="text-sm font-semibold tracking-tight">
-                            eCounseling
+                            E-Guidance Appointment System
                         </span>
                         <span className="text-[0.7rem] text-muted-foreground uppercase tracking-[0.12em]">
                             JRMSU – Tampilisan Campus
@@ -61,22 +61,13 @@ const Header: React.FC = () => {
                     <a href="#hero" className="text-muted-foreground hover:text-foreground">
                         Home
                     </a>
-                    <a
-                        href="#benefits"
-                        className="text-muted-foreground hover:text-foreground"
-                    >
+                    <a href="#benefits" className="text-muted-foreground hover:text-foreground">
                         Benefits
                     </a>
-                    <a
-                        href="#how-it-works"
-                        className="text-muted-foreground hover:text-foreground"
-                    >
+                    <a href="#how-it-works" className="text-muted-foreground hover:text-foreground">
                         How it works
                     </a>
-                    <a
-                        href="#contact"
-                        className="text-muted-foreground hover:text-foreground"
-                    >
+                    <a href="#contact" className="text-muted-foreground hover:text-foreground">
                         Contact
                     </a>
                 </nav>
@@ -110,12 +101,12 @@ const Header: React.FC = () => {
                                     <div className="flex items-center gap-2">
                                         <img
                                             src={ecounselingLogo}
-                                            alt="eCounseling logo"
+                                            alt="E-Guidance Appointment System logo"
                                             className="h-9 w-9"
                                         />
                                         <div className="flex flex-col leading-tight">
                                             <span className="text-sm font-semibold tracking-tight">
-                                                eCounseling
+                                                E-Guidance Appointment System
                                             </span>
                                             <span className="text-[0.7rem] text-muted-foreground uppercase tracking-[0.12em]">
                                                 JRMSU – Tampilisan Campus
