@@ -11,7 +11,16 @@ import {
     type RegisterRequestDto,
 } from "@/api/auth/route";
 
-export type Role = "admin" | "counselor" | "student" | string;
+export type Role =
+    | "admin"
+    | "counselor"
+    | "student"
+    | "guest"
+    | "referral_user"
+    | "dean"
+    | "registrar"
+    | "program_chair"
+    | string;
 
 export interface AuthUser {
     id: number | string;
@@ -20,6 +29,9 @@ export interface AuthUser {
     role?: Role | null;
     gender?: string | null;
     avatar_url?: string | null;
+
+    account_type?: "student" | "guest" | "referral_user" | string | null;
+
     // Allow arbitrary extra properties from the API (student metadata, etc.)
     [key: string]: unknown;
 }
@@ -39,13 +51,15 @@ export interface LoginResult extends AuthSession {
 }
 
 export interface RegisterPayload {
-    // 👈 include name so signup can send it
     name: string;
     email: string;
     password: string;
     password_confirmation: string;
+
     gender?: string;
-    account_type: "student" | "guest";
+
+    account_type: "student" | "guest" | "referral_user";
+
     student_id?: string;
     year_level?: string;
     program?: string;
@@ -76,8 +90,8 @@ function looksLikeFilePath(s: string): boolean {
 }
 
 /**
- * ✅ FIX: Normalize avatar_url so UI components using <AvatarImage src="...">
- * actually load an image (and don't fall back to initials).
+ * ✅ Normalize avatar_url so UI components using <AvatarImage src="...">
+ * load an image properly.
  */
 function resolveAbsoluteAvatarUrl(raw: unknown): string | null {
     if (raw == null) return null;
@@ -95,7 +109,6 @@ function resolveAbsoluteAvatarUrl(raw: unknown): string | null {
         return `${protocol}${s}`;
     }
 
-    // If we don't have a configured API base, return a root-relative path.
     if (!AUTH_API_BASE_URL) {
         if (!s.startsWith("/")) s = `/${s}`;
         return s;
@@ -191,18 +204,16 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
     const name =
         dto.name ??
         anyDto.full_name ??
-        (anyDto.first_name && anyDto.last_name
-            ? `${anyDto.first_name} ${anyDto.last_name}`
-            : null);
+        (anyDto.first_name && anyDto.last_name ? `${anyDto.first_name} ${anyDto.last_name}` : null);
 
-    const gender =
-        typeof anyDto.gender === "string" && anyDto.gender.length > 0
-            ? String(anyDto.gender)
-            : null;
+    const gender = typeof anyDto.gender === "string" && anyDto.gender.length > 0 ? String(anyDto.gender) : null;
 
-    const avatar_url = resolveAbsoluteAvatarUrl(
-        anyDto.avatar_url ?? (dto as any).avatar_url ?? anyDto.avatarUrl ?? null,
-    );
+    const avatar_url = resolveAbsoluteAvatarUrl(anyDto.avatar_url ?? dto.avatar_url ?? anyDto.avatarUrl ?? null);
+
+    const account_type =
+        (anyDto.account_type as string | null | undefined) ??
+        (anyDto.accountType as string | null | undefined) ??
+        null;
 
     return {
         ...dto,
@@ -212,37 +223,25 @@ function normaliseUser(dto: AuthenticatedUserDto): AuthUser {
         role: (role as Role | null) ?? null,
         gender,
         avatar_url,
+        account_type,
     };
 }
 
 function resolveStudentApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error(
-            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
-        );
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
 
     const trimmedPath = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
-/**
- * Returns the last known session (from memory / localStorage).
- * This does NOT validate that the session is still valid on the server.
- */
 export function getCurrentSession(): AuthSession {
     return { ...currentSession };
 }
 
-/**
- * Subscribe to in-memory session updates.
- * Returns an unsubscribe function.
- */
-export function subscribeToSession(
-    subscriber: SessionSubscriber,
-): () => void {
+export function subscribeToSession(subscriber: SessionSubscriber): () => void {
     subscribers.add(subscriber);
-    // Immediately call with the current value so subscribers don't need a separate get.
     subscriber({ ...currentSession });
 
     return () => {
@@ -250,9 +249,6 @@ export function subscribeToSession(
     };
 }
 
-/**
- * Replace the current session and persist it to localStorage.
- */
 export function setSession(session: AuthSession): void {
     currentSession = {
         user: session.user ?? null,
@@ -263,22 +259,13 @@ export function setSession(session: AuthSession): void {
     notifySubscribers(currentSession);
 }
 
-/**
- * Clears the current session and removes it from localStorage.
- */
 export function clearSession(): void {
     currentSession = { ...EMPTY_SESSION };
     writeSessionToStorage(null);
     notifySubscribers(currentSession);
 }
 
-/**
- * Sign in with email + password against the Laravel API.
- * On success, updates the global session store and returns the new session.
- */
-export async function loginWithEmailPassword(
-    credentials: LoginCredentials,
-): Promise<LoginResult> {
+export async function loginWithEmailPassword(credentials: LoginCredentials): Promise<LoginResult> {
     const response = await loginApi({
         email: credentials.email,
         password: credentials.password,
@@ -288,29 +275,14 @@ export async function loginWithEmailPassword(
     const tokenSource = response.token ?? response.access_token ?? null;
     const token = tokenSource != null ? String(tokenSource) : null;
 
-    const nextSession: AuthSession = {
-        user,
-        token,
-    };
-
+    const nextSession: AuthSession = { user, token };
     setSession(nextSession);
 
-    return {
-        ...nextSession,
-        raw: response,
-    };
+    return { ...nextSession, raw: response };
 }
 
-/**
- * Register a new account via the Laravel API.
- * Many backends also log the user in immediately and return a token/user,
- * so we mirror the login behaviour here.
- */
-export async function registerAccount(
-    payload: RegisterPayload,
-): Promise<RegisterResult> {
+export async function registerAccount(payload: RegisterPayload): Promise<RegisterResult> {
     const apiPayload: RegisterRequestDto = {
-        // 👈 send name to backend
         name: payload.name,
         email: payload.email,
         password: payload.password,
@@ -329,54 +301,31 @@ export async function registerAccount(
     const tokenSource = response.token ?? response.access_token ?? null;
     const token = tokenSource != null ? String(tokenSource) : null;
 
-    const nextSession: AuthSession = {
-        user,
-        token,
-    };
-
+    const nextSession: AuthSession = { user, token };
     setSession(nextSession);
 
-    return {
-        ...nextSession,
-        raw: response,
-    };
+    return { ...nextSession, raw: response };
 }
 
-/**
- * Log out both locally and on the server.
- */
 export async function logoutFromServer(): Promise<void> {
     try {
         await logoutApi();
     } catch (error) {
-        // Even if the server call fails (e.g. network is offline), we still
-        // clear the local session so the user is effectively logged out.
         console.warn("[auth] Failed to log out from server", error);
     } finally {
         clearSession();
     }
 }
 
-/**
- * Optional helper to re-fetch the authenticated user from the backend and
- * update the in-memory session. Useful when loading the app for the first time.
- *
- * NOTE: This assumes that your Laravel backend exposes an /auth/me (or similar)
- * route, which is where meApi points to. Adjust that route in src/api/auth/route.ts
- * if needed.
- */
 export async function fetchCurrentUserFromServer(): Promise<AuthSession | null> {
     try {
         const dto = await meApi();
         const user = normaliseUser(dto);
         const token = currentSession.token ?? null;
 
-        const nextSession: AuthSession = {
-            user,
-            token,
-        };
-
+        const nextSession: AuthSession = { user, token };
         setSession(nextSession);
+
         return { ...nextSession };
     } catch (error) {
         console.warn("[auth] Failed to refresh session from server", error);
@@ -389,14 +338,6 @@ export async function fetchCurrentUserFromServer(): Promise<AuthSession | null> 
  * Upload the current user's avatar to the Laravel backend.
  *
  * Endpoint: POST /student/profile/avatar (multipart/form-data)
- * Backend uses:
- *   - AWS_REGION
- *   - S3_BUCKET_NAME
- *   - AWS_ACCESS_KEY_ID
- *   - AWS_SECRET_ACCESS_KEY
- * to store the image in S3.
- *
- * On success, this also updates the in-memory session with the new user data.
  */
 export interface UploadAvatarResponseDto {
     message?: string;
@@ -418,8 +359,6 @@ export async function uploadCurrentUserAvatar(
         body: formData,
         credentials: "include",
         headers: {
-            // Let the browser set the multipart boundary;
-            // we only declare that we expect JSON back.
             Accept: "application/json",
         },
     });
@@ -465,12 +404,7 @@ export async function uploadCurrentUserAvatar(
     const user = normaliseUser(body.user);
     const token = currentSession.token ?? null;
 
-    const nextSession: AuthSession = {
-        user,
-        token,
-    };
-
-    // Persist and notify listeners (e.g. Settings page, nav avatar)
+    const nextSession: AuthSession = { user, token };
     setSession(nextSession);
 
     const resolved = resolveAbsoluteAvatarUrl(body.avatar_url ?? user.avatar_url ?? "") ?? "";

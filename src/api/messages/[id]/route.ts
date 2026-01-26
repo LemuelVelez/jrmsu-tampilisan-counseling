@@ -1,6 +1,7 @@
 import {
     markStudentMessagesReadApi,
     markCounselorMessagesReadApi,
+    markReferralUserMessagesReadApi,
     type MarkMessagesReadResponseDto,
 } from "../route";
 
@@ -26,11 +27,6 @@ function normalizeMessageId(id: number | string): number {
 
 /**
  * Mark a single message as read for the current student/guest.
- *
- * Internally calls:
- *   POST /student/messages/mark-as-read
- * with:
- *   { "message_ids": [id] }
  */
 export async function markStudentMessageReadByIdApi(
     id: number | string,
@@ -44,11 +40,6 @@ export async function markStudentMessageReadByIdApi(
 
 /**
  * Mark a single message as read for the current counselor.
- *
- * Internally calls:
- *   POST /counselor/messages/mark-as-read
- * with:
- *   { "message_ids": [id] }
  */
 export async function markCounselorMessageReadByIdApi(
     id: number | string,
@@ -56,6 +47,19 @@ export async function markCounselorMessageReadByIdApi(
     const normalizedId = normalizeMessageId(id);
 
     return markCounselorMessagesReadApi({
+        message_ids: [normalizedId],
+    });
+}
+
+/**
+ * ✅ NEW: Mark a single message as read for the current referral user.
+ */
+export async function markReferralUserMessageReadByIdApi(
+    id: number | string,
+): Promise<MarkMessagesReadResponseDto> {
+    const normalizedId = normalizeMessageId(id);
+
+    return markReferralUserMessagesReadApi({
         message_ids: [normalizedId],
     });
 }

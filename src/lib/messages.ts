@@ -9,6 +9,11 @@ import {
     createCounselorMessageApi,
     markCounselorMessagesReadApi,
 
+    // Referral User APIs
+    getReferralUserMessagesApi,
+    createReferralUserMessageApi,
+    markReferralUserMessagesReadApi,
+
     // Types
     type MessageDto,
     type GetStudentMessagesResponseDto,
@@ -19,6 +24,9 @@ import {
     type GetCounselorMessagesResponseDto,
     type CreateCounselorMessagePayload,
     type CreateCounselorMessageResponseDto,
+    type GetReferralUserMessagesResponseDto,
+    type CreateReferralUserMessagePayload,
+    type CreateReferralUserMessageResponseDto,
 } from "@/api/messages/route";
 
 /**
@@ -26,25 +34,25 @@ import {
  */
 export type StudentMessage = MessageDto;
 export type CounselorMessage = MessageDto;
+export type ReferralUserMessage = MessageDto;
 
 export type GetStudentMessagesResult = GetStudentMessagesResponseDto;
 export type GetCounselorMessagesResult = GetCounselorMessagesResponseDto;
+export type GetReferralUserMessagesResult = GetReferralUserMessagesResponseDto;
 
 export type SendStudentMessagePayload = CreateStudentMessagePayload;
 export type SendCounselorMessagePayload = CreateCounselorMessagePayload;
+export type SendReferralUserMessagePayload = CreateReferralUserMessagePayload;
 
 /**
- * High-level helper to fetch all messages for the current student/guest.
+ * Fetch all messages for the current student/guest.
  */
 export async function fetchStudentMessages(): Promise<GetStudentMessagesResponseDto> {
     return getStudentMessagesApi();
 }
 
 /**
- * High-level helper for sending a new message from the student/guest.
- *
- * Accepts either a full payload object or a simple string `content`.
- * (Payload now supports recipient_role/recipient_id/conversation_id to match Student UI.)
+ * Send a message from student/guest.
  */
 export async function sendStudentMessage(
     input: string | SendStudentMessagePayload,
@@ -54,9 +62,7 @@ export async function sendStudentMessage(
 }
 
 /**
- * High-level helper to mark one or more messages as read (student/guest).
- *
- * If `messageIds` is omitted or empty, backend should mark all messages as read.
+ * Mark messages as read (student/guest).
  */
 export async function markStudentMessagesAsRead(
     messageIds?: Array<number | string>,
@@ -68,18 +74,14 @@ export async function markStudentMessagesAsRead(
 }
 
 /**
- * High-level helper to fetch counselor inbox messages.
+ * Fetch counselor inbox messages.
  */
 export async function fetchCounselorMessages(): Promise<GetCounselorMessagesResponseDto> {
     return getCounselorMessagesApi();
 }
 
 /**
- * High-level helper for sending a new message as counselor.
- *
- * Accepts either:
- * - string content
- * - or a payload with optional recipient/conversation fields
+ * Send counselor message.
  */
 export async function sendCounselorMessage(
     input: string | SendCounselorMessagePayload,
@@ -89,9 +91,7 @@ export async function sendCounselorMessage(
 }
 
 /**
- * High-level helper to mark counselor messages as read.
- *
- * If `messageIds` is omitted or empty, backend should mark all counselor messages as read.
+ * Mark counselor messages as read.
  */
 export async function markCounselorMessagesAsRead(
     messageIds?: Array<number | string>,
@@ -100,4 +100,33 @@ export async function markCounselorMessagesAsRead(
         messageIds && messageIds.length > 0 ? { message_ids: messageIds } : undefined;
 
     return markCounselorMessagesReadApi(payload);
+}
+
+/**
+ * ✅ NEW: Fetch referral user inbox messages.
+ */
+export async function fetchReferralUserMessages(): Promise<GetReferralUserMessagesResponseDto> {
+    return getReferralUserMessagesApi();
+}
+
+/**
+ * ✅ NEW: Send message as referral user (Dean/Registrar/Program Chair).
+ */
+export async function sendReferralUserMessage(
+    input: string | SendReferralUserMessagePayload,
+): Promise<CreateReferralUserMessageResponseDto> {
+    const payload: CreateReferralUserMessagePayload = typeof input === "string" ? { content: input } : input;
+    return createReferralUserMessageApi(payload);
+}
+
+/**
+ * ✅ NEW: Mark referral user messages as read.
+ */
+export async function markReferralUserMessagesAsRead(
+    messageIds?: Array<number | string>,
+): Promise<MarkMessagesReadResponseDto> {
+    const payload: MarkMessagesReadPayload | undefined =
+        messageIds && messageIds.length > 0 ? { message_ids: messageIds } : undefined;
+
+    return markReferralUserMessagesReadApi(payload);
 }

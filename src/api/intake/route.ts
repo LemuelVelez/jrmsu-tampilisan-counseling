@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { AUTH_API_BASE_URL } from "@/api/auth/route";
+import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
 
 export type MentalFrequencyApi =
     | "not_at_all"
@@ -29,6 +29,14 @@ export interface IntakeRequestDto {
 
     details: string;
     status: string;
+
+    /**
+     * ✅ Optional convenience fields for counselor table view
+     * (backend may include these)
+     */
+    student_name?: string | null;
+    student_email?: string | null;
+    student_id?: string | null;
 
     created_at?: string;
     updated_at?: string;
@@ -121,6 +129,85 @@ export interface GetStudentAssessmentsResponseDto {
     assessments: IntakeAssessmentDto[];
 }
 
+/** -----------------------------
+ * Counselor: Pagination + Student Profile + History
+ * ------------------------------*/
+
+export interface PaginationMetaDto {
+    current_page?: number;
+    per_page?: number;
+    total?: number;
+    last_page?: number;
+}
+
+export interface PaginatedResponseDto<T> {
+    message?: string;
+    data: T[];
+    meta?: PaginationMetaDto;
+
+    // Backend may return these names (Laravel pagination)
+    current_page?: number;
+    per_page?: number;
+    total?: number;
+    last_page?: number;
+}
+
+export interface GetCounselorAppointmentsQuery {
+    page?: number;
+    per_page?: number;
+    status?: string;
+    search?: string;
+}
+
+export type GetCounselorAppointmentsResponseDto = PaginatedResponseDto<IntakeRequestDto>;
+
+export interface CounselorUpdateAppointmentPayload {
+    scheduled_date?: string | null;
+    scheduled_time?: string | null;
+    status?: string | null;
+    details?: string;
+}
+
+export interface CounselorUpdateAppointmentResponseDto {
+    message?: string;
+    appointment: IntakeRequestDto;
+}
+
+/**
+ * Counselor-only student profile DTO (minimal safe data).
+ */
+export interface CounselorStudentProfileDto {
+    id: number | string;
+    name?: string | null;
+    email?: string | null;
+    gender?: string | null;
+
+    student_id?: string | null;
+    year_level?: string | null;
+    program?: string | null;
+    course?: string | null;
+
+    [key: string]: unknown;
+}
+
+export interface GetCounselorStudentProfileResponseDto {
+    message?: string;
+    student: CounselorStudentProfileDto;
+}
+
+/**
+ * Student counseling history for counselor view.
+ */
+export interface StudentCounselingHistoryDto {
+    total_appointments: number;
+    appointments: IntakeRequestDto[];
+}
+
+export interface GetCounselorStudentHistoryResponseDto {
+    message?: string;
+    history: StudentCounselingHistoryDto;
+}
+
 export interface IntakeApiError extends Error {
     status?: number;
     data?: unknown;
@@ -135,16 +222,25 @@ function resolveIntakeApiUrl(path: string): string {
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
+function buildQueryString(params?: Record<string, any>): string {
+    if (!params) return "";
+    const sp = new URLSearchParams();
+
+    Object.entries(params).forEach(([k, v]) => {
+        if (v === undefined || v === null || v === "") return;
+        sp.set(k, String(v));
+    });
+
+    const qs = sp.toString();
+    return qs ? `?${qs}` : "";
+}
+
 async function intakeApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveIntakeApiUrl(path);
 
     const response = await fetch(url, {
         ...init,
-        headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            ...(init.headers ?? {}),
-        },
+        headers: buildJsonHeaders(init.headers),
         credentials: "include",
     });
 
@@ -183,6 +279,10 @@ async function intakeApiFetch<T>(path: string, init: RequestInit = {}): Promise<
     return data as T;
 }
 
+/** -----------------------------
+ * Student Endpoints
+ * ------------------------------*/
+
 export async function createIntakeRequestApi(
     payload: CreateIntakeRequestPayload,
 ): Promise<CreateIntakeRequestResponseDto> {
@@ -205,4 +305,67 @@ export async function getStudentAssessmentsApi(): Promise<GetStudentAssessmentsR
     return intakeApiFetch<GetStudentAssessmentsResponseDto>("/student/intake/assessments", {
         method: "GET",
     });
+}
+
+/** -----------------------------
+ * Counselor Endpoints (NEW)
+ * ------------------------------*/
+
+/**
+ * ✅ Counselor Appointments List with pagination support
+ * Backend example:
+ * GET /counselor/appointments?page=1&per_page=10
+ */
+export async function getCounselorAppointmentsApi(
+    query?: GetCounselorAppointmentsQuery,
+): Promise<GetCounselorAppointmentsResponseDto> {
+    const qs = buildQueryString({
+        page: query?.page,
+        per_page: query?.per_page ?? 10,
+        status: query?.status,
+        search: query?.search,
+    });
+
+    return intakeApiFetch<GetCounselorAppointmentsResponseDto>(`/counselor/appointments${qs}`, {
+        method: "GET",
+    });
+}
+
+/**
+ * ✅ Counselor updates appointment schedule/status/details
+ * PUT /counselor/appointments/{id}
+ */
+export async function updateCounselorAppointmentApi(
+    id: number | string,
+    payload: CounselorUpdateAppointmentPayload,
+): Promise<CounselorUpdateAppointmentResponseDto> {
+    return intakeApiFetch<CounselorUpdateAppointmentResponseDto>(`/counselor/appointments/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+    });
+}
+
+/**
+ * ✅ Counselor student profile
+ * GET /counselor/students/{studentId}
+ */
+export async function getCounselorStudentProfileApi(
+    studentId: number | string,
+): Promise<GetCounselorStudentProfileResponseDto> {
+    return intakeApiFetch<GetCounselorStudentProfileResponseDto>(`/counselor/students/${studentId}`, {
+        method: "GET",
+    });
+}
+
+/**
+ * ✅ Counselor student history
+ * GET /counselor/students/{studentId}/history
+ */
+export async function getCounselorStudentHistoryApi(
+    studentId: number | string,
+): Promise<GetCounselorStudentHistoryResponseDto> {
+    return intakeApiFetch<GetCounselorStudentHistoryResponseDto>(
+        `/counselor/students/${studentId}/history`,
+        { method: "GET" },
+    );
 }

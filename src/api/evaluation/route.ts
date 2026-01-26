@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { AUTH_API_BASE_URL } from "@/api/auth/route";
+import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
 import type { IntakeRequestDto } from "@/api/intake/route";
 
 /**
@@ -37,28 +37,19 @@ export interface EvaluationApiError extends Error {
 
 function resolveEvaluationApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
-        throw new Error(
-            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.",
-        );
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
 
     const trimmedPath = path.replace(/^\/+/, "");
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
-async function evaluationApiFetch<T>(
-    path: string,
-    init: RequestInit = {},
-): Promise<T> {
+async function evaluationApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveEvaluationApiUrl(path);
 
     const response = await fetch(url, {
         ...init,
-        headers: {
-            Accept: "application/json",
-            "Content-Type": "application/json",
-            ...(init.headers ?? {}),
-        },
+        headers: buildJsonHeaders(init.headers),
         credentials: "include",
     });
 
@@ -105,12 +96,9 @@ async function evaluationApiFetch<T>(
  *   GET /student/appointments
  */
 export async function getStudentEvaluationsApi(): Promise<GetStudentEvaluationsResponseDto> {
-    return evaluationApiFetch<GetStudentEvaluationsResponseDto>(
-        "/student/appointments",
-        {
-            method: "GET",
-        },
-    );
+    return evaluationApiFetch<GetStudentEvaluationsResponseDto>("/student/appointments", {
+        method: "GET",
+    });
 }
 
 /**
@@ -123,11 +111,8 @@ export async function updateStudentEvaluationDetailsApi(
     id: number | string,
     payload: UpdateStudentEvaluationDetailsPayload,
 ): Promise<UpdateStudentEvaluationDetailsResponseDto> {
-    return evaluationApiFetch<UpdateStudentEvaluationDetailsResponseDto>(
-        `/student/appointments/${id}`,
-        {
-            method: "PUT",
-            body: JSON.stringify(payload),
-        },
-    );
+    return evaluationApiFetch<UpdateStudentEvaluationDetailsResponseDto>(`/student/appointments/${id}`, {
+        method: "PUT",
+        body: JSON.stringify(payload),
+    });
 }

@@ -1,28 +1,30 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { AUTH_API_BASE_URL } from "@/api/auth/route";
+import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
 
 /**
  * Sender role as stored in the database.
  * Includes guest so counselor inbox can display guest-authored messages.
+ * Includes referral_user roles too (Dean/Registrar/Program Chair).
  */
-export type MessageSenderApi = "student" | "guest" | "counselor" | "system" | string;
+export type MessageSenderApi =
+    | "student"
+    | "guest"
+    | "counselor"
+    | "system"
+    | "referral_user"
+    | "dean"
+    | "registrar"
+    | "program_chair"
+    | string;
 
 /**
- * A generic message DTO used by both student and counselor message endpoints.
+ * A generic message DTO used by multiple message endpoints.
  * The backend may include more fields; we keep this flexible.
  */
 export interface MessageDto {
     id: number | string;
 
-    /**
-     * Depending on backend implementation, this may represent the student/guest user
-     * or the message owner/peer.
-     */
     user_id?: number | string;
-
-    /**
-     * Helpful for threading / ownership checks in UI.
-     */
     sender_id?: number | string | null;
 
     sender: MessageSenderApi;
@@ -38,12 +40,9 @@ export interface MessageDto {
     created_at: string;
     updated_at?: string;
 
-    /**
-     * Optional fields for threading/conversations (backend-dependent)
-     */
     conversation_id?: number | string;
     recipient_id?: number | string | null;
-    recipient_role?: "student" | "guest" | "counselor" | string | null;
+    recipient_role?: "student" | "guest" | "counselor" | "referral_user" | string | null;
 
     message_type?: string;
 
@@ -51,86 +50,16 @@ export interface MessageDto {
 }
 
 /** -----------------------------
- * Student (and Guest) Endpoints
+ * Shared DTOs
  * ------------------------------*/
 
-/**
- * Response DTO for fetching all messages for the current student/guest.
- */
-export interface GetStudentMessagesResponseDto {
-    message?: string;
-    messages: MessageDto[];
-}
-
-/**
- * Payload for creating a new student-authored message.
- *
- * Updated to match the dashboard student UI:
- * - can include recipient_role/recipient_id (student -> counselor)
- * - can include conversation_id (thread hint; backend may ignore/replace)
- */
-export interface CreateStudentMessagePayload {
-    content: string;
-    recipient_role?: "counselor" | "student" | "guest";
-    recipient_id?: number | string;
-    conversation_id?: number | string;
-}
-
-/**
- * Response DTO after creating a new message (student/guest).
- */
-export interface CreateStudentMessageResponseDto {
-    message?: string;
-    messageRecord: MessageDto;
-}
-
-/**
- * Payload for marking one or more messages as read.
- * If `message_ids` is omitted or an empty array, backend is expected to mark all.
- */
 export interface MarkMessagesReadPayload {
     message_ids?: Array<number | string>;
 }
 
-/**
- * Response DTO after marking messages as read.
- */
 export interface MarkMessagesReadResponseDto {
     message?: string;
     updated_count?: number;
-}
-
-/** -----------------------------
- * Counselor Endpoints
- * ------------------------------*/
-
-/**
- * Counselor inbox response.
- */
-export interface GetCounselorMessagesResponseDto {
-    message?: string;
-    messages: MessageDto[];
-}
-
-/**
- * Counselor message payload.
- * Matches counselor UI:
- * - recipient_role + recipient_id required by UI flow
- * - conversation_id included as a hint; backend may ignore/replace
- */
-export interface CreateCounselorMessagePayload {
-    content: string;
-    recipient_role?: "student" | "guest" | "counselor";
-    recipient_id?: number | string;
-    conversation_id?: number | string;
-}
-
-/**
- * Counselor create message response.
- */
-export interface CreateCounselorMessageResponseDto {
-    message?: string;
-    messageRecord: MessageDto;
 }
 
 export interface MessagesApiError extends Error {
@@ -149,19 +78,9 @@ function resolveMessagesApiUrl(path: string): string {
 async function messagesApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveMessagesApiUrl(path);
 
-    const headers: Record<string, string> = {
-        Accept: "application/json",
-        ...(init.headers as Record<string, string> | undefined),
-    };
-
-    // Only set JSON content-type if we actually have a body
-    if (init.body != null && !headers["Content-Type"]) {
-        headers["Content-Type"] = "application/json";
-    }
-
     const response = await fetch(url, {
         ...init,
-        headers,
+        headers: buildJsonHeaders(init.headers),
         credentials: "include",
     });
 
@@ -200,9 +119,28 @@ async function messagesApiFetch<T>(path: string, init: RequestInit = {}): Promis
     return data as T;
 }
 
+/** -----------------------------
+ * Student (and Guest) Endpoints
+ * ------------------------------*/
+
+export interface GetStudentMessagesResponseDto {
+    message?: string;
+    messages: MessageDto[];
+}
+
+export interface CreateStudentMessagePayload {
+    content: string;
+    recipient_role?: "counselor" | "student" | "guest" | "referral_user";
+    recipient_id?: number | string;
+    conversation_id?: number | string;
+}
+
+export interface CreateStudentMessageResponseDto {
+    message?: string;
+    messageRecord: MessageDto;
+}
+
 /**
- * Fetch all messages for the currently authenticated student/guest.
- *
  * GET /student/messages
  */
 export async function getStudentMessagesApi(): Promise<GetStudentMessagesResponseDto> {
@@ -212,8 +150,6 @@ export async function getStudentMessagesApi(): Promise<GetStudentMessagesRespons
 }
 
 /**
- * Create a new message authored by the current student/guest.
- *
  * POST /student/messages
  */
 export async function createStudentMessageApi(
@@ -226,8 +162,6 @@ export async function createStudentMessageApi(
 }
 
 /**
- * Mark one or more messages as read for the current student/guest.
- *
  * POST /student/messages/mark-as-read
  */
 export async function markStudentMessagesReadApi(
@@ -240,9 +174,28 @@ export async function markStudentMessagesReadApi(
     });
 }
 
+/** -----------------------------
+ * Counselor Endpoints
+ * ------------------------------*/
+
+export interface GetCounselorMessagesResponseDto {
+    message?: string;
+    messages: MessageDto[];
+}
+
+export interface CreateCounselorMessagePayload {
+    content: string;
+    recipient_role?: "student" | "guest" | "counselor" | "referral_user";
+    recipient_id?: number | string;
+    conversation_id?: number | string;
+}
+
+export interface CreateCounselorMessageResponseDto {
+    message?: string;
+    messageRecord: MessageDto;
+}
+
 /**
- * Fetch counselor inbox messages.
- *
  * GET /counselor/messages
  */
 export async function getCounselorMessagesApi(): Promise<GetCounselorMessagesResponseDto> {
@@ -252,8 +205,6 @@ export async function getCounselorMessagesApi(): Promise<GetCounselorMessagesRes
 }
 
 /**
- * Counselor sends a message to a student/guest/counselor.
- *
  * POST /counselor/messages
  */
 export async function createCounselorMessageApi(
@@ -266,8 +217,6 @@ export async function createCounselorMessageApi(
 }
 
 /**
- * Counselor marks messages as read (bulk).
- *
  * POST /counselor/messages/mark-as-read
  */
 export async function markCounselorMessagesReadApi(
@@ -275,6 +224,62 @@ export async function markCounselorMessagesReadApi(
 ): Promise<MarkMessagesReadResponseDto> {
     const safePayload = payload ?? {};
     return messagesApiFetch<MarkMessagesReadResponseDto>("/counselor/messages/mark-as-read", {
+        method: "POST",
+        body: JSON.stringify(safePayload),
+    });
+}
+
+/** -----------------------------
+ * Referral User Endpoints (NEW)
+ * Dean / Registrar / Program Chair
+ * ------------------------------*/
+
+export interface GetReferralUserMessagesResponseDto {
+    message?: string;
+    messages: MessageDto[];
+}
+
+export interface CreateReferralUserMessagePayload {
+    content: string;
+    recipient_role?: "student" | "counselor";
+    recipient_id?: number | string;
+    conversation_id?: number | string;
+}
+
+export interface CreateReferralUserMessageResponseDto {
+    message?: string;
+    messageRecord: MessageDto;
+}
+
+/**
+ * GET /referral-user/messages
+ */
+export async function getReferralUserMessagesApi(): Promise<GetReferralUserMessagesResponseDto> {
+    return messagesApiFetch<GetReferralUserMessagesResponseDto>("/referral-user/messages", {
+        method: "GET",
+    });
+}
+
+/**
+ * POST /referral-user/messages
+ */
+export async function createReferralUserMessageApi(
+    payload: CreateReferralUserMessagePayload,
+): Promise<CreateReferralUserMessageResponseDto> {
+    return messagesApiFetch<CreateReferralUserMessageResponseDto>("/referral-user/messages", {
+        method: "POST",
+        body: JSON.stringify(payload),
+    });
+}
+
+/**
+ * POST /referral-user/messages/mark-as-read
+ */
+export async function markReferralUserMessagesReadApi(
+    payload?: MarkMessagesReadPayload,
+): Promise<MarkMessagesReadResponseDto> {
+    const safePayload = payload ?? {};
+    return messagesApiFetch<MarkMessagesReadResponseDto>("/referral-user/messages/mark-as-read", {
         method: "POST",
         body: JSON.stringify(safePayload),
     });
