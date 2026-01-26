@@ -18,6 +18,7 @@ import CounselorAppointments from "./pages/dashboard/counselor/appointments";
 import CounselorMessages from "./pages/dashboard/counselor/messages";
 import CounselorSettings from "./pages/dashboard/counselor/settings";
 import CounselorUsers from "./pages/dashboard/counselor/users";
+import CounselorAnalytics from "./pages/dashboard/counselor/analytics";
 
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
@@ -66,9 +67,7 @@ function RequireRole({
   // Email not verified
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return (
-      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
-    );
+    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
   }
 
   const role = normalizeRole(user.role ?? "");
@@ -92,9 +91,7 @@ function DashboardIndexRoute() {
   // If somehow they have a session but not verified, always push to verify
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return (
-      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
-    );
+    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
   }
 
   const dashboardPath = resolveDashboardPathForRole(user.role ?? null);
@@ -109,9 +106,7 @@ function SettingsIndexRoute() {
 
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return (
-      <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />
-    );
+    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
   }
 
   const role = normalizeRole(user.role ?? "");
@@ -208,6 +203,14 @@ function App() {
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorUsers />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/counselor/analytics"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorAnalytics />
               </RequireRole>
             }
           />

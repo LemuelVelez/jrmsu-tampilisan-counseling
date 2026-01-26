@@ -22,6 +22,8 @@ import {
     SidebarMenuButton,
     SidebarMenuItem,
 } from "@/components/ui/sidebar";
+import { Badge } from "@/components/ui/badge";
+
 import { cn } from "@/lib/utils";
 import { normalizeRole } from "@/lib/role";
 import {
@@ -29,6 +31,7 @@ import {
     subscribeToSession,
     type AuthSession,
 } from "@/lib/authentication";
+import { AUTH_API_BASE_URL } from "@/api/auth/route";
 
 type BadgeKey = "messages" | "appointments" | "referrals";
 
@@ -236,9 +239,7 @@ const navConfig: Record<RoleKey, { label: string; items: NavItem[] }> = {
 };
 
 function useAuthSession(): AuthSession {
-    const [session, setSession] = React.useState<AuthSession>(() =>
-        getCurrentSession()
-    );
+    const [session, setSession] = React.useState<AuthSession>(() => getCurrentSession());
 
     React.useEffect(() => {
         const unsubscribe = subscribeToSession((nextSession) => {
@@ -251,9 +252,17 @@ function useAuthSession(): AuthSession {
     return session;
 }
 
+function trimSlash(s: string) {
+    return s.replace(/\/+$/, "");
+}
+
 async function fetchNotificationCounts(authToken?: string | null): Promise<NotificationCounts> {
-    const apiBase = (import.meta as any).env?.VITE_API_BASE_URL ?? "";
-    const url = `${apiBase}/api/notification-counts`;
+    if (!AUTH_API_BASE_URL) {
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
+    }
+
+    // ✅ matches backend: GET /notifications/counts
+    const url = `${trimSlash(AUTH_API_BASE_URL)}/notifications/counts`;
 
     const headers: Record<string, string> = {
         Accept: "application/json",
@@ -388,9 +397,12 @@ export const NavMain: React.FC = () => {
                                         <span className="flex-1">{item.title}</span>
 
                                         {badgeText ? (
-                                            <span className="ml-auto inline-flex min-w-5 items-center justify-center rounded-full bg-sidebar-primary/15 px-2 py-0.5 text-[0.7rem] font-semibold text-sidebar-primary">
+                                            <Badge
+                                                variant="secondary"
+                                                className="ml-auto min-w-5 justify-center rounded-full px-2 py-0.5 text-[0.7rem] font-semibold"
+                                            >
                                                 {badgeText}
-                                            </span>
+                                            </Badge>
                                         ) : null}
                                     </Link>
                                 </SidebarMenuButton>
