@@ -158,8 +158,8 @@ const LoginForm: React.FC<AuthFormProps> = ({
                                     Sign in to eCounseling
                                 </h1>
                                 <p className="text-sm text-muted-foreground text-balance">
-                                    Use your email to access the student, counselor, or admin
-                                    portal.
+                                    Use your email to access the student, counselor, admin, or
+                                    referral portal.
                                 </p>
                             </div>
 
@@ -264,6 +264,8 @@ const LoginForm: React.FC<AuthFormProps> = ({
     );
 };
 
+type SignupAccountType = "student" | "guest" | "referral_user";
+
 const SignupForm: React.FC<AuthFormProps> = ({
     className,
     onSwitchMode,
@@ -271,9 +273,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
 }) => {
     const navigate = useNavigate();
 
-    const [accountType, setAccountType] = React.useState<"student" | "guest">(
-        "student",
-    );
+    const [accountType, setAccountType] = React.useState<SignupAccountType>("student");
     const [gender, setGender] = React.useState<string>("");
     const [yearLevel, setYearLevel] = React.useState<YearLevelOption | "">("");
     const [yearLevelOther, setYearLevelOther] = React.useState<string>("");
@@ -365,6 +365,8 @@ const SignupForm: React.FC<AuthFormProps> = ({
                 password_confirmation: passwordConfirmation,
                 gender: gender || undefined,
                 account_type: accountType,
+
+                // Student-only metadata
                 student_id:
                     accountType === "student" && studentId ? studentId : undefined,
                 year_level:
@@ -450,9 +452,8 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                     required
                                 />
                                 <FieldDescription>
-                                    We&apos;ll use this personal email to contact you about
-                                    counseling updates and appointments. Your email will not be
-                                    shared.
+                                    We&apos;ll use this email to contact you about guidance
+                                    updates and appointments. Your email will not be shared.
                                 </FieldDescription>
                             </Field>
 
@@ -486,7 +487,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                         <Select
                                             value={accountType}
                                             onValueChange={(value) =>
-                                                setAccountType(value as "student" | "guest")
+                                                setAccountType(value as SignupAccountType)
                                             }
                                         >
                                             <SelectTrigger id="signup-account-type">
@@ -495,8 +496,19 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                             <SelectContent>
                                                 <SelectItem value="student">Student</SelectItem>
                                                 <SelectItem value="guest">Guest</SelectItem>
+                                                <SelectItem value="referral_user">
+                                                    Referral user
+                                                </SelectItem>
                                             </SelectContent>
                                         </Select>
+
+                                        {accountType === "referral_user" && (
+                                            <FieldDescription>
+                                                Referral users are campus offices (e.g., Dean,
+                                                Registrar, Program Chair) who receive and manage
+                                                referrals.
+                                            </FieldDescription>
+                                        )}
                                     </Field>
                                 </div>
                             </Field>
@@ -686,7 +698,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                     setShowSignupPassword((prev) => !prev)
                                                 }
                                                 aria-label={
-                                                    showSignupPassword ? "Hide password" : "Show password"
+                                                    showSignupPassword
+                                                        ? "Hide password"
+                                                        : "Show password"
                                                 }
                                             >
                                                 {showSignupPassword ? (
@@ -720,7 +734,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                                     setShowSignupConfirmPassword((prev) => !prev)
                                                 }
                                                 aria-label={
-                                                    showSignupConfirmPassword ? "Hide password" : "Show password"
+                                                    showSignupConfirmPassword
+                                                        ? "Hide password"
+                                                        : "Show password"
                                                 }
                                             >
                                                 {showSignupConfirmPassword ? (
