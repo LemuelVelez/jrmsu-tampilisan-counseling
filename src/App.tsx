@@ -24,6 +24,10 @@ import CounselorAnalytics from "./pages/dashboard/counselor/analytics";
 import CounselorReferrals from "./pages/dashboard/counselor/referrals";
 import CounselorReferralDetails from "./pages/dashboard/counselor/referral-details";
 
+// ✅ NEW: Hardcopy assessment score encoding pages (Counselor)
+import CounselorCaseLoad from "./pages/dashboard/counselor/case-load";
+import CounselorAssessmentScoreInput from "./pages/dashboard/counselor/assessment-score-input";
+
 // ✅ NEW: Referral-user pages
 import ReferralUserMessages from "./pages/dashboard/referral-user/messages";
 import ReferralUserReferrals from "./pages/dashboard/referral-user/referrals";
@@ -223,6 +227,26 @@ function App() {
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorReferralDetails />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ NEW: Counselor case load */}
+          <Route
+            path="/dashboard/counselor/case-load"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorCaseLoad />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ NEW: Counselor hardcopy assessment score input */}
+          <Route
+            path="/dashboard/counselor/assessment-score-input"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorAssessmentScoreInput />
               </RequireRole>
             }
           />

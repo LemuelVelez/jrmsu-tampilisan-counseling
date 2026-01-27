@@ -161,6 +161,19 @@ const counselorNavItems: NavItem[] = [
         icon: Share2,
         badgeKey: "referrals",
     },
+
+    // ✅ NEW: Hardcopy Assessment Score Encoding
+    {
+        title: "Case Load",
+        to: "/dashboard/counselor/case-load",
+        icon: Users,
+    },
+    {
+        title: "Hardcopy Scores",
+        to: "/dashboard/counselor/assessment-score-input",
+        icon: FileText,
+    },
+
     {
         title: "Assessment Reports",
         to: "/dashboard/counselor/assessment-report",
