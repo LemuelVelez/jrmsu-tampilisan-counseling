@@ -29,12 +29,7 @@ import {
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-    Tabs,
-    TabsContent,
-    TabsList,
-    TabsTrigger,
-} from "@/components/ui/tabs";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import {
     Select,
@@ -610,7 +605,11 @@ function downloadAssessmentReportPdf(
         const maxW = pageWidth - margin * 2;
 
         const title = "Assessment Report (Score/Statistics-Based)";
-        const subtitle = `Range: ${rangeLabel(opts.preset)} • Consent: ${opts.consent === "all" ? "All" : opts.consent === "consented" ? "Consented only" : "No consent only"
+        const subtitle = `Range: ${rangeLabel(opts.preset)} • Consent: ${opts.consent === "all"
+                ? "All"
+                : opts.consent === "consented"
+                    ? "Consented only"
+                    : "No consent only"
             }${opts.search.trim() ? ` • Search: "${opts.search.trim()}"` : ""}`;
 
         // Summary stats
@@ -1018,7 +1017,35 @@ const CounselorIntake: React.FC = () => {
             description="Review mental health needs assessment submissions (Steps 1–3) and generate score/statistics-based assessment reports."
         >
             <div className="flex w-full justify-center">
-                <div className="w-full max-w-6xl space-y-4">
+                <div className="w-full px-4 space-y-4">
+                    {/* ✅ ACTION BUTTONS OUTSIDE THE ALERT CARD + FAR RIGHT */}
+                    <div className="relative z-20 flex w-full items-center justify-end gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => void reloadAssessments()}
+                            className="border-amber-200 bg-white/80 text-xs text-amber-900 hover:bg-amber-50"
+                        >
+                            {isLoadingAssessments ? (
+                                <>
+                                    <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                                    Refreshing…
+                                </>
+                            ) : (
+                                <>
+                                    <Loader2 className="mr-1.5 h-3.5 w-3.5" />
+                                    Refresh
+                                </>
+                            )}
+                        </Button>
+
+                        <Button size="sm" className="bg-amber-600 text-xs text-white hover:bg-amber-700" asChild>
+                            <Link to="/dashboard/counselor/appointments">Open Appointments</Link>
+                        </Button>
+                    </div>
+
+                    {/* Info Alert (no buttons inside) */}
                     <Alert className="border-amber-100 bg-amber-50/70">
                         <AlertTitle className="text-sm font-semibold text-amber-900">
                             Guidance &amp; Counseling – Intake (Assessments)
@@ -1034,37 +1061,6 @@ const CounselorIntake: React.FC = () => {
                             </Link>{" "}
                             to schedule or reschedule.
                         </AlertDescription>
-
-                        <div className="mt-3 flex w-full flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => void reloadAssessments()}
-                                className="w-full border-amber-200 bg-white/80 text-xs text-amber-900 hover:bg-amber-50 sm:w-auto"
-                            >
-                                {isLoadingAssessments ? (
-                                    <>
-                                        <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-                                        Refreshing…
-                                    </>
-                                ) : (
-                                    <>
-                                        <Loader2 className="mr-1.5 h-3.5 w-3.5" />
-                                        Refresh
-                                    </>
-                                )}
-                            </Button>
-
-                            <Button
-                                asChild
-                                type="button"
-                                size="sm"
-                                className="w-full text-xs sm:w-auto"
-                            >
-                                <Link to="/dashboard/counselor/appointments">Open Appointments</Link>
-                            </Button>
-                        </div>
                     </Alert>
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -1076,7 +1072,8 @@ const CounselorIntake: React.FC = () => {
                             <CardDescription className="text-xs">
                                 View individual submissions and generate{" "}
                                 <span className="font-medium">assessment reports</span> using PHQ-9 style scores.
-                                Scores are for triage only and <span className="font-medium">are not diagnostic labels</span>.
+                                Scores are for triage only and{" "}
+                                <span className="font-medium">are not diagnostic labels</span>.
                             </CardDescription>
                         </CardHeader>
 

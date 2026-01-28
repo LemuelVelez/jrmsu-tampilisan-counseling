@@ -725,7 +725,7 @@ const CounselorAppointments: React.FC = () => {
             description="Preferred schedule stays as the student’s request. Final schedule is set by the counselor. Update status so students know their request is being handled."
         >
             <div className="flex w-full justify-center">
-                <div className="w-full max-w-6xl space-y-4">
+                <div className="w-full px-4 space-y-4">
                     <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                         <div className="space-y-1 text-xs text-amber-900">
                             <p className="font-semibold">Guidance &amp; Counseling – Appointments</p>

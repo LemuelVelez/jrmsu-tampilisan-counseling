@@ -18,7 +18,7 @@ import {
     SelectValue,
 } from "@/components/ui/select";
 import heroIllustration from "@/assets/images/hero.png";
-import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import appLogo from "@/assets/images/ecounseling.svg";
 import { Eye, EyeOff } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
@@ -30,6 +30,8 @@ import {
 } from "@/lib/authentication";
 import { toast } from "sonner";
 import { resolveDashboardPathForRole } from "@/lib/role";
+
+const APP_NAME = "E-Guidance Appointment System";
 
 const YEAR_LEVELS = ["1st", "2nd", "3rd", "4th", "5th"] as const;
 type YearLevel = (typeof YEAR_LEVELS)[number];
@@ -149,17 +151,17 @@ const LoginForm: React.FC<AuthFormProps> = ({
 
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
-            <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
+            <Card className="overflow-hidden border-amber-100/90 bg-white/90 p-0 shadow-md shadow-amber-100/80 backdrop-blur">
                 <CardContent className="grid p-0 md:grid-cols-2">
                     <form className="p-6 md:p-8" onSubmit={handleSubmit}>
                         <FieldGroup>
                             <div className="flex flex-col items-center gap-2 text-center">
                                 <h1 className="text-2xl font-semibold text-amber-900">
-                                    Sign in to eCounseling
+                                    Sign in to {APP_NAME}
                                 </h1>
-                                <p className="text-sm text-muted-foreground text-balance">
-                                    Use your email to access the student, counselor, admin, or
-                                    referral portal.
+                                <p className="text-balance text-sm text-muted-foreground">
+                                    Request and manage appointments, send messages, and handle
+                                    referrals using your account.
                                 </p>
                             </div>
 
@@ -249,7 +251,7 @@ const LoginForm: React.FC<AuthFormProps> = ({
                     <div className="bg-muted relative hidden md:block">
                         <img
                             src={heroIllustration}
-                            alt="JRMSU student using the eCounseling platform"
+                            alt="JRMSU user using the E-Guidance Appointment System"
                             className="absolute inset-0 h-full w-full object-cover"
                         />
                     </div>
@@ -416,16 +418,17 @@ const SignupForm: React.FC<AuthFormProps> = ({
 
     return (
         <div className={cn("flex flex-col gap-6", className)} {...props}>
-            <Card className="overflow-hidden p-0 border-amber-100/90 bg-white/90 shadow-md shadow-amber-100/80 backdrop-blur">
+            <Card className="overflow-hidden border-amber-100/90 bg-white/90 p-0 shadow-md shadow-amber-100/80 backdrop-blur">
                 <CardContent className="grid p-0 md:grid-cols-2">
                     <form className="p-6 md:p-8" onSubmit={handleSubmit}>
                         <FieldGroup>
                             <div className="flex flex-col items-center gap-2 text-center">
                                 <h1 className="text-2xl font-semibold text-amber-900">
-                                    Create your eCounseling account
+                                    Create your {APP_NAME} account
                                 </h1>
-                                <p className="text-sm text-muted-foreground text-balance">
-                                    Enter your name and email to set up your account.
+                                <p className="text-balance text-sm text-muted-foreground">
+                                    Create an account to request appointments, receive updates,
+                                    and coordinate referrals.
                                 </p>
                             </div>
 
@@ -452,8 +455,8 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                     required
                                 />
                                 <FieldDescription>
-                                    We&apos;ll use this email to contact you about guidance
-                                    updates and appointments. Your email will not be shared.
+                                    We&apos;ll use this email for appointment updates and
+                                    important notifications. Your email will not be shared.
                                 </FieldDescription>
                             </Field>
 
@@ -504,9 +507,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
 
                                         {accountType === "referral_user" && (
                                             <FieldDescription>
-                                                Referral users are campus offices (e.g., Dean,
-                                                Registrar, Program Chair) who receive and manage
-                                                referrals.
+                                                Referral users (e.g., Dean, Registrar, Program
+                                                Chair) can submit referrals and coordinate via
+                                                messaging.
                                             </FieldDescription>
                                         )}
                                     </Field>
@@ -748,7 +751,9 @@ const SignupForm: React.FC<AuthFormProps> = ({
                                         </div>
                                     </Field>
                                 </Field>
-                                <FieldDescription>Must be at least 8 characters long.</FieldDescription>
+                                <FieldDescription>
+                                    Must be at least 8 characters long.
+                                </FieldDescription>
                                 {formError && (
                                     <FieldDescription
                                         role="alert"
@@ -785,7 +790,7 @@ const SignupForm: React.FC<AuthFormProps> = ({
                     <div className="bg-muted relative hidden md:block">
                         <img
                             src={heroIllustration}
-                            alt="JRMSU student using the eCounseling platform"
+                            alt="JRMSU user using the E-Guidance Appointment System"
                             className="absolute inset-0 h-full w-full object-cover"
                         />
                     </div>
@@ -847,13 +852,13 @@ const AuthPage: React.FC = () => {
                         className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
                     >
                         <img
-                            src={ecounselingLogo}
-                            alt="eCounseling logo"
+                            src={appLogo}
+                            alt={`${APP_NAME} logo`}
                             className="h-8 w-auto"
                         />
                         <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                                eCounseling Portal
+                                {APP_NAME}
                             </h1>
                             <p className="text-xs text-muted-foreground">
                                 JRMSU – Tampilisan Campus
