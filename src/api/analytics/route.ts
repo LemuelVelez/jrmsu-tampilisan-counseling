@@ -6,23 +6,21 @@ export interface AnalyticsQuery {
     end_date?: string; // YYYY-MM-DD
 }
 
-export interface AnalyticsSummaryDto {
-    this_month_count: number;
-    this_semester_count: number;
-    range_count?: number;
-
-    /**
-     * Optional chart series
-     * Example: [{ label: "Jan", count: 12 }, ...]
-     */
-    series?: Array<{ label: string; count: number }>;
-
-    [key: string]: unknown;
+export interface MonthlyCountRow {
+    year: number;
+    month: number; // 1-12
+    count: number;
 }
 
 export interface CounselorAnalyticsResponseDto {
     message?: string;
-    analytics: AnalyticsSummaryDto;
+    this_month_count: number;
+    this_semester_count: number;
+    range?: {
+        start_date?: string;
+        end_date?: string;
+    };
+    monthly_counts?: MonthlyCountRow[];
 }
 
 export interface AnalyticsApiError extends Error {
@@ -34,8 +32,9 @@ function resolveAnalyticsApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
         throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
+    const base = String(AUTH_API_BASE_URL).replace(/\/+$/, "");
     const trimmedPath = path.replace(/^\/+/, "");
-    return `${AUTH_API_BASE_URL}/${trimmedPath}`;
+    return `${base}/${trimmedPath}`;
 }
 
 function buildQueryString(params?: Record<string, any>): string {
@@ -47,6 +46,11 @@ function buildQueryString(params?: Record<string, any>): string {
     });
     const qs = sp.toString();
     return qs ? `?${qs}` : "";
+}
+
+function safeNumber(v: unknown): number {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
 }
 
 async function analyticsApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -89,22 +93,37 @@ async function analyticsApiFetch<T>(path: string, init: RequestInit = {}): Promi
 /**
  * ✅ Counselor analytics endpoint
  * GET /counselor/analytics?start_date=YYYY-MM-DD&end_date=YYYY-MM-DD
+ *
+ * Backend returns:
+ * {
+ *   message,
+ *   this_month_count,
+ *   this_semester_count,
+ *   range: {start_date, end_date},
+ *   monthly_counts: [{year, month, count}]
+ * }
  */
 export async function getCounselorAnalyticsApi(query?: AnalyticsQuery): Promise<CounselorAnalyticsResponseDto> {
     const qs = buildQueryString(query);
 
     const res = await analyticsApiFetch<any>(`/counselor/analytics${qs}`, { method: "GET" });
 
-    const analytics = (res?.analytics ?? res?.data ?? res) as any;
+    const monthly_counts: MonthlyCountRow[] = Array.isArray(res?.monthly_counts)
+        ? res.monthly_counts.map((r: any) => ({
+            year: safeNumber(r?.year),
+            month: safeNumber(r?.month),
+            count: safeNumber(r?.count),
+        }))
+        : [];
 
     return {
         message: res?.message,
-        analytics: {
-            this_month_count: Number(analytics?.this_month_count ?? analytics?.month_count ?? 0),
-            this_semester_count: Number(analytics?.this_semester_count ?? analytics?.semester_count ?? 0),
-            range_count:
-                analytics?.range_count != null ? Number(analytics.range_count) : undefined,
-            series: Array.isArray(analytics?.series) ? analytics.series : undefined,
+        this_month_count: safeNumber(res?.this_month_count),
+        this_semester_count: safeNumber(res?.this_semester_count),
+        range: {
+            start_date: res?.range?.start_date,
+            end_date: res?.range?.end_date,
         },
+        monthly_counts,
     };
 }
