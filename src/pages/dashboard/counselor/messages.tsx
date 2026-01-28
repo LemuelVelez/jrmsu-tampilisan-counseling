@@ -478,9 +478,7 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 }
 
 /**
- * ✅ NEW: Fetch a single user's profile (name + avatar) from DB for conversations coming from
- * message history (where the inbox API may not include recipient_name/avatar fields).
- *
+ * ✅ Fetch a single user's profile (name + avatar) for conversations coming from history.
  * This is what fixes "Student #7" -> actual name from users table.
  */
 async function tryFetchUserProfileById(
@@ -510,7 +508,7 @@ async function tryFetchUserProfileById(
     candidates.push(`/users?role=${roleParam}&q=${q}&limit=1`)
     candidates.push(`/users?role=${roleParam}&query=${q}&limit=1`)
 
-    // Fallback: query all roles (directory allows roleFilter=null)
+    // Fallback: query all roles
     candidates.push(`/users?search=${q}&limit=1`)
     candidates.push(`/users?q=${q}&limit=1`)
     candidates.push(`/users?query=${q}&limit=1`)
@@ -519,7 +517,6 @@ async function tryFetchUserProfileById(
         try {
             const data: any = await apiFetch(path, { method: "GET", signal }, token)
 
-            // Dedicated endpoint format: { student: {...}, summary: {...} }
             const direct = data?.student ?? data?.user ?? null
             if (direct) {
                 const name = extractUserName(direct)
@@ -530,7 +527,6 @@ async function tryFetchUserProfileById(
                 }
             }
 
-            // Directory format: { users: [...] } or similar
             const arr = extractUsersArray(data)
             if (!Array.isArray(arr) || arr.length === 0) continue
 
@@ -728,8 +724,6 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerId = peerMsg.recipientId ?? null
 
             if (peerRole === "student" || peerRole === "guest" || peerRole === "admin") {
-                // NOTE: if counselor messaged first and student hasn't replied yet,
-                // this becomes "Student #7" -> we will backfill from users table.
                 peerName = peerId ? `${roleLabel(peerRole)} #${peerId}` : roleLabel(peerRole)
             } else {
                 peerName = peerId ? `Counselor #${peerId}` : "Counselor Office"
@@ -783,8 +777,47 @@ function isPlaceholderPeerName(peerName: string, role: PeerRole, id?: number | s
     const cleaned = String(peerName ?? "").trim()
     const label = roleLabel(role)
     const placeholder = `${label} #${String(id).trim()}`
-    // treat generic label-only as placeholder too
     return cleaned === placeholder || cleaned === label
+}
+
+/**
+ * ✅ Persist peer profile cache so navigating away/back won't revert to "Student #7".
+ */
+const PEER_PROFILE_STORAGE_KEY = "counselor.messages.peerProfiles.v1"
+
+function readPeerProfilesFromStorage(): Record<string, PeerProfile> {
+    if (typeof window === "undefined") return {}
+    try {
+        const raw = window.sessionStorage.getItem(PEER_PROFILE_STORAGE_KEY)
+        if (!raw) return {}
+        const parsed = JSON.parse(raw) as any
+        if (!parsed || typeof parsed !== "object") return {}
+        const out: Record<string, PeerProfile> = {}
+        for (const [k, v] of Object.entries(parsed)) {
+            const vv = v as any
+            out[k] = {
+                name: typeof vv?.name === "string" ? vv.name : vv?.name == null ? null : String(vv.name),
+                avatar_url:
+                    typeof vv?.avatar_url === "string"
+                        ? vv.avatar_url
+                        : vv?.avatar_url == null
+                            ? null
+                            : String(vv.avatar_url),
+            }
+        }
+        return out
+    } catch {
+        return {}
+    }
+}
+
+function writePeerProfilesToStorage(map: Record<string, PeerProfile>) {
+    if (typeof window === "undefined") return
+    try {
+        window.sessionStorage.setItem(PEER_PROFILE_STORAGE_KEY, JSON.stringify(map))
+    } catch {
+        // ignore storage errors
+    }
 }
 
 function UserCombobox(props: {
@@ -902,10 +935,19 @@ const CounselorMessages: React.FC = () => {
     const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([])
     const [recipientLoading, setRecipientLoading] = React.useState(false)
 
-    // ✅ profile cache (name + avatar) for conversations built from message history
-    const [profileByPeerKey, setProfileByPeerKey] = React.useState<Record<string, PeerProfile>>({})
-    const profileCacheRef = React.useRef(new Map<string, PeerProfile>())
+    // ✅ profile cache (persisted) (name + avatar) for conversations built from message history
+    const initialProfiles = React.useMemo(() => readPeerProfilesFromStorage(), [])
+    const [profileByPeerKey, setProfileByPeerKey] = React.useState<Record<string, PeerProfile>>(initialProfiles)
+    const profileCacheRef = React.useRef(new Map<string, PeerProfile>(Object.entries(initialProfiles)))
     const profileInflightRef = React.useRef(new Set<string>())
+
+    React.useEffect(() => {
+        // keep ref in sync and persist
+        for (const [k, v] of Object.entries(profileByPeerKey)) {
+            profileCacheRef.current.set(k, v)
+        }
+        writePeerProfilesToStorage(profileByPeerKey)
+    }, [profileByPeerKey])
 
     const localIdRef = React.useRef(0)
     const bottomRef = React.useRef<HTMLDivElement | null>(null)
@@ -930,12 +972,41 @@ const CounselorMessages: React.FC = () => {
     React.useEffect(() => {
         const payload = (location.state as any)?.autoStartConversation as AutoStartConversationPayload | undefined
         if (!payload) return
-
-        // Only allow student/guest auto-start from Users page
         if (payload.role !== "student" && payload.role !== "guest") return
-
         autoStartRef.current = payload
     }, [location.state])
+
+    const seedProfilesFromMessages = React.useCallback((ui: UiMessage[]) => {
+        // If messages include real sender_name, store it so remount doesn't lose it.
+        // (Helps both list + chat header instantly.)
+        const next: Record<string, PeerProfile> = {}
+        for (const m of ui) {
+            if (m.sender === "student" || m.sender === "guest") {
+                const id = (m.senderId ?? m.userId) as any
+                const k = peerKey(m.sender, id)
+                if (!k) continue
+
+                const candidateName = String(m.senderName ?? "").trim()
+                if (!candidateName) continue
+
+                // ignore generic placeholders
+                if (candidateName.toLowerCase() === "student" || candidateName.toLowerCase() === "guest") continue
+
+                const prev = profileCacheRef.current.get(k) ?? null
+                if (prev?.name && String(prev.name).trim()) continue
+
+                next[k] = {
+                    name: candidateName,
+                    avatar_url: m.senderAvatarUrl ?? prev?.avatar_url ?? null,
+                }
+            }
+        }
+
+        const keys = Object.keys(next)
+        if (keys.length > 0) {
+            setProfileByPeerKey((p) => ({ ...p, ...next }))
+        }
+    }, [])
 
     const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
         const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing
@@ -947,6 +1018,7 @@ const CounselorMessages: React.FC = () => {
             const ui = raw.map(mapDtoToUi)
 
             setMessages(ui)
+            seedProfilesFromMessages(ui)
 
             const convs = buildConversations(ui, myUserId, counselorName)
 
@@ -1039,7 +1111,6 @@ const CounselorMessages: React.FC = () => {
     )
 
     // ✅ Backfill names + avatars for conversations that come from message history
-    // (fixes: "Student #7" showing instead of real student name)
     React.useEffect(() => {
         const controller = new AbortController()
 
@@ -1047,7 +1118,6 @@ const CounselorMessages: React.FC = () => {
             .map((c) => {
                 const key = peerKey(c.peerRole, c.peerId)
                 if (!key) return null
-
                 if (profileInflightRef.current.has(key)) return null
 
                 const cached = profileByPeerKey[key] ?? profileCacheRef.current.get(key) ?? null
@@ -1066,9 +1136,17 @@ const CounselorMessages: React.FC = () => {
 
         if (todo.length === 0) return () => controller.abort()
 
-            ; (async () => {
-                for (const item of todo) {
+        const MAX_CONCURRENT = 3
+        const queue = [...todo]
+
+        ;(async () => {
+            const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
+                while (queue.length > 0) {
                     if (controller.signal.aborted) return
+                    const item = queue.shift()
+                    if (!item) return
+
+                    if (profileInflightRef.current.has(item.key)) continue
 
                     profileInflightRef.current.add(item.key)
                     try {
@@ -1087,9 +1165,12 @@ const CounselorMessages: React.FC = () => {
                         profileInflightRef.current.delete(item.key)
                     }
                 }
-            })().catch(() => {
-                // silent
             })
+
+            await Promise.all(workers)
+        })().catch(() => {
+            // silent
+        })
 
         return () => controller.abort()
     }, [conversations, token, profileByPeerKey])

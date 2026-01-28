@@ -46,7 +46,7 @@ type NavItem = {
 type RoleKey = "student" | "counselor" | "admin" | "referralUser";
 
 type NotificationCounts = {
-    messages: number;
+    messages: number; // ✅ UNREAD messages only
     appointments: number;
     referrals: number;
 };
@@ -64,30 +64,52 @@ function formatBadgeValue(n: number) {
 
 function safeNumber(v: unknown): number {
     const n = Number(v);
-    return Number.isFinite(n) ? n : 0;
+    if (!Number.isFinite(n)) return 0;
+    return n < 0 ? 0 : n;
 }
 
+/**
+ * ✅ IMPORTANT FIX (Mapping):
+ * Use ONLY the unread_* counters from the backend.
+ * Do NOT fall back to a generic "messages" count because some backends return total messages,
+ * which causes the badge to stay nonzero.
+ */
 function mapCountsFromApi(payload: any): NotificationCounts {
+    const src =
+        payload?.counts && typeof payload.counts === "object" ? payload.counts : payload ?? {};
+
+    const unreadMessages =
+        safeNumber(
+            src?.unread_messages ??
+            src?.unreadMessages ??
+            src?.unread_messages_count ??
+            src?.unread_count ??
+            src?.unread ??
+            0,
+        );
+
+    const pendingAppointments =
+        safeNumber(
+            src?.pending_appointments ??
+            src?.pendingAppointments ??
+            src?.pending_requests ??
+            src?.pending_appointment_requests_count ??
+            0,
+        );
+
+    const newReferrals =
+        safeNumber(
+            src?.new_referrals ??
+            src?.newReferrals ??
+            src?.new_referrals_count ??
+            src?.referrals_unread ??
+            0,
+        );
+
     return {
-        messages:
-            safeNumber(payload?.messages) ||
-            safeNumber(payload?.unread_messages) ||
-            safeNumber(payload?.unreadMessages) ||
-            safeNumber(payload?.unread_messages_count) ||
-            0,
-        appointments:
-            safeNumber(payload?.appointments) ||
-            safeNumber(payload?.appointment_requests) ||
-            safeNumber(payload?.pending_appointments) ||
-            safeNumber(payload?.pending_requests) ||
-            safeNumber(payload?.pending_appointment_requests_count) ||
-            0,
-        referrals:
-            safeNumber(payload?.referrals) ||
-            safeNumber(payload?.new_referrals) ||
-            safeNumber(payload?.referrals_count) ||
-            safeNumber(payload?.new_referrals_count) ||
-            0,
+        messages: unreadMessages,
+        appointments: pendingAppointments,
+        referrals: newReferrals,
     };
 }
 
@@ -95,176 +117,61 @@ function mapCountsFromApi(payload: any): NotificationCounts {
  * STUDENT NAV ITEMS
  */
 const studentNavItems: NavItem[] = [
-    {
-        title: "Overview",
-        to: "/dashboard/student",
-        icon: LayoutDashboard,
-        exact: true,
-    },
-    {
-        title: "Intake",
-        to: "/dashboard/student/intake",
-        icon: ClipboardList,
-    },
-    {
-        title: "Messages",
-        to: "/dashboard/student/messages",
-        icon: MessageCircle,
-        badgeKey: "messages",
-    },
-    {
-        title: "Evaluation",
-        to: "/dashboard/student/evaluation",
-        icon: CalendarClock,
-    },
-    {
-        title: "Settings",
-        to: "/dashboard/student/settings",
-        icon: Settings,
-    },
+    { title: "Overview", to: "/dashboard/student", icon: LayoutDashboard, exact: true },
+    { title: "Intake", to: "/dashboard/student/intake", icon: ClipboardList },
+    { title: "Messages", to: "/dashboard/student/messages", icon: MessageCircle, badgeKey: "messages" },
+    { title: "Evaluation", to: "/dashboard/student/evaluation", icon: CalendarClock },
+    { title: "Settings", to: "/dashboard/student/settings", icon: Settings },
 ];
 
 /**
  * COUNSELOR NAV ITEMS
- *
- * ✅ Referral details page will be routed as:
- * /dashboard/counselor/referrals/:id
- * so this menu item stays ACTIVE while viewing a specific referral.
  */
 const counselorNavItems: NavItem[] = [
-    {
-        title: "Overview",
-        to: "/dashboard/counselor",
-        icon: LayoutDashboard,
-        exact: true,
-    },
-    {
-        title: "Intake",
-        to: "/dashboard/counselor/intake",
-        icon: ClipboardList,
-    },
-    {
-        title: "Appointments",
-        to: "/dashboard/counselor/appointments",
-        icon: CalendarClock,
-        badgeKey: "appointments",
-    },
-    {
-        title: "Messages",
-        to: "/dashboard/counselor/messages",
-        icon: MessageCircle,
-        badgeKey: "messages",
-    },
-    {
-        title: "Referrals",
-        to: "/dashboard/counselor/referrals",
-        icon: Share2,
-        badgeKey: "referrals",
-    },
-
-    // ✅ NEW: Hardcopy Assessment Score Encoding
-    {
-        title: "Case Load",
-        to: "/dashboard/counselor/case-load",
-        icon: Users,
-    },
-    {
-        title: "Hardcopy Scores",
-        to: "/dashboard/counselor/assessment-score-input",
-        icon: FileText,
-    },
-
-    {
-        title: "Assessment Reports",
-        to: "/dashboard/counselor/assessment-report",
-        icon: FileText,
-    },
-    {
-        title: "Analytics",
-        to: "/dashboard/counselor/analytics",
-        icon: BarChart3,
-    },
-    {
-        title: "Students & Guests",
-        to: "/dashboard/counselor/users",
-        icon: GraduationCap,
-    },
-    {
-        title: "Settings",
-        to: "/dashboard/counselor/settings",
-        icon: Settings,
-    },
+    { title: "Overview", to: "/dashboard/counselor", icon: LayoutDashboard, exact: true },
+    { title: "Intake", to: "/dashboard/counselor/intake", icon: ClipboardList },
+    { title: "Appointments", to: "/dashboard/counselor/appointments", icon: CalendarClock, badgeKey: "appointments" },
+    { title: "Messages", to: "/dashboard/counselor/messages", icon: MessageCircle, badgeKey: "messages" },
+    { title: "Referrals", to: "/dashboard/counselor/referrals", icon: Share2, badgeKey: "referrals" },
+    { title: "Case Load", to: "/dashboard/counselor/case-load", icon: Users },
+    { title: "Hardcopy Scores", to: "/dashboard/counselor/assessment-score-input", icon: FileText },
+    { title: "Assessment Reports", to: "/dashboard/counselor/assessment-report", icon: FileText },
+    { title: "Analytics", to: "/dashboard/counselor/analytics", icon: BarChart3 },
+    { title: "Students & Guests", to: "/dashboard/counselor/users", icon: GraduationCap },
+    { title: "Settings", to: "/dashboard/counselor/settings", icon: Settings },
 ];
 
 /**
- * REFERRAL USER NAV ITEMS (Dean / Registrar / Program Chair)
+ * REFERRAL USER NAV ITEMS
  */
 const referralUserNavItems: NavItem[] = [
-    {
-        title: "Referrals",
-        to: "/dashboard/referral-user/referrals",
-        icon: Share2,
-        badgeKey: "referrals",
-    },
-    {
-        title: "Messages",
-        to: "/dashboard/referral-user/messages",
-        icon: MessageCircle,
-        badgeKey: "messages",
-    },
+    { title: "Referrals", to: "/dashboard/referral-user/referrals", icon: Share2, badgeKey: "referrals" },
+    { title: "Messages", to: "/dashboard/referral-user/messages", icon: MessageCircle, badgeKey: "messages" },
 ];
 
 /**
  * ADMIN NAV ITEMS
  */
 const adminNavItems: NavItem[] = [
-    {
-        title: "Overview",
-        to: "/dashboard/admin",
-        icon: LayoutDashboard,
-        exact: true,
-    },
-    {
-        title: "Users",
-        to: "/dashboard/admin/users",
-        icon: Users,
-    },
-    {
-        title: "Settings",
-        to: "/dashboard/admin/settings",
-        icon: Settings,
-    },
+    { title: "Overview", to: "/dashboard/admin", icon: LayoutDashboard, exact: true },
+    { title: "Users", to: "/dashboard/admin/users", icon: Users },
+    { title: "Settings", to: "/dashboard/admin/settings", icon: Settings },
 ];
 
 const navConfig: Record<RoleKey, { label: string; items: NavItem[] }> = {
-    student: {
-        label: "Student",
-        items: studentNavItems,
-    },
-    counselor: {
-        label: "Counselor",
-        items: counselorNavItems,
-    },
-    referralUser: {
-        label: "Referral User",
-        items: referralUserNavItems,
-    },
-    admin: {
-        label: "Admin",
-        items: adminNavItems,
-    },
+    student: { label: "Student", items: studentNavItems },
+    counselor: { label: "Counselor", items: counselorNavItems },
+    referralUser: { label: "Referral User", items: referralUserNavItems },
+    admin: { label: "Admin", items: adminNavItems },
 };
 
 function useAuthSession(): AuthSession {
-    const [session, setSession] = React.useState<AuthSession>(() =>
-        getCurrentSession()
-    );
+    const [session, setSession] = React.useState<AuthSession>(() => getCurrentSession());
 
     React.useEffect(() => {
         const unsubscribe = subscribeToSession((nextSession) => {
             setSession(nextSession);
         });
-
         return unsubscribe;
     }, []);
 
@@ -275,38 +182,31 @@ function trimSlash(s: string) {
     return s.replace(/\/+$/, "");
 }
 
-async function fetchNotificationCounts(
-    authToken?: string | null
-): Promise<NotificationCounts> {
+async function fetchNotificationCountsRaw(authToken?: string | null): Promise<any> {
     if (!AUTH_API_BASE_URL) {
-        throw new Error(
-            "VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file."
-        );
+        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
 
-    // ✅ matches backend: GET /notifications/counts
     const url = `${trimSlash(AUTH_API_BASE_URL)}/notifications/counts`;
 
-    const headers: Record<string, string> = {
-        Accept: "application/json",
-    };
+    const headers: Record<string, string> = { Accept: "application/json" };
+    if (authToken) headers.Authorization = `Bearer ${authToken}`;
 
-    if (authToken) {
-        headers.Authorization = `Bearer ${authToken}`;
-    }
-
-    const res = await fetch(url, {
-        method: "GET",
-        headers,
-        credentials: "include",
-    });
+    const res = await fetch(url, { method: "GET", headers, credentials: "include" });
 
     if (!res.ok) {
         throw new Error(`Failed to fetch notification counts (${res.status})`);
     }
 
     const json = await res.json();
-    return mapCountsFromApi(json);
+
+    // ✅ DEV-ONLY: this is how you can copy the real backend payload quickly
+    if (import.meta.env.DEV) {
+         
+        console.debug("[/notifications/counts] raw payload:", json);
+    }
+
+    return json;
 }
 
 export const NavMain: React.FC = () => {
@@ -319,10 +219,7 @@ export const NavMain: React.FC = () => {
 
     if (normalizedRole.includes("admin")) {
         roleKey = "admin";
-    } else if (
-        normalizedRole.includes("counselor") ||
-        normalizedRole.includes("counsellor")
-    ) {
+    } else if (normalizedRole.includes("counselor") || normalizedRole.includes("counsellor")) {
         roleKey = "counselor";
     } else if (
         normalizedRole.includes("dean") ||
@@ -350,16 +247,14 @@ export const NavMain: React.FC = () => {
         null;
 
     const shouldFetchCounts =
-        !!user &&
-        (roleKey === "student" ||
-            roleKey === "counselor" ||
-            roleKey === "referralUser");
+        !!user && (roleKey === "student" || roleKey === "counselor" || roleKey === "referralUser");
 
     const refreshCounts = React.useCallback(async () => {
         if (!shouldFetchCounts) return;
 
         try {
-            const next = await fetchNotificationCounts(authToken);
+            const raw = await fetchNotificationCountsRaw(authToken);
+            const next = mapCountsFromApi(raw);
             setCounts(next);
         } catch {
             // silent fail: keep current badge state
@@ -405,8 +300,7 @@ export const NavMain: React.FC = () => {
 
                         const isActive = item.exact
                             ? currentPath === itemPath
-                            : currentPath === itemPath ||
-                            currentPath.startsWith(itemPath + "/");
+                            : currentPath === itemPath || currentPath.startsWith(itemPath + "/");
 
                         const badgeText = getBadgeForItem(item.badgeKey);
 
@@ -419,13 +313,10 @@ export const NavMain: React.FC = () => {
                                         "transition-colors",
                                         isActive
                                             ? "border-l-2 border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary shadow-xs"
-                                            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+                                            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground",
                                     )}
                                 >
-                                    <Link
-                                        to={item.to}
-                                        className="flex w-full items-center gap-2"
-                                    >
+                                    <Link to={item.to} className="flex w-full items-center gap-2">
                                         <Icon />
                                         <span className="flex-1">{item.title}</span>
 
