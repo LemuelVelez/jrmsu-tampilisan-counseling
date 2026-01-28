@@ -9,14 +9,13 @@ import {
     CircleDashed,
     CheckCircle2,
     XCircle,
-    ShieldAlert,
 } from "lucide-react"
 import { toast } from "sonner"
 
 import DashboardLayout from "@/components/DashboardLayout"
-
-import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route"
 import { cn } from "@/lib/utils"
+
+import { fetchCounselorReferrals, updateCounselorReferral } from "@/lib/referrals"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -82,10 +81,6 @@ type ReferralView = {
     requested_by_email?: string | null
 }
 
-function trimSlash(s: string) {
-    return s.replace(/\/+$/, "")
-}
-
 function safeStr(v: unknown) {
     return typeof v === "string" ? v : v == null ? "" : String(v)
 }
@@ -131,27 +126,12 @@ function normalizeReferral(raw: any): ReferralView {
         requestedBy,
         counselor,
 
-        // flat fallback
         student_name: raw?.student_name ?? null,
         student_email: raw?.student_email ?? null,
         requested_by_name: raw?.requested_by_name ?? null,
         requested_by_role: raw?.requested_by_role ?? null,
         requested_by_email: raw?.requested_by_email ?? null,
     }
-}
-
-function getOfficialDomain(): string {
-    const envDomain =
-        (import.meta as any)?.env?.VITE_INSTITUTION_EMAIL_DOMAIN ||
-        (import.meta as any)?.env?.VITE_OFFICIAL_EMAIL_DOMAIN ||
-        "jrmsu.edu.ph"
-    return String(envDomain).trim().replace(/^@/, "")
-}
-
-function isOfficialEmail(email?: string | null): boolean {
-    if (!email) return true
-    const domain = getOfficialDomain().toLowerCase()
-    return email.toLowerCase().endsWith("@" + domain)
 }
 
 function statusBadge(status: ReferralStatus) {
@@ -187,66 +167,6 @@ function statusBadge(status: ReferralStatus) {
     return <Badge variant="outline">{safeStr(status) || "Unknown"}</Badge>
 }
 
-async function counselorFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.")
-    }
-
-    const url = `${trimSlash(AUTH_API_BASE_URL)}/${path.replace(/^\/+/, "")}`
-
-    const res = await fetch(url, {
-        ...init,
-        headers: buildJsonHeaders(init.headers),
-        credentials: "include",
-    })
-
-    const text = await res.text()
-    let data: any = null
-
-    if (text) {
-        try {
-            data = JSON.parse(text)
-        } catch {
-            data = text
-        }
-    }
-
-    if (!res.ok) {
-        const message = data?.message || data?.error || res.statusText || "Request failed."
-        throw new Error(message)
-    }
-
-    return data as T
-}
-
-async function fetchCounselorReferrals(status?: string) {
-    const qs = new URLSearchParams()
-    qs.set("per_page", "100")
-    if (status && status !== "all") qs.set("status", status)
-
-    // ✅ backend: GET /counselor/referrals
-    const json = await counselorFetch<any>(`/counselor/referrals?${qs.toString()}`, {
-        method: "GET",
-    })
-
-    const items = Array.isArray(json?.referrals) ? json.referrals : Array.isArray(json?.data) ? json.data : []
-    return items.map(normalizeReferral) as ReferralView[]
-}
-
-async function patchReferral(
-    id: number | string,
-    payload: { status?: string; remarks?: string | null; counselor_id?: number | string | null },
-) {
-    // ✅ backend: PATCH /counselor/referrals/{id}
-    const json = await counselorFetch<any>(`/counselor/referrals/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-    })
-
-    const ref = json?.referral ?? json
-    return normalizeReferral(ref)
-}
-
 export default function CounselorReferralsPage() {
     const navigate = useNavigate()
 
@@ -264,8 +184,8 @@ export default function CounselorReferralsPage() {
     const load = React.useCallback(async () => {
         setLoading(true)
         try {
-            const data = await fetchCounselorReferrals(tab)
-            setRows(data)
+            const items = await fetchCounselorReferrals({ status: tab, per_page: 100 })
+            setRows(items.map(normalizeReferral))
             setPage(1)
         } catch (err: any) {
             toast.error(err?.message || "Failed to load referrals.")
@@ -277,8 +197,8 @@ export default function CounselorReferralsPage() {
     const refresh = React.useCallback(async () => {
         setRefreshing(true)
         try {
-            const data = await fetchCounselorReferrals(tab)
-            setRows(data)
+            const items = await fetchCounselorReferrals({ status: tab, per_page: 100 })
+            setRows(items.map(normalizeReferral))
         } catch {
             // silent
         } finally {
@@ -329,8 +249,8 @@ export default function CounselorReferralsPage() {
             setRows((curr) => curr.map((r) => (String(r.id) === String(id) ? { ...r, status: nextStatus } : r)))
 
             try {
-                const updated = await patchReferral(id, { status: nextStatus })
-                setRows((curr) => curr.map((r) => (String(r.id) === String(id) ? updated : r)))
+                const updated = await updateCounselorReferral(id, { status: nextStatus })
+                setRows((curr) => curr.map((r) => (String(r.id) === String(id) ? normalizeReferral(updated) : r)))
                 toast.success("Referral updated.")
             } catch (err: any) {
                 setRows(prev)
@@ -357,7 +277,8 @@ export default function CounselorReferralsPage() {
                                     </Badge>
                                 </CardTitle>
                                 <CardDescription>
-                                    Includes <span className="font-medium">Requested By</span> and <span className="font-medium">Student</span> details.
+                                    Includes <span className="font-medium">Requested By</span> and{" "}
+                                    <span className="font-medium">Student</span> details.
                                 </CardDescription>
                             </div>
 
@@ -438,8 +359,6 @@ export default function CounselorReferralsPage() {
                                             const reqRole = r.requestedBy?.role ?? r.requested_by_role ?? null
                                             const reqEmail = r.requestedBy?.email ?? r.requested_by_email ?? null
 
-                                            const officialOk = isOfficialEmail(reqEmail)
-
                                             return (
                                                 <TableRow key={String(r.id)} className="align-top">
                                                     <TableCell>
@@ -453,17 +372,7 @@ export default function CounselorReferralsPage() {
 
                                                     <TableCell>
                                                         <div className="space-y-0.5">
-                                                            <div className="flex items-center gap-2">
-                                                                <div className="font-medium">{reqName}</div>
-
-                                                                {!officialOk ? (
-                                                                    <Badge variant="outline" className="gap-1 text-amber-600">
-                                                                        <ShieldAlert className="h-3.5 w-3.5" />
-                                                                        Non-official domain
-                                                                    </Badge>
-                                                                ) : null}
-                                                            </div>
-
+                                                            <div className="font-medium">{reqName}</div>
                                                             <div className="text-xs text-muted-foreground">
                                                                 {reqRole ? <span className="capitalize">{reqRole}</span> : "—"}
                                                                 {reqEmail ? <span className="ml-2">• {reqEmail}</span> : null}
@@ -498,7 +407,11 @@ export default function CounselorReferralsPage() {
                                                                 variant="outline"
                                                                 size="sm"
                                                                 className="gap-2"
-                                                                onClick={() => navigate(`/dashboard/counselor/referral-details?id=${encodeURIComponent(String(r.id))}`)}
+                                                                onClick={() =>
+                                                                    navigate(
+                                                                        `/dashboard/counselor/referral-details?id=${encodeURIComponent(String(r.id))}`,
+                                                                    )
+                                                                }
                                                             >
                                                                 <Eye className="h-4 w-4" />
                                                                 View
@@ -548,7 +461,7 @@ export default function CounselorReferralsPage() {
                         {!loading && filtered.length > 0 ? (
                             <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div className="text-sm text-muted-foreground">
-                                    Showing <span className="font-medium">{(safePage - 1) * pageSize + 1}</span>–
+                                    Showing <span className="font-medium">{(safePage - 1) * pageSize + 1}</span>–{" "}
                                     <span className="font-medium">{Math.min(safePage * pageSize, filtered.length)}</span> of{" "}
                                     <span className="font-medium">{filtered.length}</span>
                                 </div>
@@ -580,10 +493,6 @@ export default function CounselorReferralsPage() {
                 </Card>
 
                 <div className="flex items-center justify-between text-sm text-muted-foreground">
-                    <div>
-                        Official domain enforcement for referral users:{" "}
-                        <span className="font-medium">@{getOfficialDomain()}</span>
-                    </div>
 
                     <Link to="/dashboard/counselor" className="underline underline-offset-4 hover:text-foreground">
                         Back to Overview

@@ -7,14 +7,13 @@ import {
     Save,
     RefreshCw,
     UserCircle2,
-    ShieldAlert,
     BadgeInfo,
 } from "lucide-react"
 
 import DashboardLayout from "@/components/DashboardLayout"
-
-import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route"
 import { cn } from "@/lib/utils"
+
+import { fetchCounselorReferralById, updateCounselorReferral } from "@/lib/referrals"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -88,10 +87,6 @@ type DirectoryUser = {
     role?: string | null
 }
 
-function trimSlash(s: string) {
-    return s.replace(/\/+$/, "")
-}
-
 function safeStr(v: unknown) {
     return typeof v === "string" ? v : v == null ? "" : String(v)
 }
@@ -149,82 +144,36 @@ function normalizeReferral(raw: any): ReferralView {
     }
 }
 
-function getOfficialDomain(): string {
-    const envDomain =
-        (import.meta as any)?.env?.VITE_INSTITUTION_EMAIL_DOMAIN ||
-        (import.meta as any)?.env?.VITE_OFFICIAL_EMAIL_DOMAIN ||
-        "jrmsu.edu.ph"
-    return String(envDomain).trim().replace(/^@/, "")
-}
-
-function isOfficialEmail(email?: string | null): boolean {
-    if (!email) return true
-    const domain = getOfficialDomain().toLowerCase()
-    return email.toLowerCase().endsWith("@" + domain)
-}
-
-async function counselorFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-    if (!AUTH_API_BASE_URL) {
-        throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.")
-    }
-
-    const url = `${trimSlash(AUTH_API_BASE_URL)}/${path.replace(/^\/+/, "")}`
-
-    const res = await fetch(url, {
-        ...init,
-        headers: buildJsonHeaders(init.headers),
-        credentials: "include",
-    })
-
-    const text = await res.text()
-    let data: any = null
-
-    if (text) {
-        try {
-            data = JSON.parse(text)
-        } catch {
-            data = text
-        }
-    }
-
-    if (!res.ok) {
-        const message = data?.message || data?.error || res.statusText || "Request failed."
-        throw new Error(message)
-    }
-
-    return data as T
-}
-
-async function fetchReferralById(id: number | string) {
-    // ✅ backend: GET /counselor/referrals/{id}
-    const json = await counselorFetch<any>(`/counselor/referrals/${id}`, { method: "GET" })
-    const ref = json?.referral ?? json
-    return normalizeReferral(ref)
-}
-
-async function patchReferral(
-    id: number | string,
-    payload: { status?: string; remarks?: string | null; counselor_id?: number | string | null },
-) {
-    // ✅ backend: PATCH /counselor/referrals/{id}
-    const json = await counselorFetch<any>(`/counselor/referrals/${id}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-    })
-
-    const ref = json?.referral ?? json
-    return normalizeReferral(ref)
-}
-
 async function fetchCounselorsDirectory(search?: string): Promise<DirectoryUser[]> {
     const qs = new URLSearchParams()
     qs.set("role", "counselor")
     qs.set("limit", "50")
     if (search && search.trim()) qs.set("search", search.trim())
 
-    // ✅ backend: GET /counselor/users?role=counselor&search=...
-    const json = await counselorFetch<any>(`/counselor/users?${qs.toString()}`, { method: "GET" })
-    const users = Array.isArray(json?.users) ? json.users : []
+    const base =
+        (import.meta as any)?.env?.VITE_API_LARAVEL_BASE_URL ||
+        (import.meta as any)?.env?.VITE_LARAVEL_API_BASE_URL ||
+        ""
+
+    if (!base) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.")
+
+    const url = `${String(base).replace(/\/+$/, "")}/counselor/users?${qs.toString()}`
+
+    const res = await fetch(url, { method: "GET", credentials: "include" })
+    const text = await res.text()
+    let data: any = null
+    try {
+        data = text ? JSON.parse(text) : null
+    } catch {
+        data = text
+    }
+
+    if (!res.ok) {
+        const msg = data?.message || data?.error || res.statusText || "Failed to fetch counselors."
+        throw new Error(msg)
+    }
+
+    const users = Array.isArray(data?.users) ? data.users : []
     return users.map((u: any) => ({
         id: u?.id ?? "",
         name: u?.name ?? null,
@@ -236,25 +185,9 @@ async function fetchCounselorsDirectory(search?: string): Promise<DirectoryUser[
 function statusBadge(status: ReferralStatus) {
     const s = safeStr(status).toLowerCase()
 
-    if (s === "pending") {
-        return (
-            <Badge variant="secondary" className="capitalize">
-                pending
-            </Badge>
-        )
-    }
-
-    if (s === "handled") {
-        return <Badge className="capitalize">handled</Badge>
-    }
-
-    if (s === "closed") {
-        return (
-            <Badge variant="destructive" className="capitalize">
-                closed
-            </Badge>
-        )
-    }
+    if (s === "pending") return <Badge variant="secondary" className="capitalize">pending</Badge>
+    if (s === "handled") return <Badge className="capitalize">handled</Badge>
+    if (s === "closed") return <Badge variant="destructive" className="capitalize">closed</Badge>
 
     return <Badge variant="outline">{safeStr(status) || "unknown"}</Badge>
 }
@@ -292,7 +225,8 @@ export default function CounselorReferralDetailsPage() {
 
         setLoading(true)
         try {
-            const data = await fetchReferralById(id)
+            const raw = await fetchCounselorReferralById(id)
+            const data = normalizeReferral(raw)
             setReferral(data)
 
             setStatus(data.status ?? "pending")
@@ -311,7 +245,8 @@ export default function CounselorReferralDetailsPage() {
         if (!id) return
         setRefreshing(true)
         try {
-            const data = await fetchReferralById(id)
+            const raw = await fetchCounselorReferralById(id)
+            const data = normalizeReferral(raw)
             setReferral(data)
             setStatus(data.status ?? "pending")
             setRemarks(data.remarks ?? "")
@@ -364,7 +299,9 @@ export default function CounselorReferralDetailsPage() {
                 counselor_id: assignedCounselorId ? assignedCounselorId : null,
             }
 
-            const updated = await patchReferral(referral.id, payload)
+            const updatedRaw = await updateCounselorReferral(referral.id, payload)
+            const updated = normalizeReferral(updatedRaw)
+
             setReferral(updated)
 
             setStatus(updated.status ?? status)
@@ -384,7 +321,6 @@ export default function CounselorReferralDetailsPage() {
     const requestedByName = referral?.requestedBy?.name ?? referral?.requested_by_name ?? "—"
     const requestedByRole = referral?.requestedBy?.role ?? referral?.requested_by_role ?? null
     const requestedByEmail = referral?.requestedBy?.email ?? referral?.requested_by_email ?? null
-    const requestedByOfficial = isOfficialEmail(requestedByEmail)
 
     const currentCounselorName = referral?.counselor?.name ?? null
     const currentCounselorEmail = referral?.counselor?.email ?? null
@@ -428,7 +364,7 @@ export default function CounselorReferralDetailsPage() {
                             Referral #{id || "—"}
                             {referral ? statusBadge(referral.status) : null}
                         </CardTitle>
-                        <CardDescription>Includes Student and Requested By information (with domain restriction awareness).</CardDescription>
+                        <CardDescription>Includes Student, Requested By, and assignment details.</CardDescription>
                     </CardHeader>
 
                     <CardContent>
@@ -447,7 +383,6 @@ export default function CounselorReferralDetailsPage() {
                             </div>
                         ) : (
                             <div className="grid gap-4 lg:grid-cols-3">
-                                {/* LEFT: People */}
                                 <Card className="lg:col-span-1">
                                     <CardHeader>
                                         <CardTitle className="text-base">People</CardTitle>
@@ -470,13 +405,6 @@ export default function CounselorReferralDetailsPage() {
                                             <div className="flex items-center gap-2">
                                                 <BadgeInfo className="h-4 w-4 text-muted-foreground" />
                                                 <div className="font-medium">Requested By</div>
-
-                                                {!requestedByOfficial ? (
-                                                    <Badge variant="outline" className="ml-auto gap-1 text-amber-600">
-                                                        <ShieldAlert className="h-3.5 w-3.5" />
-                                                        Non-official domain
-                                                    </Badge>
-                                                ) : null}
                                             </div>
 
                                             <div className="mt-2 space-y-0.5">
@@ -485,13 +413,6 @@ export default function CounselorReferralDetailsPage() {
                                                     {requestedByRole ? <span className="capitalize">{requestedByRole}</span> : "—"}
                                                     {requestedByEmail ? <span className="ml-2">• {requestedByEmail}</span> : null}
                                                 </div>
-
-                                                {!requestedByOfficial ? (
-                                                    <div className="mt-2 rounded-md bg-amber-50 p-2 text-xs text-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
-                                                        Official domain required for referral-user accounts:{" "}
-                                                        <span className="font-semibold">@{getOfficialDomain()}</span>
-                                                    </div>
-                                                ) : null}
                                             </div>
                                         </div>
 
@@ -616,7 +537,6 @@ export default function CounselorReferralDetailsPage() {
                                     </CardContent>
                                 </Card>
 
-                                {/* RIGHT: Referral info + actions */}
                                 <Card className="lg:col-span-2">
                                     <CardHeader>
                                         <CardTitle className="text-base">Referral Information</CardTitle>
@@ -721,10 +641,6 @@ export default function CounselorReferralDetailsPage() {
                         )}
                     </CardContent>
                 </Card>
-
-                <div className="text-sm text-muted-foreground">
-                    Note: Domain restriction for referral-user accounts is <span className="font-medium">@{getOfficialDomain()}</span>.
-                </div>
             </div>
         </DashboardLayout>
     )

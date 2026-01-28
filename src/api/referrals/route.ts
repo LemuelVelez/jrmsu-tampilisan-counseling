@@ -2,39 +2,56 @@
 import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
 
 export type ReferralStatusApi = "pending" | "handled" | "closed" | string;
+export type ReferralUrgencyApi = "low" | "medium" | "high" | string;
+
+export interface UserMiniDto {
+    id: number | string;
+    name?: string | null;
+    email?: string | null;
+    role?: string | null;
+    [key: string]: unknown;
+}
 
 export interface ReferralDto {
     id: number | string;
 
-    student_id: number | string;
-    student_name?: string | null;
-    student_email?: string | null;
-
-    concern: string;
-    details?: string | null;
-
     status: ReferralStatusApi;
 
-    /**
-     * ✅ Requested By (Dean/Registrar/Program Chair)
-     */
-    requested_by_id?: number | string | null;
+    concern_type?: string | null;
+    urgency?: ReferralUrgencyApi | null;
+    details?: string | null;
+
+    remarks?: string | null;
+    handled_at?: string | null;
+    closed_at?: string | null;
+
+    created_at?: string | null;
+    updated_at?: string | null;
+
+    student?: UserMiniDto | null;
+    requestedBy?: UserMiniDto | null;
+    requested_by?: UserMiniDto | null;
+    counselor?: UserMiniDto | null;
+
+    // flat fallbacks (if backend returns flat)
+    student_name?: string | null;
+    student_email?: string | null;
     requested_by_name?: string | null;
     requested_by_role?: string | null;
-
-    created_at?: string;
-    updated_at?: string;
+    requested_by_email?: string | null;
 
     [key: string]: unknown;
 }
 
 /**
  * Referral-user creates a referral
+ * POST /referral-user/referrals
  */
 export interface CreateReferralPayload {
     student_id: number | string;
-    concern: string;
-    details?: string;
+    concern_type: string;
+    urgency: "low" | "medium" | "high";
+    details: string;
 }
 
 export interface CreateReferralResponseDto {
@@ -44,22 +61,46 @@ export interface CreateReferralResponseDto {
 
 /**
  * Counselor lists referrals
+ * GET /counselor/referrals
  */
 export interface GetCounselorReferralsResponseDto {
     message?: string;
     referrals: ReferralDto[];
+    meta?: {
+        current_page?: number;
+        per_page?: number;
+        total?: number;
+        last_page?: number;
+        [key: string]: unknown;
+    };
 }
 
 export interface GetReferralUserReferralsResponseDto {
     message?: string;
     referrals: ReferralDto[];
+    meta?: {
+        current_page?: number;
+        per_page?: number;
+        total?: number;
+        last_page?: number;
+        [key: string]: unknown;
+    };
 }
 
-export interface UpdateReferralStatusPayload {
-    status: ReferralStatusApi;
+/**
+ * GET /counselor/referrals/{id} OR /referral-user/referrals/{id}
+ */
+export interface GetReferralByIdResponseDto {
+    referral: ReferralDto;
 }
 
-export interface UpdateReferralStatusResponseDto {
+export interface PatchReferralPayload {
+    status?: ReferralStatusApi;
+    remarks?: string | null;
+    counselor_id?: number | string | null;
+}
+
+export interface PatchReferralResponseDto {
     message?: string;
     referral: ReferralDto;
 }
@@ -69,12 +110,16 @@ export interface ReferralsApiError extends Error {
     data?: unknown;
 }
 
+function trimSlash(s: string) {
+    return s.replace(/\/+$/, "");
+}
+
 function resolveReferralsApiUrl(path: string): string {
     if (!AUTH_API_BASE_URL) {
         throw new Error("VITE_API_LARAVEL_BASE_URL is not defined. Set it in your .env file.");
     }
     const trimmedPath = path.replace(/^\/+/, "");
-    return `${AUTH_API_BASE_URL}/${trimmedPath}`;
+    return `${trimSlash(AUTH_API_BASE_URL)}/${trimmedPath}`;
 }
 
 async function referralsApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -99,9 +144,11 @@ async function referralsApiFetch<T>(path: string, init: RequestInit = {}): Promi
 
     if (!response.ok) {
         const body = data as any;
+        const rawStr = typeof data === "string" ? data : "";
         const message =
             body?.message ||
             body?.error ||
+            (rawStr ? rawStr.slice(0, 220) : "") ||
             response.statusText ||
             "An unknown error occurred while communicating with the server.";
 
@@ -114,10 +161,6 @@ async function referralsApiFetch<T>(path: string, init: RequestInit = {}): Promi
     return data as T;
 }
 
-/**
- * ✅ Referral user submit referral
- * POST /referral-user/referrals
- */
 export async function createReferralApi(payload: CreateReferralPayload): Promise<CreateReferralResponseDto> {
     return referralsApiFetch<CreateReferralResponseDto>("/referral-user/referrals", {
         method: "POST",
@@ -125,36 +168,46 @@ export async function createReferralApi(payload: CreateReferralPayload): Promise
     });
 }
 
-/**
- * ✅ Counselor fetch referrals
- * GET /counselor/referrals
- */
-export async function getCounselorReferralsApi(): Promise<GetCounselorReferralsResponseDto> {
-    return referralsApiFetch<GetCounselorReferralsResponseDto>("/counselor/referrals", {
+export async function getCounselorReferralsApi(params?: {
+    per_page?: number;
+    status?: string;
+}): Promise<GetCounselorReferralsResponseDto> {
+    const qs = new URLSearchParams();
+    if (params?.per_page) qs.set("per_page", String(params.per_page));
+    if (params?.status && params.status !== "all") qs.set("status", String(params.status));
+
+    const path = qs.toString() ? `/counselor/referrals?${qs.toString()}` : "/counselor/referrals";
+
+    return referralsApiFetch<GetCounselorReferralsResponseDto>(path, {
         method: "GET",
     });
 }
 
-/**
- * ✅ Referral user referral history
- * GET /referral-user/referrals
- */
-export async function getReferralUserReferralsApi(): Promise<GetReferralUserReferralsResponseDto> {
-    return referralsApiFetch<GetReferralUserReferralsResponseDto>("/referral-user/referrals", {
+export async function getReferralUserReferralsApi(params?: {
+    per_page?: number;
+}): Promise<GetReferralUserReferralsResponseDto> {
+    const qs = new URLSearchParams();
+    if (params?.per_page) qs.set("per_page", String(params.per_page));
+
+    const path = qs.toString() ? `/referral-user/referrals?${qs.toString()}` : "/referral-user/referrals";
+
+    return referralsApiFetch<GetReferralUserReferralsResponseDto>(path, {
         method: "GET",
     });
 }
 
-/**
- * ✅ Counselor update referral status
- * PUT /counselor/referrals/{id}/status
- */
-export async function updateReferralStatusApi(
+export async function getCounselorReferralByIdApi(id: number | string): Promise<GetReferralByIdResponseDto> {
+    return referralsApiFetch<GetReferralByIdResponseDto>(`/counselor/referrals/${encodeURIComponent(String(id))}`, {
+        method: "GET",
+    });
+}
+
+export async function patchCounselorReferralApi(
     id: number | string,
-    payload: UpdateReferralStatusPayload,
-): Promise<UpdateReferralStatusResponseDto> {
-    return referralsApiFetch<UpdateReferralStatusResponseDto>(`/counselor/referrals/${id}/status`, {
-        method: "PUT",
+    payload: PatchReferralPayload,
+): Promise<PatchReferralResponseDto> {
+    return referralsApiFetch<PatchReferralResponseDto>(`/counselor/referrals/${encodeURIComponent(String(id))}`, {
+        method: "PATCH",
         body: JSON.stringify(payload),
     });
 }
