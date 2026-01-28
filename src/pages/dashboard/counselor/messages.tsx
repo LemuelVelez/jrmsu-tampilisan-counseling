@@ -67,7 +67,7 @@ type UiMessage = {
     /**
      * ✅ FIX:
      * Normalize recipientRole so it is always one of: student|guest|counselor|admin|null.
-     * This prevents wrong peerRole (e.g. "Student", "students") which breaks avatar backfill.
+     * This prevents wrong peerRole (e.g. "Student", "students") which breaks avatar/name backfill.
      */
     recipientRole?: PeerRole | null
 
@@ -104,6 +104,11 @@ type AutoStartConversationPayload = {
     role: PeerRole
     id: number | string
     name?: string
+}
+
+type PeerProfile = {
+    name: string | null
+    avatar_url: string | null
 }
 
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined
@@ -473,32 +478,59 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 }
 
 /**
- * ✅ Fetch a single user's avatar by (role, id) for conversations coming from message history
- * (where the inbox API may not include avatar fields).
+ * ✅ NEW: Fetch a single user's profile (name + avatar) from DB for conversations coming from
+ * message history (where the inbox API may not include recipient_name/avatar fields).
+ *
+ * This is what fixes "Student #7" -> actual name from users table.
  */
-async function tryFetchUserAvatarById(
+async function tryFetchUserProfileById(
     role: PeerRole,
     id: number | string,
     token?: string | null,
     signal?: AbortSignal,
-): Promise<string | null> {
+): Promise<PeerProfile | null> {
     const sid = String(id).trim()
     if (!sid) return null
 
-    const roleParam = encodeURIComponent(role)
     const q = encodeURIComponent(sid)
+    const roleParam = encodeURIComponent(role)
 
-    const candidates = [
-        `/${role}s?search=${q}&limit=1`,
-        `/${role}s?q=${q}&limit=1`,
-        `/${role}s?query=${q}&limit=1`,
-        `/users?role=${roleParam}&search=${q}&limit=1`,
-        `/users?role=${roleParam}&q=${q}&limit=1`,
-    ]
+    const candidates: string[] = []
+
+    // If you have a dedicated student profile endpoint, try it first
+    if (role === "student") {
+        candidates.push(`/counselor/students/${q}`)
+    }
+
+    // Role-specific directory endpoints
+    candidates.push(`/${role}s?search=${q}&limit=1`)
+    candidates.push(`/${role}s?q=${q}&limit=1`)
+    candidates.push(`/${role}s?query=${q}&limit=1`)
+    candidates.push(`/users?role=${roleParam}&search=${q}&limit=1`)
+    candidates.push(`/users?role=${roleParam}&q=${q}&limit=1`)
+    candidates.push(`/users?role=${roleParam}&query=${q}&limit=1`)
+
+    // Fallback: query all roles (directory allows roleFilter=null)
+    candidates.push(`/users?search=${q}&limit=1`)
+    candidates.push(`/users?q=${q}&limit=1`)
+    candidates.push(`/users?query=${q}&limit=1`)
 
     for (const path of candidates) {
         try {
-            const data = await apiFetch(path, { method: "GET", signal }, token)
+            const data: any = await apiFetch(path, { method: "GET", signal }, token)
+
+            // Dedicated endpoint format: { student: {...}, summary: {...} }
+            const direct = data?.student ?? data?.user ?? null
+            if (direct) {
+                const name = extractUserName(direct)
+                const avatarRaw = pickAvatarUrl(direct) ?? null
+                return {
+                    name: name ? String(name).trim() : null,
+                    avatar_url: avatarRaw,
+                }
+            }
+
+            // Directory format: { users: [...] } or similar
             const arr = extractUsersArray(data)
             if (!Array.isArray(arr) || arr.length === 0) continue
 
@@ -508,8 +540,15 @@ async function tryFetchUserAvatarById(
                     .find((u: any) => String(u?.id ?? u?.user_id ?? u?.account_id ?? "").trim() === sid) ??
                 (arr[0]?.user ?? arr[0])
 
+            if (!found) continue
+
+            const name = extractUserName(found)
             const avatarRaw = pickAvatarUrl(found) ?? null
-            return avatarRaw
+
+            return {
+                name: name ? String(name).trim() : null,
+                avatar_url: avatarRaw,
+            }
         } catch {
             // keep trying next candidate
         }
@@ -689,6 +728,8 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerId = peerMsg.recipientId ?? null
 
             if (peerRole === "student" || peerRole === "guest" || peerRole === "admin") {
+                // NOTE: if counselor messaged first and student hasn't replied yet,
+                // this becomes "Student #7" -> we will backfill from users table.
                 peerName = peerId ? `${roleLabel(peerRole)} #${peerId}` : roleLabel(peerRole)
             } else {
                 peerName = peerId ? `Counselor #${peerId}` : "Counselor Office"
@@ -735,6 +776,15 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
 function peerKey(role: PeerRole, id?: number | string | null): string | null {
     if (id == null || String(id).trim() === "") return null
     return `${role}-${String(id)}`
+}
+
+function isPlaceholderPeerName(peerName: string, role: PeerRole, id?: number | string | null): boolean {
+    if (id == null || String(id).trim() === "") return false
+    const cleaned = String(peerName ?? "").trim()
+    const label = roleLabel(role)
+    const placeholder = `${label} #${String(id).trim()}`
+    // treat generic label-only as placeholder too
+    return cleaned === placeholder || cleaned === label
 }
 
 function UserCombobox(props: {
@@ -852,10 +902,10 @@ const CounselorMessages: React.FC = () => {
     const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([])
     const [recipientLoading, setRecipientLoading] = React.useState(false)
 
-    // ✅ avatar cache for conversations built from message history
-    const [avatarByPeerKey, setAvatarByPeerKey] = React.useState<Record<string, string | null>>({})
-    const avatarCacheRef = React.useRef(new Map<string, string | null>())
-    const avatarInflightRef = React.useRef(new Set<string>())
+    // ✅ profile cache (name + avatar) for conversations built from message history
+    const [profileByPeerKey, setProfileByPeerKey] = React.useState<Record<string, PeerProfile>>({})
+    const profileCacheRef = React.useRef(new Map<string, PeerProfile>())
+    const profileInflightRef = React.useRef(new Set<string>())
 
     const localIdRef = React.useRef(0)
     const bottomRef = React.useRef<HTMLDivElement | null>(null)
@@ -947,7 +997,49 @@ const CounselorMessages: React.FC = () => {
         return merged
     }, [conversationsFromMessages, draftConversations])
 
-    // ✅ Backfill avatars for conversations that come from message history (no avatar fields)
+    const getPeerProfile = React.useCallback(
+        (role: PeerRole, id?: number | string | null): PeerProfile | null => {
+            const k = peerKey(role, id)
+            if (!k) return null
+            return profileByPeerKey[k] ?? profileCacheRef.current.get(k) ?? null
+        },
+        [profileByPeerKey],
+    )
+
+    const getConversationDisplayName = React.useCallback(
+        (c: Conversation): string => {
+            const prof = getPeerProfile(c.peerRole, c.peerId ?? null)
+            const n = prof?.name ? String(prof.name).trim() : ""
+            return n ? n : c.peerName
+        },
+        [getPeerProfile],
+    )
+
+    const getConversationAvatarSrc = React.useCallback(
+        (c: Conversation): string | null => {
+            const prof = getPeerProfile(c.peerRole, c.peerId ?? null)
+            const raw = c.peerAvatarUrl ?? prof?.avatar_url ?? null
+            return resolveAvatarSrc(raw)
+        },
+        [getPeerProfile],
+    )
+
+    const resolveMessageSenderName = React.useCallback(
+        (m: UiMessage): string => {
+            if (m.sender === "system") return m.senderName
+            if (m.sender === "counselor") return m.senderName
+
+            const role = (m.sender === "student" ? "student" : "guest") as PeerRole
+            const id = (m.senderId ?? m.userId) as any
+            const prof = getPeerProfile(role, id)
+            const name = prof?.name ? String(prof.name).trim() : ""
+            return name ? name : m.senderName
+        },
+        [getPeerProfile],
+    )
+
+    // ✅ Backfill names + avatars for conversations that come from message history
+    // (fixes: "Student #7" showing instead of real student name)
     React.useEffect(() => {
         const controller = new AbortController()
 
@@ -956,13 +1048,18 @@ const CounselorMessages: React.FC = () => {
                 const key = peerKey(c.peerRole, c.peerId)
                 if (!key) return null
 
-                const already =
-                    c.peerAvatarUrl ||
-                    avatarByPeerKey[key] ||
-                    avatarCacheRef.current.has(key) ||
-                    avatarInflightRef.current.has(key)
+                if (profileInflightRef.current.has(key)) return null
 
-                if (already) return null
+                const cached = profileByPeerKey[key] ?? profileCacheRef.current.get(key) ?? null
+
+                const haveName = !!(cached?.name && String(cached.name).trim())
+                const haveAvatar = !!(c.peerAvatarUrl || (cached?.avatar_url && String(cached.avatar_url).trim()))
+
+                const needName = isPlaceholderPeerName(c.peerName, c.peerRole, c.peerId) && !haveName
+                const needAvatar = !haveAvatar
+
+                if (!needName && !needAvatar) return null
+
                 return { key, role: c.peerRole, id: c.peerId! }
             })
             .filter(Boolean) as Array<{ key: string; role: PeerRole; id: number | string }>
@@ -973,13 +1070,21 @@ const CounselorMessages: React.FC = () => {
                 for (const item of todo) {
                     if (controller.signal.aborted) return
 
-                    avatarInflightRef.current.add(item.key)
+                    profileInflightRef.current.add(item.key)
                     try {
-                        const avatarRaw = await tryFetchUserAvatarById(item.role, item.id, token, controller.signal)
-                        avatarCacheRef.current.set(item.key, avatarRaw)
-                        setAvatarByPeerKey((prev) => ({ ...prev, [item.key]: avatarRaw }))
+                        const prof = await tryFetchUserProfileById(item.role, item.id, token, controller.signal)
+                        if (!prof) continue
+
+                        const prev = profileCacheRef.current.get(item.key) ?? { name: null, avatar_url: null }
+                        const merged: PeerProfile = {
+                            name: (prof.name && prof.name.trim()) ? prof.name.trim() : prev.name,
+                            avatar_url: (prof.avatar_url && prof.avatar_url.trim()) ? prof.avatar_url.trim() : prev.avatar_url,
+                        }
+
+                        profileCacheRef.current.set(item.key, merged)
+                        setProfileByPeerKey((p) => ({ ...p, [item.key]: merged }))
                     } finally {
-                        avatarInflightRef.current.delete(item.key)
+                        profileInflightRef.current.delete(item.key)
                     }
                 }
             })().catch(() => {
@@ -987,7 +1092,7 @@ const CounselorMessages: React.FC = () => {
             })
 
         return () => controller.abort()
-    }, [conversations, token, avatarByPeerKey])
+    }, [conversations, token, profileByPeerKey])
 
     // Handle auto-start once conversations are available
     React.useEffect(() => {
@@ -1046,14 +1151,15 @@ const CounselorMessages: React.FC = () => {
         return conversations
             .filter((c) => (roleFilter === "all" ? true : c.peerRole === roleFilter))
             .filter((c) => {
+                const name = getConversationDisplayName(c).toLowerCase()
                 if (!q) return true
                 return (
-                    c.peerName.toLowerCase().includes(q) ||
+                    name.includes(q) ||
                     c.subtitle.toLowerCase().includes(q) ||
                     roleLabel(c.peerRole).toLowerCase().includes(q)
                 )
             })
-    }, [conversations, roleFilter, search])
+    }, [conversations, roleFilter, search, getConversationDisplayName])
 
     const activeConversation = React.useMemo(
         () => conversations.find((c) => c.id === activeConversationId) ?? null,
@@ -1206,9 +1312,13 @@ const CounselorMessages: React.FC = () => {
         setShowNewMessage(false)
 
         const k = peerKey(convo.peerRole, convo.peerId)
-        if (k && convo.peerAvatarUrl) {
-            avatarCacheRef.current.set(k, convo.peerAvatarUrl)
-            setAvatarByPeerKey((prev) => ({ ...prev, [k]: convo.peerAvatarUrl! }))
+        if (k) {
+            const merged: PeerProfile = {
+                name: convo.peerName,
+                avatar_url: convo.peerAvatarUrl ?? null,
+            }
+            profileCacheRef.current.set(k, merged)
+            setProfileByPeerKey((prev) => ({ ...prev, [k]: merged }))
         }
 
         setNewRecipient(null)
@@ -1401,12 +1511,7 @@ const CounselorMessages: React.FC = () => {
         }
     }
 
-    // ===== Avatar helpers per conversation =====
-    const getConversationAvatarSrc = (c: Conversation): string | null => {
-        const k = peerKey(c.peerRole, c.peerId)
-        const raw = c.peerAvatarUrl ?? (k ? avatarByPeerKey[k] : null) ?? null
-        return resolveAvatarSrc(raw)
-    }
+    const activePeerName = activeConversation ? getConversationDisplayName(activeConversation) : ""
 
     return (
         <DashboardLayout title="Messages" description="Manage and respond to conversations.">
@@ -1587,6 +1692,7 @@ const CounselorMessages: React.FC = () => {
                                             filteredConversations.map((c) => {
                                                 const active = c.id === activeConversationId
                                                 const avatarSrc = getConversationAvatarSrc(c)
+                                                const displayName = getConversationDisplayName(c)
 
                                                 return (
                                                     <Button
@@ -1610,18 +1716,18 @@ const CounselorMessages: React.FC = () => {
                                                                     <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
                                                                         <AvatarImage
                                                                             src={avatarSrc ?? undefined}
-                                                                            alt={c.peerName}
+                                                                            alt={displayName}
                                                                             className="object-cover"
                                                                             loading="lazy"
                                                                         />
                                                                         <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
-                                                                            {initials(c.peerName)}
+                                                                            {initials(displayName)}
                                                                         </AvatarFallback>
                                                                     </Avatar>
 
                                                                     <div className="min-w-0">
                                                                         <div className="truncate text-[0.92rem] font-semibold text-slate-900 sm:text-sm">
-                                                                            {c.peerName}
+                                                                            {displayName}
                                                                         </div>
                                                                         <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
                                                                             {c.subtitle}
@@ -1675,18 +1781,18 @@ const CounselorMessages: React.FC = () => {
                                                 <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
                                                     <AvatarImage
                                                         src={getConversationAvatarSrc(activeConversation) ?? undefined}
-                                                        alt={activeConversation.peerName}
+                                                        alt={activePeerName}
                                                         className="object-cover"
                                                         loading="lazy"
                                                     />
                                                     <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
-                                                        {initials(activeConversation.peerName)}
+                                                        {initials(activePeerName)}
                                                     </AvatarFallback>
                                                 </Avatar>
 
                                                 <div className="min-w-0">
                                                     <div className="truncate text-sm font-semibold text-slate-900">
-                                                        {activeConversation.peerName}
+                                                        {activePeerName}
                                                     </div>
                                                     <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
                                                         {roleLabel(activeConversation.peerRole)} •{" "}
@@ -1794,7 +1900,7 @@ const CounselorMessages: React.FC = () => {
                                                                         }`}
                                                                 >
                                                                     <span className="font-medium text-slate-700">
-                                                                        {mine ? "You" : m.senderName}
+                                                                        {mine ? "You" : resolveMessageSenderName(m)}
                                                                     </span>
                                                                     <span aria-hidden="true">•</span>
 
@@ -1878,7 +1984,7 @@ const CounselorMessages: React.FC = () => {
                                                 onChange={(e) => setDraft(e.target.value)}
                                                 placeholder={
                                                     activeConversation
-                                                        ? `Message ${activeConversation.peerName}…`
+                                                        ? `Message ${activePeerName}…`
                                                         : "Select a conversation…"
                                                 }
                                                 disabled={!activeConversation || isSending}

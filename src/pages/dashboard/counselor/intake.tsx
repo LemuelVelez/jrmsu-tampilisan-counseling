@@ -1045,24 +1045,6 @@ const CounselorIntake: React.FC = () => {
                         </Button>
                     </div>
 
-                    {/* Info Alert (no buttons inside) */}
-                    <Alert className="border-amber-100 bg-amber-50/70">
-                        <AlertTitle className="text-sm font-semibold text-amber-900">
-                            Guidance &amp; Counseling – Intake (Assessments)
-                        </AlertTitle>
-                        <AlertDescription className="text-xs text-amber-900/80">
-                            Counseling requests are now handled as{" "}
-                            <span className="font-medium">appointments</span>. Go to{" "}
-                            <Link
-                                to="/dashboard/counselor/appointments"
-                                className="font-semibold underline"
-                            >
-                                Appointments
-                            </Link>{" "}
-                            to schedule or reschedule.
-                        </AlertDescription>
-                    </Alert>
-
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-1">
                             <CardTitle className="flex items-center gap-2 text-base font-semibold text-amber-900">
