@@ -15,7 +15,14 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 import {
@@ -190,7 +197,6 @@ function getApiOrigin(): string {
 }
 
 function looksLikeFilePath(s: string): boolean {
-    // Heuristic: contains a file extension OR common avatar folders
     return (
         /\.[a-z0-9]{2,5}(\?.*)?$/i.test(s) ||
         /(^|\/)(avatars|avatar|profile|profiles|images|uploads)(\/|$)/i.test(s)
@@ -210,15 +216,12 @@ function resolveAvatarSrc(raw?: string | null): string | null {
     let s = s0.trim()
     if (!s) return null
 
-    // normalize any backslashes coming from storage paths
     s = s.replace(/\\/g, "/")
 
-    // already absolute or special
     if (/^(data:|blob:)/i.test(s)) return s
     if (/^https?:\/\//i.test(s)) return s
     if (s.startsWith("//")) return `${window.location.protocol}${s}`
 
-    // Strip common Laravel prefixes
     s = s.replace(/^storage\/app\/public\//i, "")
     s = s.replace(/^public\//i, "")
 
@@ -335,7 +338,6 @@ async function fetchCounselorStudentAndGuestUsers(
                 const key = String(u.id)
                 if (seen.has(key)) continue
 
-                // Only keep student/guest-ish roles (best-effort)
                 const r = normalizeRole(u.role ?? "")
                 const looksValid = r.includes("student") || r.includes("guest")
                 if (!looksValid && (path.includes("students") || path.includes("guests"))) {
@@ -350,7 +352,6 @@ async function fetchCounselorStudentAndGuestUsers(
         } catch (e) {
             if (isAbortError(e)) throw e
             lastErr = e
-            // keep trying next candidate
         }
     }
 
@@ -508,6 +509,10 @@ const CounselorUsers: React.FC = () => {
     const [isLoading, setIsLoading] = React.useState(true)
     const [isRefreshing, setIsRefreshing] = React.useState(false)
 
+    // ✅ prevents "No users found" flashing before the FIRST load finishes
+    const [hasLoadedOnce, setHasLoadedOnce] = React.useState(false)
+    const [loadError, setLoadError] = React.useState<string | null>(null)
+
     const [query, setQuery] = React.useState("")
     const [roleFilter, setRoleFilter] = React.useState<PeerRoleFilter>("all")
 
@@ -516,6 +521,9 @@ const CounselorUsers: React.FC = () => {
     // ✅ Prevent unhandled promises / state updates after unmount
     const abortRef = React.useRef<AbortController | null>(null)
     const mountedRef = React.useRef(true)
+
+    // ✅ guard against stale requests (React StrictMode / fast navigation)
+    const loadSeqRef = React.useRef(0)
 
     React.useEffect(() => {
         mountedRef.current = true
@@ -528,9 +536,14 @@ const CounselorUsers: React.FC = () => {
 
     const load = React.useCallback(
         async (mode: "initial" | "refresh") => {
-            // Abort any previous in-flight load
             abortRef.current?.abort()
-            abortRef.current = new AbortController()
+
+            const controller = new AbortController()
+            abortRef.current = controller
+
+            const mySeq = ++loadSeqRef.current
+
+            if (mountedRef.current) setLoadError(null)
 
             if (mode === "initial") {
                 if (mountedRef.current) setIsLoading(true)
@@ -539,17 +552,30 @@ const CounselorUsers: React.FC = () => {
             }
 
             try {
-                const res = await fetchCounselorStudentAndGuestUsers(token, abortRef.current.signal)
-                if (mountedRef.current) setUsers(res)
+                const res = await fetchCounselorStudentAndGuestUsers(token, controller.signal)
+
+                // Only the latest request can update state
+                if (!mountedRef.current) return
+                if (mySeq !== loadSeqRef.current) return
+                if (controller.signal.aborted) return
+
+                setUsers(res)
             } catch (err) {
-                // Ignore aborts (navigation/refresh)
                 if (isAbortError(err)) return
 
-                if (mountedRef.current) {
-                    toast.error(err instanceof Error ? err.message : "Failed to load users.")
+                const msg = err instanceof Error ? err.message : "Failed to load users."
+
+                if (mountedRef.current && mySeq === loadSeqRef.current && !controller.signal.aborted) {
+                    setLoadError(msg)
+                    toast.error(msg)
                 }
             } finally {
-                if (mountedRef.current) {
+                // ✅ NO return in finally (fixes eslint no-unsafe-finally)
+                const canFinalize =
+                    mountedRef.current && mySeq === loadSeqRef.current && !controller.signal.aborted
+
+                if (canFinalize) {
+                    setHasLoadedOnce(true)
                     setIsLoading(false)
                     setIsRefreshing(false)
                 }
@@ -559,7 +585,6 @@ const CounselorUsers: React.FC = () => {
     )
 
     React.useEffect(() => {
-        // ✅ Ensure no unhandled rejection even if something escapes
         load("initial").catch((e) => {
             console.error("[CounselorUsers] load(initial) unhandled:", e)
         })
@@ -653,9 +678,6 @@ const CounselorUsers: React.FC = () => {
         })
     }
 
-    /**
-     * ✅ Student Profile Modal (Counselor View)
-     */
     const [profileOpen, setProfileOpen] = React.useState(false)
     const [profileUser, setProfileUser] = React.useState<DirectoryUser | null>(null)
 
@@ -687,13 +709,11 @@ const CounselorUsers: React.FC = () => {
                 return
             }
 
-            // reset + open
             setProfileOpen(true)
             setProfileUser(u)
             setProfileData(null)
             setHistoryRows([])
 
-            // abort any previous modal fetch
             studentModalAbortRef.current?.abort()
             studentModalAbortRef.current = new AbortController()
 
@@ -750,8 +770,9 @@ const CounselorUsers: React.FC = () => {
     const modalGender = (profileData?.gender ?? profileUser?.gender ?? "").trim()
 
     const profileInitials = getInitials(activeStudentName, modalEmail)
-
     const historyCount = historyRows.length
+
+    const showInitialLoadingState = !hasLoadedOnce || isLoading
 
     return (
         <DashboardLayout title="Users" description="View student and guest accounts in your system.">
@@ -764,9 +785,7 @@ const CounselorUsers: React.FC = () => {
                                     <Users className="h-4 w-4" />
                                     Students & Guests
                                 </CardTitle>
-                                <CardDescription className="text-xs">
-                                    Search and filter users. (Read-only)
-                                </CardDescription>
+                                <CardDescription className="text-xs">Search and filter users. (Read-only)</CardDescription>
                             </div>
 
                             <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
@@ -818,10 +837,27 @@ const CounselorUsers: React.FC = () => {
                     </CardHeader>
 
                     <CardContent>
-                        {isLoading ? (
+                        {showInitialLoadingState ? (
                             <div className="flex items-center gap-2 py-10 text-sm text-muted-foreground">
                                 <Loader2 className="h-4 w-4 animate-spin" />
                                 Loading users…
+                            </div>
+                        ) : loadError && users.length === 0 ? (
+                            <div className="rounded-lg border bg-white/60 p-4 text-sm">
+                                <div className="font-medium text-foreground">Failed to load users.</div>
+                                <div className="mt-1 text-sm text-muted-foreground">{loadError}</div>
+                                <div className="mt-3">
+                                    <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => load("refresh")}
+                                        className="gap-2"
+                                    >
+                                        <RefreshCw className="h-4 w-4" />
+                                        Try again
+                                    </Button>
+                                </div>
                             </div>
                         ) : filtered.length === 0 ? (
                             <div className="rounded-lg border bg-white/60 p-4 text-sm text-muted-foreground">
@@ -889,9 +925,7 @@ const CounselorUsers: React.FC = () => {
                                                             <div className="mt-3 space-y-1 text-xs text-muted-foreground">
                                                                 {u.student_id ? (
                                                                     <div className="flex justify-between gap-6 whitespace-nowrap">
-                                                                        <span className="text-slate-700">
-                                                                            Student ID
-                                                                        </span>
+                                                                        <span className="text-slate-700">Student ID</span>
                                                                         <span>{u.student_id}</span>
                                                                     </div>
                                                                 ) : null}
@@ -1004,9 +1038,7 @@ const CounselorUsers: React.FC = () => {
                                                             </div>
                                                         </TableCell>
 
-                                                        <TableCell className="text-sm text-muted-foreground">
-                                                            {u.email}
-                                                        </TableCell>
+                                                        <TableCell className="text-sm text-muted-foreground">{u.email}</TableCell>
 
                                                         <TableCell>
                                                             <Badge variant="secondary" className="text-xs">
@@ -1024,9 +1056,7 @@ const CounselorUsers: React.FC = () => {
                                                                     <div className="truncate">{u.program}</div>
                                                                     {u.year_level || u.course ? (
                                                                         <div className="truncate text-xs">
-                                                                            {[u.year_level, u.course]
-                                                                                .filter(Boolean)
-                                                                                .join(" • ")}
+                                                                            {[u.year_level, u.course].filter(Boolean).join(" • ")}
                                                                         </div>
                                                                     ) : null}
                                                                 </div>
@@ -1091,7 +1121,6 @@ const CounselorUsers: React.FC = () => {
                         </DialogHeader>
 
                         <div className="space-y-4">
-                            {/* Header card */}
                             <div className="rounded-xl border bg-white/70 p-3">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="flex items-center gap-3">
@@ -1102,15 +1131,11 @@ const CounselorUsers: React.FC = () => {
                                                 className="object-cover"
                                                 loading="lazy"
                                             />
-                                            <AvatarFallback className="text-sm font-semibold">
-                                                {profileInitials}
-                                            </AvatarFallback>
+                                            <AvatarFallback className="text-sm font-semibold">{profileInitials}</AvatarFallback>
                                         </Avatar>
 
                                         <div className="space-y-0.5">
-                                            <div className="text-sm font-semibold text-slate-900">
-                                                {activeStudentName}
-                                            </div>
+                                            <div className="text-sm font-semibold text-slate-900">{activeStudentName}</div>
                                             <div className="text-xs text-muted-foreground">{modalEmail || "—"}</div>
 
                                             {modalStudentId ? (
@@ -1164,7 +1189,6 @@ const CounselorUsers: React.FC = () => {
                                 )}
                             </div>
 
-                            {/* History */}
                             <div className="rounded-xl border bg-white/70 p-3">
                                 <div className="mb-2 flex items-center justify-between gap-2">
                                     <div className="flex items-center gap-2">
@@ -1236,7 +1260,6 @@ const CounselorUsers: React.FC = () => {
                                     type="button"
                                     className="gap-2"
                                     onClick={() => {
-                                        // quick action: message student from profile view
                                         startMessage(profileUser)
                                         closeStudentModal()
                                     }}

@@ -202,7 +202,6 @@ async function fetchNotificationCountsRaw(authToken?: string | null): Promise<an
 
     // ✅ DEV-ONLY: this is how you can copy the real backend payload quickly
     if (import.meta.env.DEV) {
-         
         console.debug("[/notifications/counts] raw payload:", json);
     }
 
@@ -234,6 +233,13 @@ export const NavMain: React.FC = () => {
     const { label, items } = navConfig[roleKey];
     const currentPath = normalizePath(location.pathname);
 
+    const isMessagesRoute =
+        currentPath.includes("/messages") ||
+        currentPath.endsWith("/messages") ||
+        currentPath.includes("/dashboard/counselor/messages") ||
+        currentPath.includes("/dashboard/student/messages") ||
+        currentPath.includes("/dashboard/referral-user/messages");
+
     const [counts, setCounts] = React.useState<NotificationCounts>({
         messages: 0,
         appointments: 0,
@@ -261,25 +267,48 @@ export const NavMain: React.FC = () => {
         }
     }, [authToken, shouldFetchCounts]);
 
+    /**
+     * ✅ Refresh immediately on mount AND whenever route changes.
+     * This helps the badge disappear quickly after you mark conversations as read.
+     */
     React.useEffect(() => {
         refreshCounts();
-    }, [refreshCounts]);
 
+    }, [location.pathname, refreshCounts]);
+
+    /**
+     * ✅ Smarter polling:
+     * - Normal pages: every 30s
+     * - While on Messages page AND there are unread messages: poll faster (every 3s)
+     *
+     * This ensures the badge clears quickly after marking messages as read,
+     * without hammering the API all the time.
+     */
     React.useEffect(() => {
         if (!shouldFetchCounts) return;
 
+        const fastPoll = isMessagesRoute && counts.messages > 0;
+        const intervalMs = fastPoll ? 3000 : 30000;
+
         const interval = window.setInterval(() => {
             refreshCounts();
-        }, 30000);
+        }, intervalMs);
 
         const onFocus = () => refreshCounts();
+
+        const onVisibilityChange = () => {
+            if (document.visibilityState === "visible") refreshCounts();
+        };
+
         window.addEventListener("focus", onFocus);
+        document.addEventListener("visibilitychange", onVisibilityChange);
 
         return () => {
             window.clearInterval(interval);
             window.removeEventListener("focus", onFocus);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
         };
-    }, [refreshCounts, shouldFetchCounts]);
+    }, [refreshCounts, shouldFetchCounts, isMessagesRoute, counts.messages]);
 
     const getBadgeForItem = (badgeKey?: BadgeKey): string => {
         if (!badgeKey) return "";
