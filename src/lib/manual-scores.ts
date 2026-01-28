@@ -1,6 +1,7 @@
 import {
     getCounselorCaseLoadApi,
     getStudentManualScoresApi,
+    getCounselorManualScoresApi,
     saveManualScoreApi,
     type CaseLoadStudentDto,
     type ManualAssessmentScoreDto,
@@ -25,5 +26,13 @@ export async function saveManualAssessmentScore(payload: SaveManualScorePayload)
 
 export async function fetchStudentManualScores(studentId: number | string): Promise<ManualAssessmentScoreDto[]> {
     const res = await getStudentManualScoresApi(studentId)
+    return res.scores ?? []
+}
+
+/**
+ * ✅ Counselor: fetch ALL manual scores for reports
+ */
+export async function fetchCounselorManualScores(): Promise<ManualAssessmentScoreDto[]> {
+    const res = await getCounselorManualScoresApi()
     return res.scores ?? []
 }

@@ -30,6 +30,10 @@ export interface ManualAssessmentScoreDto {
     created_at?: string
     updated_at?: string
 
+    // Backend may include relations:
+    student?: any
+    counselor?: any
+
     [key: string]: unknown
 }
 
@@ -198,4 +202,32 @@ export async function getStudentManualScoresApi(
     }
 
     throw lastErr ?? new Error("Failed to fetch manual scores.")
+}
+
+/**
+ * ✅ Counselor: list ALL manual scores (no student filter)
+ * GET /counselor/manual-scores
+ */
+export async function getCounselorManualScoresApi(): Promise<GetStudentManualScoresResponseDto> {
+    const tryPaths = [
+        `/counselor/manual-scores`,
+        `/counselor/manual-scores?student_id=`, // harmless fallback (backend ignores non-digit)
+    ]
+
+    let lastErr: any = null
+
+    for (const path of tryPaths) {
+        try {
+            const json = await manualScoresApiFetch<any>(path, { method: "GET" })
+            const scores = (json?.scores ?? json?.data ?? json) as ManualAssessmentScoreDto[]
+            return { message: json?.message, scores: Array.isArray(scores) ? scores : [] }
+        } catch (e: any) {
+            lastErr = e
+            const status = Number(e?.status)
+            if (status === 404 || status === 405) continue
+            throw e
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to fetch counselor manual scores.")
 }

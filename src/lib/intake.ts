@@ -2,12 +2,14 @@ import {
     createIntakeRequestApi,
     createIntakeAssessmentApi,
     getStudentAssessmentsApi,
+    getCounselorAssessmentsApi,
     type CreateIntakeRequestPayload,
     type CreateIntakeRequestResponseDto,
     type CreateIntakeAssessmentPayload,
     type CreateIntakeAssessmentResponseDto,
     type GetStudentAssessmentsResponseDto,
     type IntakeAssessmentDto,
+    type CounselorAssessmentRecordDto,
 } from "@/api/intake/route";
 
 /**
@@ -30,6 +32,11 @@ export type IntakeAssessmentFormPayload = CreateIntakeAssessmentPayload;
  */
 export type StudentAssessment = IntakeAssessmentDto;
 export type GetStudentAssessmentsResult = GetStudentAssessmentsResponseDto;
+
+/**
+ * ✅ Counselor assessment record (with optional user relation) used by reports.
+ */
+export type CounselorAssessmentRecord = CounselorAssessmentRecordDto;
 
 /**
  * High-level helper used by the React intake page to submit the main
@@ -57,4 +64,12 @@ export async function submitIntakeAssessment(
  */
 export async function fetchStudentAssessments(): Promise<GetStudentAssessmentsResponseDto> {
     return getStudentAssessmentsApi();
+}
+
+/**
+ * ✅ Counselor: fetch all assessments for reports
+ */
+export async function fetchCounselorAssessments(): Promise<CounselorAssessmentRecordDto[]> {
+    const res = await getCounselorAssessmentsApi();
+    return res.assessments ?? [];
 }

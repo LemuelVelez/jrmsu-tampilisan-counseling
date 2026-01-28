@@ -28,6 +28,9 @@ import CounselorReferralDetails from "./pages/dashboard/counselor/referral-detai
 import CounselorCaseLoad from "./pages/dashboard/counselor/case-load";
 import CounselorAssessmentScoreInput from "./pages/dashboard/counselor/assessment-score-input";
 
+// ✅ NEW: Assessment report page (Counselor)
+import CounselorAssessmentReport from "./pages/dashboard/counselor/assessment-report";
+
 // ✅ NEW: Referral-user pages
 import ReferralUserMessages from "./pages/dashboard/referral-user/messages";
 import ReferralUserReferrals from "./pages/dashboard/referral-user/referrals";
@@ -211,7 +214,7 @@ function App() {
             }
           />
 
-          {/* ✅ NEW: Counselor referrals list */}
+          {/* ✅ Counselor referrals list */}
           <Route
             path="/dashboard/counselor/referrals"
             element={
@@ -221,7 +224,7 @@ function App() {
             }
           />
 
-          {/* ✅ NEW: Counselor referral details */}
+          {/* ✅ Counselor referral details */}
           <Route
             path="/dashboard/counselor/referrals/:id"
             element={
@@ -231,7 +234,7 @@ function App() {
             }
           />
 
-          {/* ✅ NEW: Counselor case load */}
+          {/* ✅ Counselor case load */}
           <Route
             path="/dashboard/counselor/case-load"
             element={
@@ -241,12 +244,22 @@ function App() {
             }
           />
 
-          {/* ✅ NEW: Counselor hardcopy assessment score input */}
+          {/* ✅ Counselor hardcopy assessment score input */}
           <Route
             path="/dashboard/counselor/assessment-score-input"
             element={
               <RequireRole allowedRoles={["counselor", "counsellor"]}>
                 <CounselorAssessmentScoreInput />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ FIX: Counselor assessment report page (this was missing → caused 404) */}
+          <Route
+            path="/dashboard/counselor/assessment-report"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorAssessmentReport />
               </RequireRole>
             }
           />

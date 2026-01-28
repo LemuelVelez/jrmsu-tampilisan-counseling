@@ -208,6 +208,26 @@ export interface GetCounselorStudentHistoryResponseDto {
     history: StudentCounselingHistoryDto;
 }
 
+/** -----------------------------
+ * Counselor: Assessments list (for reports)
+ * ------------------------------*/
+
+export interface CounselorAssessmentUserDto {
+    id: number | string;
+    name?: string | null;
+    email?: string | null;
+    [key: string]: unknown;
+}
+
+export interface CounselorAssessmentRecordDto extends IntakeAssessmentDto {
+    user?: CounselorAssessmentUserDto;
+}
+
+export interface GetCounselorAssessmentsResponseDto {
+    message?: string;
+    assessments: CounselorAssessmentRecordDto[];
+}
+
 export interface IntakeApiError extends Error {
     status?: number;
     data?: unknown;
@@ -368,4 +388,39 @@ export async function getCounselorStudentHistoryApi(
         `/counselor/students/${studentId}/history`,
         { method: "GET" },
     );
+}
+
+/**
+ * ✅ Counselor assessments list (for Assessment Reports page)
+ * Tries a few likely paths to be robust with route naming.
+ *
+ * Expected backend response:
+ * { assessments: [...] }
+ */
+export async function getCounselorAssessmentsApi(): Promise<GetCounselorAssessmentsResponseDto> {
+    const tryPaths = [
+        "/counselor/assessments",
+        "/counselor/intake/assessments",
+        "/counselor/intake-assessments",
+    ];
+
+    let lastErr: any = null;
+
+    for (const path of tryPaths) {
+        try {
+            const json = await intakeApiFetch<any>(path, { method: "GET" });
+            const assessments = (json?.assessments ?? json?.data ?? json) as CounselorAssessmentRecordDto[];
+            return {
+                message: json?.message,
+                assessments: Array.isArray(assessments) ? assessments : [],
+            };
+        } catch (e: any) {
+            lastErr = e;
+            const status = Number(e?.status);
+            if (status === 404 || status === 405) continue;
+            throw e;
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to fetch counselor assessments.");
 }
