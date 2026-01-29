@@ -48,13 +48,18 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { cn } from "@/lib/utils"
 import { Check, ChevronsUpDown, MoreVertical, Pencil, RefreshCw, Trash2 } from "lucide-react"
 
-type PeerRole = "student" | "guest" | "counselor" | "admin"
+/**
+ * ✅ UPDATED:
+ * Added "referral_user" so counselor can message Dean/Registrar/Program Chair accounts.
+ */
+type PeerRole = "student" | "guest" | "counselor" | "admin" | "referral_user"
+type SenderRole = PeerRole | "system"
 
 type UiMessage = {
     id: number | string
     conversationId: string
 
-    sender: "student" | "guest" | "counselor" | "system"
+    sender: SenderRole
     senderName: string
     content: string
     createdAt: string
@@ -66,8 +71,8 @@ type UiMessage = {
 
     /**
      * ✅ FIX:
-     * Normalize recipientRole so it is always one of: student|guest|counselor|admin|null.
-     * This prevents wrong peerRole (e.g. "Student", "students") which breaks avatar/name backfill.
+     * Normalize recipientRole so it is always one of:
+     * student|guest|counselor|admin|referral_user|null.
      */
     recipientRole?: PeerRole | null
 
@@ -97,6 +102,14 @@ type DirectoryUser = {
     id: number | string
     name: string
     role: PeerRole
+
+    /**
+     * ✅ NEW:
+     * For referral_user accounts, preserve the specific office role if backend provides it
+     * (e.g., dean / registrar / program_chair).
+     */
+    role_name?: string | null
+
     avatar_url?: string | null
 }
 
@@ -359,19 +372,49 @@ function extractUserName(u: any): string {
     return name || "Unknown"
 }
 
+function normalizeRawRoleString(raw: any): string {
+    if (raw == null) return ""
+    return String(raw).trim()
+}
+
+function referralRoleName(rawRole?: any): string | null {
+    const r = normalizeRawRoleString(rawRole).toLowerCase()
+    if (!r) return null
+
+    if (r === "dean") return "Dean"
+    if (r === "registrar") return "Registrar"
+    if (r === "program_chair" || r === "program chair" || r === "programchair") return "Program Chair"
+
+    // sometimes backend sends in human-case already
+    if (r.includes("dean")) return "Dean"
+    if (r.includes("registrar")) return "Registrar"
+    if (r.includes("program") && r.includes("chair")) return "Program Chair"
+
+    return null
+}
+
 /**
  * IMPORTANT:
  * Role is the basis, NOT account_type.
  * We only map explicit role-like fields (role / role_name / type).
+ *
+ * ✅ UPDATED:
+ * Adds referral_user + dean/registrar/program_chair mapping.
  */
 function toPeerRole(role: any): PeerRole | null {
     if (role == null) return null
-    const r = String(role).trim().toLowerCase()
+    const r0 = String(role).trim()
+    const r = r0.toLowerCase()
 
     if (r === "student") return "student"
     if (r === "guest") return "guest"
     if (r === "counselor") return "counselor"
     if (r === "admin") return "admin"
+
+    // referral user (office)
+    if (r === "referral_user" || r === "referral user" || r === "referral-user" || r === "referralusers") return "referral_user"
+    if (r === "dean" || r === "registrar" || r === "program_chair" || r === "program chair" || r === "programchair")
+        return "referral_user"
 
     // common alternates
     if (r === "guidance" || r === "guidance_counselor" || r === "guidance counselor") return "counselor"
@@ -382,6 +425,9 @@ function toPeerRole(role: any): PeerRole | null {
     if (r === "counselors") return "counselor"
     if (r === "admins") return "admin"
 
+    // plural/alt referral
+    if (r === "referral_users" || r === "referral-users") return "referral_user"
+
     return null
 }
 
@@ -389,202 +435,27 @@ function normalizeRecipientRole(raw: any): PeerRole | null {
     return toPeerRole(raw)
 }
 
-/**
- * Fetch users from DB (NOT from message history).
- *
- * ✅ FIXED:
- * - We DO NOT use account_type for role mapping anymore.
- * - Only the actual "role" (or role-like fields) is respected.
- *
- * ✅ ALSO:
- * - Added "admin" recipient role support.
- *
- * ✅ AVATAR:
- * - Map avatar_url so draft conversations can show images immediately.
- */
-async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
-    const q = query.trim()
-    const roleParam = encodeURIComponent(role)
-
-    const candidates: string[] = []
-
-    if (q.length > 0) {
-        const qq = encodeURIComponent(q)
-
-        candidates.push(`/${role}s?search=${qq}`)
-        candidates.push(`/${role}s/search?q=${qq}`)
-        candidates.push(`/${role}s?query=${qq}`)
-        candidates.push(`/${role}s?q=${qq}`)
-
-        candidates.push(`/users?role=${roleParam}&search=${qq}`)
-        candidates.push(`/users?role=${roleParam}&q=${qq}`)
-        candidates.push(`/users/search?role=${roleParam}&q=${qq}`)
-        candidates.push(`/search/users?role=${roleParam}&q=${qq}`)
-    } else {
-        candidates.push(`/${role}s?limit=20`)
-        candidates.push(`/${role}s?per_page=20`)
-
-        candidates.push(`/users?role=${roleParam}&limit=20`)
-        candidates.push(`/users?role=${roleParam}&per_page=20`)
-    }
-
-    let lastErr: any = null
-
-    for (const path of candidates) {
-        try {
-            const data = await apiFetch(path, { method: "GET" }, token)
-            const arr = extractUsersArray(data)
-            if (!Array.isArray(arr)) continue
-
-            const mapped: DirectoryUser[] = arr
-                .map((raw: any) => {
-                    const u = raw?.user ?? raw
-
-                    const id = u?.id ?? u?.user_id ?? u?.account_id ?? u?.student_id ?? u?.counselor_id
-                    if (id == null || String(id).trim() === "") return null
-
-                    const name = extractUserName(u)
-
-                    const dbRole = toPeerRole(u?.role) ?? toPeerRole(u?.role_name) ?? toPeerRole(u?.type)
-                    if (!dbRole) return null
-                    if (dbRole !== role) return null
-
-                    const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null
-
-                    return {
-                        id,
-                        name,
-                        role: dbRole,
-                        avatar_url: avatarRaw,
-                    } as DirectoryUser
-                })
-                .filter(Boolean) as DirectoryUser[]
-
-            const seen = new Set<string>()
-            const deduped = mapped.filter((u) => {
-                const key = `${u.role}-${String(u.id)}`
-                if (seen.has(key)) return false
-                seen.add(key)
-                return true
-            })
-
-            return deduped
-        } catch (e) {
-            lastErr = e
-        }
-    }
-
-    throw lastErr ?? new Error("Failed to search users from database.")
+function roleLabel(r: PeerRole) {
+    if (r === "counselor") return "Counselor"
+    if (r === "guest") return "Guest"
+    if (r === "admin") return "Admin"
+    if (r === "referral_user") return "Referral User"
+    return "Student"
 }
 
-/**
- * ✅ Fetch a single user's profile (name + avatar) for conversations coming from history.
- * This is what fixes "Student #7" -> actual name from users table.
- */
-async function tryFetchUserProfileById(
-    role: PeerRole,
-    id: number | string,
-    token?: string | null,
-    signal?: AbortSignal,
-): Promise<PeerProfile | null> {
-    const sid = String(id).trim()
-    if (!sid) return null
-
-    const q = encodeURIComponent(sid)
-    const roleParam = encodeURIComponent(role)
-
-    const candidates: string[] = []
-
-    // If you have a dedicated student profile endpoint, try it first
-    if (role === "student") {
-        candidates.push(`/counselor/students/${q}`)
-    }
-
-    // Role-specific directory endpoints
-    candidates.push(`/${role}s?search=${q}&limit=1`)
-    candidates.push(`/${role}s?q=${q}&limit=1`)
-    candidates.push(`/${role}s?query=${q}&limit=1`)
-    candidates.push(`/users?role=${roleParam}&search=${q}&limit=1`)
-    candidates.push(`/users?role=${roleParam}&q=${q}&limit=1`)
-    candidates.push(`/users?role=${roleParam}&query=${q}&limit=1`)
-
-    // Fallback: query all roles
-    candidates.push(`/users?search=${q}&limit=1`)
-    candidates.push(`/users?q=${q}&limit=1`)
-    candidates.push(`/users?query=${q}&limit=1`)
-
-    for (const path of candidates) {
-        try {
-            const data: any = await apiFetch(path, { method: "GET", signal }, token)
-
-            const direct = data?.student ?? data?.user ?? null
-            if (direct) {
-                const name = extractUserName(direct)
-                const avatarRaw = pickAvatarUrl(direct) ?? null
-                return {
-                    name: name ? String(name).trim() : null,
-                    avatar_url: avatarRaw,
-                }
-            }
-
-            const arr = extractUsersArray(data)
-            if (!Array.isArray(arr) || arr.length === 0) continue
-
-            const found =
-                arr
-                    .map((raw: any) => raw?.user ?? raw)
-                    .find((u: any) => String(u?.id ?? u?.user_id ?? u?.account_id ?? "").trim() === sid) ??
-                (arr[0]?.user ?? arr[0])
-
-            if (!found) continue
-
-            const name = extractUserName(found)
-            const avatarRaw = pickAvatarUrl(found) ?? null
-
-            return {
-                name: name ? String(name).trim() : null,
-                avatar_url: avatarRaw,
-            }
-        } catch {
-            // keep trying next candidate
-        }
-    }
-
-    return null
+function roleThreadLabel(r: PeerRole): string {
+    if (r === "counselor") return "Counselor thread"
+    if (r === "guest") return "Guest thread"
+    if (r === "admin") return "Admin thread"
+    if (r === "referral_user") return "Referral user thread"
+    return "Student thread"
 }
 
-const formatTimestamp = (iso: string) => {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return format(d, "MMM d, yyyy • h:mm a")
-}
-
-const formatTimeOnly = (iso: string) => {
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return iso
-    return format(d, "h:mm a")
-}
-
-const formatShort = (iso?: string) => {
-    if (!iso) return ""
-    const d = new Date(iso)
-    if (Number.isNaN(d.getTime())) return ""
-    return format(d, "MMM d")
-}
-
-const initials = (name: string) => {
-    const cleaned = (name || "").trim()
-    if (!cleaned) return "GC"
-    const parts = cleaned.split(/\s+/).slice(0, 2)
-    return parts.map((p) => p[0]?.toUpperCase()).join("") || "GC"
-}
-
-const roleLabel = (r: PeerRole) =>
-    r === "counselor" ? "Counselor" : r === "guest" ? "Guest" : r === "admin" ? "Admin" : "Student"
-
-function normalizeSender(sender: CounselorMessage["sender"]): UiMessage["sender"] {
-    if (sender === "student" || sender === "guest" || sender === "counselor" || sender === "system") return sender
-    return "system"
+function normalizeSender(sender: CounselorMessage["sender"]): SenderRole {
+    const s = String(sender ?? "").trim().toLowerCase()
+    if (s === "system") return "system"
+    const pr = toPeerRole(sender)
+    return pr ?? "system"
 }
 
 function isUnreadFlag(dto: CounselorMessage): boolean {
@@ -602,15 +473,27 @@ function safeConversationId(dto: CounselorMessage): string {
     const recipientRole = normalizeRecipientRole(recipientRoleRaw)
 
     const recipientId = (dto as any).recipient_id ?? null
-
     const userId = (dto as any).user_id ?? dto.user_id ?? null
 
-    if ((sender === "student" || sender === "guest") && userId != null) return `${sender}-${userId}`
-    if ((recipientRole === "student" || recipientRole === "guest" || recipientRole === "admin") && recipientId != null) {
+    // sender-based stable ids
+    if ((sender === "student" || sender === "guest" || sender === "referral_user" || sender === "admin") && userId != null) {
+        return `${sender}-${userId}`
+    }
+
+    // recipient-based stable ids
+    if (
+        (recipientRole === "student" ||
+            recipientRole === "guest" ||
+            recipientRole === "admin" ||
+            recipientRole === "referral_user") &&
+        recipientId != null
+    ) {
         return `${recipientRole}-${recipientId}`
     }
+
     if (userId != null) return `student-${userId}`
 
+    // counselor-to-counselor stable thread
     if (sender === "counselor" && recipientRole === "counselor" && senderId != null && recipientId != null) {
         const a = `counselor-${String(senderId)}`
         const b = `counselor-${String(recipientId)}`
@@ -635,7 +518,11 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
                 ? "Counselor"
                 : sender === "guest"
                     ? "Guest"
-                    : "Student")
+                    : sender === "admin"
+                        ? "Admin"
+                        : sender === "referral_user"
+                            ? "Referral User"
+                            : "Student")
 
     const createdAt = dto.created_at ?? new Date(0).toISOString()
 
@@ -708,9 +595,7 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
         const mySentCounselor = peerMsg.sender === "counselor" && String(peerMsg.senderId ?? "") === myUserId
 
         if (!mySentCounselor && peerMsg.sender !== "system") {
-            peerRole = (peerMsg.sender === "student" || peerMsg.sender === "guest" || peerMsg.sender === "counselor"
-                ? peerMsg.sender
-                : "counselor") as PeerRole
+            peerRole = (peerMsg.sender as PeerRole) ?? "counselor"
 
             peerName =
                 peerMsg.sender === "counselor" && peerMsg.senderName === counselorName
@@ -723,21 +608,14 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerRole = rr
             peerId = peerMsg.recipientId ?? null
 
-            if (peerRole === "student" || peerRole === "guest" || peerRole === "admin") {
+            if (peerRole === "student" || peerRole === "guest" || peerRole === "admin" || peerRole === "referral_user") {
                 peerName = peerId ? `${roleLabel(peerRole)} #${peerId}` : roleLabel(peerRole)
             } else {
                 peerName = peerId ? `Counselor #${peerId}` : "Counselor Office"
             }
         }
 
-        const subtitle =
-            peerRole === "counselor"
-                ? "Counselor thread"
-                : peerRole === "guest"
-                    ? "Guest thread"
-                    : peerRole === "admin"
-                        ? "Admin thread"
-                        : "Student thread"
+        const subtitle = roleThreadLabel(peerRole)
 
         const peerAvatarUrl =
             !mySentCounselor && peerMsg.sender !== "system"
@@ -781,7 +659,7 @@ function isPlaceholderPeerName(peerName: string, role: PeerRole, id?: number | s
 }
 
 /**
- * ✅ Persist peer profile cache so navigating away/back won't revert to "Student #7".
+ * ✅ Persist peer profile cache so navigating away/back won't revert to placeholders.
  */
 const PEER_PROFILE_STORAGE_KEY = "counselor.messages.peerProfiles.v1"
 
@@ -874,6 +752,9 @@ function UserCombobox(props: {
                         <CommandGroup>
                             {users.map((u) => {
                                 const selected = !!value && value.role === u.role && String(value.id) === String(u.id)
+                                const referralLabel =
+                                    u.role === "referral_user" ? (u.role_name ? u.role_name : roleLabel(u.role)) : roleLabel(u.role)
+
                                 return (
                                     <CommandItem
                                         key={`${u.role}-${u.id}`}
@@ -888,7 +769,7 @@ function UserCombobox(props: {
                                         <div className="min-w-0 flex-1">
                                             <div className="truncate text-sm">{u.name}</div>
                                             <div className="truncate text-xs text-muted-foreground">
-                                                {roleLabel(u.role)} • ID: {u.id}
+                                                {referralLabel} • ID: {u.id}
                                             </div>
                                         </div>
                                     </CommandItem>
@@ -900,6 +781,235 @@ function UserCombobox(props: {
             </PopoverContent>
         </Popover>
     )
+}
+
+/**
+ * ✅ Fetch users from DB (NOT from message history).
+ *
+ * ✅ UPDATED:
+ * - Added referral_user support (Dean/Registrar/Program Chair).
+ * - For referral_user, we try multiple endpoint spellings: referral_users / referral-users / users?role=referral_user
+ */
+async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
+    const q = query.trim()
+    const roleParam = encodeURIComponent(role)
+
+    const candidates: string[] = []
+
+    const pushRoleCandidates = (basePlural: string, qq?: string) => {
+        if (qq) {
+            candidates.push(`/${basePlural}?search=${qq}`)
+            candidates.push(`/${basePlural}/search?q=${qq}`)
+            candidates.push(`/${basePlural}?query=${qq}`)
+            candidates.push(`/${basePlural}?q=${qq}`)
+        } else {
+            candidates.push(`/${basePlural}?limit=20`)
+            candidates.push(`/${basePlural}?per_page=20`)
+        }
+    }
+
+    if (q.length > 0) {
+        const qq = encodeURIComponent(q)
+
+        if (role === "referral_user") {
+            // underscore + hyphen pluralizations
+            pushRoleCandidates("referral_users", qq)
+            pushRoleCandidates("referral-users", qq)
+        } else {
+            pushRoleCandidates(`${role}s`, qq)
+        }
+
+        // generic
+        candidates.push(`/users?role=${roleParam}&search=${qq}`)
+        candidates.push(`/users?role=${roleParam}&q=${qq}`)
+        candidates.push(`/users/search?role=${roleParam}&q=${qq}`)
+        candidates.push(`/search/users?role=${roleParam}&q=${qq}`)
+    } else {
+        if (role === "referral_user") {
+            pushRoleCandidates("referral_users")
+            pushRoleCandidates("referral-users")
+        } else {
+            pushRoleCandidates(`${role}s`)
+        }
+
+        candidates.push(`/users?role=${roleParam}&limit=20`)
+        candidates.push(`/users?role=${roleParam}&per_page=20`)
+    }
+
+    let lastErr: any = null
+
+    for (const path of candidates) {
+        try {
+            const data = await apiFetch(path, { method: "GET" }, token)
+            const arr = extractUsersArray(data)
+            if (!Array.isArray(arr)) continue
+
+            const mapped: DirectoryUser[] = arr
+                .map((raw: any) => {
+                    const u = raw?.user ?? raw
+
+                    const id = u?.id ?? u?.user_id ?? u?.account_id ?? u?.student_id ?? u?.counselor_id
+                    if (id == null || String(id).trim() === "") return null
+
+                    const name = extractUserName(u)
+
+                    const rawRole =
+                        u?.role ?? u?.role_name ?? u?.type ?? raw?.role ?? raw?.role_name ?? raw?.type ?? null
+
+                    const dbRole = toPeerRole(rawRole)
+                    if (!dbRole) return null
+                    if (dbRole !== role) return null
+
+                    const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null
+
+                    const referralSpecific = dbRole === "referral_user" ? referralRoleName(rawRole) : null
+
+                    return {
+                        id,
+                        name,
+                        role: dbRole,
+                        role_name: referralSpecific,
+                        avatar_url: avatarRaw,
+                    } as DirectoryUser
+                })
+                .filter(Boolean) as DirectoryUser[]
+
+            const seen = new Set<string>()
+            const deduped = mapped.filter((u) => {
+                const key = `${u.role}-${String(u.id)}`
+                if (seen.has(key)) return false
+                seen.add(key)
+                return true
+            })
+
+            return deduped
+        } catch (e) {
+            lastErr = e
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to search users from database.")
+}
+
+/**
+ * ✅ Fetch a single user's profile (name + avatar) for conversations coming from history.
+ * Helps replace placeholders after navigation.
+ *
+ * ✅ UPDATED:
+ * - Added referral_user endpoint patterns.
+ */
+async function tryFetchUserProfileById(
+    role: PeerRole,
+    id: number | string,
+    token?: string | null,
+    signal?: AbortSignal,
+): Promise<PeerProfile | null> {
+    const sid = String(id).trim()
+    if (!sid) return null
+
+    const q = encodeURIComponent(sid)
+    const roleParam = encodeURIComponent(role)
+
+    const candidates: string[] = []
+
+    // If you have a dedicated student profile endpoint, try it first
+    if (role === "student") {
+        candidates.push(`/counselor/students/${q}`)
+    }
+
+    // Referral user common show endpoints
+    if (role === "referral_user") {
+        candidates.push(`/referral-users/${q}`)
+        candidates.push(`/referral_users/${q}`)
+    }
+
+    // Role-specific directory endpoints
+    if (role === "referral_user") {
+        candidates.push(`/referral-users?search=${q}&limit=1`)
+        candidates.push(`/referral-users?q=${q}&limit=1`)
+        candidates.push(`/referral-users?query=${q}&limit=1`)
+        candidates.push(`/referral_users?search=${q}&limit=1`)
+        candidates.push(`/referral_users?q=${q}&limit=1`)
+        candidates.push(`/referral_users?query=${q}&limit=1`)
+    } else {
+        candidates.push(`/${role}s?search=${q}&limit=1`)
+        candidates.push(`/${role}s?q=${q}&limit=1`)
+        candidates.push(`/${role}s?query=${q}&limit=1`)
+    }
+
+    candidates.push(`/users?role=${roleParam}&search=${q}&limit=1`)
+    candidates.push(`/users?role=${roleParam}&q=${q}&limit=1`)
+    candidates.push(`/users?role=${roleParam}&query=${q}&limit=1`)
+
+    // Fallback: query all roles
+    candidates.push(`/users?search=${q}&limit=1`)
+    candidates.push(`/users?q=${q}&limit=1`)
+    candidates.push(`/users?query=${q}&limit=1`)
+
+    for (const path of candidates) {
+        try {
+            const data: any = await apiFetch(path, { method: "GET", signal }, token)
+
+            const direct = data?.student ?? data?.user ?? null
+            if (direct) {
+                const name = extractUserName(direct)
+                const avatarRaw = pickAvatarUrl(direct) ?? null
+                return {
+                    name: name ? String(name).trim() : null,
+                    avatar_url: avatarRaw,
+                }
+            }
+
+            const arr = extractUsersArray(data)
+            if (!Array.isArray(arr) || arr.length === 0) continue
+
+            const found =
+                arr
+                    .map((raw: any) => raw?.user ?? raw)
+                    .find((u: any) => String(u?.id ?? u?.user_id ?? u?.account_id ?? "").trim() === sid) ??
+                (arr[0]?.user ?? arr[0])
+
+            if (!found) continue
+
+            const name = extractUserName(found)
+            const avatarRaw = pickAvatarUrl(found) ?? null
+
+            return {
+                name: name ? String(name).trim() : null,
+                avatar_url: avatarRaw,
+            }
+        } catch {
+            // keep trying next candidate
+        }
+    }
+
+    return null
+}
+
+const formatTimestamp = (iso: string) => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return format(d, "MMM d, yyyy • h:mm a")
+}
+
+const formatTimeOnly = (iso: string) => {
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return iso
+    return format(d, "h:mm a")
+}
+
+const formatShort = (iso?: string) => {
+    if (!iso) return ""
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ""
+    return format(d, "MMM d")
+}
+
+const initials = (name: string) => {
+    const cleaned = (name || "").trim()
+    if (!cleaned) return "GC"
+    const parts = cleaned.split(/\s+/).slice(0, 2)
+    return parts.map((p) => p[0]?.toUpperCase()).join("") || "GC"
 }
 
 const CounselorMessages: React.FC = () => {
@@ -972,33 +1082,34 @@ const CounselorMessages: React.FC = () => {
     React.useEffect(() => {
         const payload = (location.state as any)?.autoStartConversation as AutoStartConversationPayload | undefined
         if (!payload) return
+        // keep conservative: auto-start currently intended for student/guest links
         if (payload.role !== "student" && payload.role !== "guest") return
         autoStartRef.current = payload
     }, [location.state])
 
     const seedProfilesFromMessages = React.useCallback((ui: UiMessage[]) => {
         // If messages include real sender_name, store it so remount doesn't lose it.
-        // (Helps both list + chat header instantly.)
         const next: Record<string, PeerProfile> = {}
         for (const m of ui) {
-            if (m.sender === "student" || m.sender === "guest") {
-                const id = (m.senderId ?? m.userId) as any
-                const k = peerKey(m.sender, id)
-                if (!k) continue
+            if (m.sender === "system" || m.sender === "counselor") continue
 
-                const candidateName = String(m.senderName ?? "").trim()
-                if (!candidateName) continue
+            const id = (m.senderId ?? m.userId) as any
+            const k = peerKey(m.sender as PeerRole, id)
+            if (!k) continue
 
-                // ignore generic placeholders
-                if (candidateName.toLowerCase() === "student" || candidateName.toLowerCase() === "guest") continue
+            const candidateName = String(m.senderName ?? "").trim()
+            if (!candidateName) continue
 
-                const prev = profileCacheRef.current.get(k) ?? null
-                if (prev?.name && String(prev.name).trim()) continue
+            // ignore generic placeholders
+            const low = candidateName.toLowerCase()
+            if (low === "student" || low === "guest" || low === "admin" || low === "referral user") continue
 
-                next[k] = {
-                    name: candidateName,
-                    avatar_url: m.senderAvatarUrl ?? prev?.avatar_url ?? null,
-                }
+            const prev = profileCacheRef.current.get(k) ?? null
+            if (prev?.name && String(prev.name).trim()) continue
+
+            next[k] = {
+                name: candidateName,
+                avatar_url: m.senderAvatarUrl ?? prev?.avatar_url ?? null,
             }
         }
 
@@ -1101,7 +1212,7 @@ const CounselorMessages: React.FC = () => {
             if (m.sender === "system") return m.senderName
             if (m.sender === "counselor") return m.senderName
 
-            const role = (m.sender === "student" ? "student" : "guest") as PeerRole
+            const role = m.sender as PeerRole
             const id = (m.senderId ?? m.userId) as any
             const prof = getPeerProfile(role, id)
             const name = prof?.name ? String(prof.name).trim() : ""
@@ -1139,38 +1250,39 @@ const CounselorMessages: React.FC = () => {
         const MAX_CONCURRENT = 3
         const queue = [...todo]
 
-        ;(async () => {
-            const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
-                while (queue.length > 0) {
-                    if (controller.signal.aborted) return
-                    const item = queue.shift()
-                    if (!item) return
+            ; (async () => {
+                const workers = Array.from({ length: Math.min(MAX_CONCURRENT, queue.length) }, async () => {
+                    while (queue.length > 0) {
+                        if (controller.signal.aborted) return
+                        const item = queue.shift()
+                        if (!item) return
 
-                    if (profileInflightRef.current.has(item.key)) continue
+                        if (profileInflightRef.current.has(item.key)) continue
 
-                    profileInflightRef.current.add(item.key)
-                    try {
-                        const prof = await tryFetchUserProfileById(item.role, item.id, token, controller.signal)
-                        if (!prof) continue
+                        profileInflightRef.current.add(item.key)
+                        try {
+                            const prof = await tryFetchUserProfileById(item.role, item.id, token, controller.signal)
+                            if (!prof) continue
 
-                        const prev = profileCacheRef.current.get(item.key) ?? { name: null, avatar_url: null }
-                        const merged: PeerProfile = {
-                            name: (prof.name && prof.name.trim()) ? prof.name.trim() : prev.name,
-                            avatar_url: (prof.avatar_url && prof.avatar_url.trim()) ? prof.avatar_url.trim() : prev.avatar_url,
+                            const prev = profileCacheRef.current.get(item.key) ?? { name: null, avatar_url: null }
+                            const merged: PeerProfile = {
+                                name: prof.name && prof.name.trim() ? prof.name.trim() : prev.name,
+                                avatar_url:
+                                    prof.avatar_url && prof.avatar_url.trim() ? prof.avatar_url.trim() : prev.avatar_url,
+                            }
+
+                            profileCacheRef.current.set(item.key, merged)
+                            setProfileByPeerKey((p) => ({ ...p, [item.key]: merged }))
+                        } finally {
+                            profileInflightRef.current.delete(item.key)
                         }
-
-                        profileCacheRef.current.set(item.key, merged)
-                        setProfileByPeerKey((p) => ({ ...p, [item.key]: merged }))
-                    } finally {
-                        profileInflightRef.current.delete(item.key)
                     }
-                }
-            })
+                })
 
-            await Promise.all(workers)
-        })().catch(() => {
-            // silent
-        })
+                await Promise.all(workers)
+            })().catch(() => {
+                // silent
+            })
 
         return () => controller.abort()
     }, [conversations, token, profileByPeerKey])
@@ -1201,7 +1313,7 @@ const CounselorMessages: React.FC = () => {
                 const nowIso = new Date().toISOString()
                 const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`
 
-                const subtitle = targetRole === "guest" ? "Guest thread" : "Student thread"
+                const subtitle = roleThreadLabel(targetRole)
 
                 const convo: Conversation = {
                     id: conversationId,
@@ -1234,11 +1346,7 @@ const CounselorMessages: React.FC = () => {
             .filter((c) => {
                 const name = getConversationDisplayName(c).toLowerCase()
                 if (!q) return true
-                return (
-                    name.includes(q) ||
-                    c.subtitle.toLowerCase().includes(q) ||
-                    roleLabel(c.peerRole).toLowerCase().includes(q)
-                )
+                return name.includes(q) || c.subtitle.toLowerCase().includes(q) || roleLabel(c.peerRole).toLowerCase().includes(q)
             })
     }, [conversations, roleFilter, search, getConversationDisplayName])
 
@@ -1327,11 +1435,7 @@ const CounselorMessages: React.FC = () => {
                 await markCounselorMessagesAsRead(numericIds)
             }
 
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.conversationId === activeConversationId ? { ...m, isUnread: false } : m,
-                ),
-            )
+            setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)))
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
         } finally {
@@ -1365,14 +1469,7 @@ const CounselorMessages: React.FC = () => {
         const peerName = newRecipient.name
 
         const conversationId = `new-${newRecipient.role}-${String(peerId)}-${Date.now()}`
-        const subtitle =
-            newRecipient.role === "counselor"
-                ? "Counselor thread"
-                : newRecipient.role === "guest"
-                    ? "Guest thread"
-                    : newRecipient.role === "admin"
-                        ? "Admin thread"
-                        : "Student thread"
+        const subtitle = roleThreadLabel(newRecipient.role)
         const nowIso = new Date().toISOString()
 
         const convo: Conversation = {
@@ -1620,9 +1717,7 @@ const CounselorMessages: React.FC = () => {
                                     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                         <div className="min-w-0">
                                             <div className="truncate text-sm font-semibold text-slate-900">Inbox</div>
-                                            <div className="truncate text-xs text-muted-foreground">
-                                                {counselorName}
-                                            </div>
+                                            <div className="truncate text-xs text-muted-foreground">{counselorName}</div>
                                         </div>
 
                                         <Badge variant="secondary" className="w-fit text-[0.70rem] sm:text-[0.70rem]">
@@ -1664,6 +1759,8 @@ const CounselorMessages: React.FC = () => {
                                                             <SelectItem value="guest">Guest</SelectItem>
                                                             <SelectItem value="counselor">Counselor</SelectItem>
                                                             <SelectItem value="admin">Admin</SelectItem>
+                                                            {/* ✅ NEW */}
+                                                            <SelectItem value="referral_user">Referral User</SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
@@ -1692,12 +1789,10 @@ const CounselorMessages: React.FC = () => {
                                                     />
 
                                                     <div className="text-[0.70rem] text-muted-foreground">
-                                                        <span className="sm:hidden">
-                                                            Searches your database (not history).
-                                                        </span>
+                                                        <span className="sm:hidden">Searches your database (not history).</span>
                                                         <span className="hidden sm:inline">
-                                                            Tip: This searches your database (not message history). If
-                                                            nothing appears, confirm your backend endpoint.
+                                                            Tip: This searches your database (not message history). If nothing appears,
+                                                            confirm your backend endpoint.
                                                         </span>
                                                     </div>
                                                 </div>
@@ -1715,36 +1810,28 @@ const CounselorMessages: React.FC = () => {
                                     ) : null}
 
                                     <Tabs value={roleFilter} onValueChange={(v: any) => setRoleFilter(v as any)}>
-                                        <TabsList className="mt-3 flex w-full justify-start gap-1 overflow-x-auto whitespace-nowrap px-1 sm:grid sm:grid-cols-5 sm:px-0">
-                                            <TabsTrigger
-                                                value="all"
-                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                        <TabsList className="mt-3 flex w-full justify-start gap-1 overflow-x-auto whitespace-nowrap px-1 sm:grid sm:grid-cols-6 sm:px-0">
+                                            <TabsTrigger value="all" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 All
                                             </TabsTrigger>
-                                            <TabsTrigger
-                                                value="student"
-                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                            <TabsTrigger value="student" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Student
                                             </TabsTrigger>
-                                            <TabsTrigger
-                                                value="guest"
-                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                            <TabsTrigger value="guest" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Guest
                                             </TabsTrigger>
-                                            <TabsTrigger
-                                                value="counselor"
-                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                            <TabsTrigger value="counselor" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Counselor
                                             </TabsTrigger>
-                                            <TabsTrigger
-                                                value="admin"
-                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                            <TabsTrigger value="admin" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Admin
+                                            </TabsTrigger>
+                                            {/* ✅ NEW */}
+                                            <TabsTrigger
+                                                value="referral_user"
+                                                className="min-w-24 text-[0.70rem] sm:min-w-0 sm:text-xs"
+                                            >
+                                                Referral
                                             </TabsTrigger>
                                         </TabsList>
                                     </Tabs>
@@ -1786,9 +1873,7 @@ const CounselorMessages: React.FC = () => {
                                                         }}
                                                         className={cn(
                                                             "h-auto w-full justify-start rounded-xl border p-0 text-left",
-                                                            active
-                                                                ? "bg-white shadow-sm hover:bg-white"
-                                                                : "bg-white/60 hover:bg-white",
+                                                            active ? "bg-white shadow-sm hover:bg-white" : "bg-white/60 hover:bg-white",
                                                         )}
                                                     >
                                                         <div className="w-full p-2.5 sm:p-3">
@@ -1872,12 +1957,9 @@ const CounselorMessages: React.FC = () => {
                                                 </Avatar>
 
                                                 <div className="min-w-0">
-                                                    <div className="truncate text-sm font-semibold text-slate-900">
-                                                        {activePeerName}
-                                                    </div>
+                                                    <div className="truncate text-sm font-semibold text-slate-900">{activePeerName}</div>
                                                     <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
-                                                        {roleLabel(activeConversation.peerRole)} •{" "}
-                                                        {activeConversation.subtitle}
+                                                        {roleLabel(activeConversation.peerRole)} • {activeConversation.subtitle}
                                                     </div>
                                                 </div>
                                             </div>
@@ -1897,9 +1979,7 @@ const CounselorMessages: React.FC = () => {
                                                 aria-label="Refresh"
                                                 disabled={isLoading || isRefreshing}
                                             >
-                                                <RefreshCw
-                                                    className={cn("h-4 w-4", isRefreshing ? "animate-spin" : "")}
-                                                />
+                                                <RefreshCw className={cn("h-4 w-4", isRefreshing ? "animate-spin" : "")} />
                                             </Button>
 
                                             <DropdownMenu>
@@ -1948,13 +2028,9 @@ const CounselorMessages: React.FC = () => {
                                                 Choose a conversation from the left.
                                             </div>
                                         ) : isLoading ? (
-                                            <div className="py-10 text-center text-sm text-muted-foreground">
-                                                Loading messages…
-                                            </div>
+                                            <div className="py-10 text-center text-sm text-muted-foreground">Loading messages…</div>
                                         ) : activeMessages.length === 0 ? (
-                                            <div className="py-10 text-center text-sm text-muted-foreground">
-                                                No messages yet.
-                                            </div>
+                                            <div className="py-10 text-center text-sm text-muted-foreground">No messages yet.</div>
                                         ) : (
                                             activeMessages.map((m) => {
                                                 const mine = m.sender === "counselor" && String(m.senderId ?? "") === myUserId
@@ -2063,11 +2139,7 @@ const CounselorMessages: React.FC = () => {
                                             <Textarea
                                                 value={draft}
                                                 onChange={(e) => setDraft(e.target.value)}
-                                                placeholder={
-                                                    activeConversation
-                                                        ? `Message ${activePeerName}…`
-                                                        : "Select a conversation…"
-                                                }
+                                                placeholder={activeConversation ? `Message ${activePeerName}…` : "Select a conversation…"}
                                                 disabled={!activeConversation || isSending}
                                                 className="min-h-12 resize-none rounded-2xl sm:min-h-11"
                                             />
