@@ -11,11 +11,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import heroIllustration from "@/assets/images/hero.png";
-import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import appLogo from "@/assets/images/ecounseling.svg";
 import { Link } from "react-router-dom";
 import { AlertCircle, CheckCircle2 } from "lucide-react";
 import { toast } from "sonner";
 import { forgotPasswordApi, type ApiError } from "@/api/auth/route";
+
+const APP_NAME = "E-Guidance Appointment System";
 
 const ForgotPasswordPage: React.FC = () => {
     const [email, setEmail] = React.useState("");
@@ -73,13 +75,13 @@ const ForgotPasswordPage: React.FC = () => {
                         className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
                     >
                         <img
-                            src={ecounselingLogo}
-                            alt="eCounseling logo"
+                            src={appLogo}
+                            alt={`${APP_NAME} logo`}
                             className="h-8 w-auto"
                         />
                         <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                                eCounseling Portal
+                                {APP_NAME}
                             </h1>
                             <p className="text-xs text-muted-foreground">
                                 JRMSU – Tampilisan Campus
@@ -101,7 +103,7 @@ const ForgotPasswordPage: React.FC = () => {
                                             Forgot your password?
                                         </h1>
                                         <p className="text-sm text-muted-foreground text-balance">
-                                            Enter the email associated with your eCounseling account
+                                            Enter the email associated with your {APP_NAME} account
                                             and we&apos;ll send you a link to reset your password.
                                         </p>
                                     </div>
@@ -181,7 +183,7 @@ const ForgotPasswordPage: React.FC = () => {
                             <div className="bg-muted relative hidden md:block">
                                 <img
                                     src={heroIllustration}
-                                    alt="JRMSU student using the eCounseling platform"
+                                    alt={`JRMSU user using the ${APP_NAME}`}
                                     className="absolute inset-0 h-full w-full object-cover"
                                 />
                             </div>

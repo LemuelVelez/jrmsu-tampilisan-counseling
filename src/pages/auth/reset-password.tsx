@@ -11,11 +11,13 @@ import {
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import heroIllustration from "@/assets/images/hero.png";
-import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import appLogo from "@/assets/images/ecounseling.svg";
 import { Eye, EyeOff, AlertCircle, CheckCircle2 } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 import { resetPasswordApi, type ApiError } from "@/api/auth/route";
+
+const APP_NAME = "E-Guidance Appointment System";
 
 const ResetPasswordPage: React.FC = () => {
     const [showPassword, setShowPassword] = React.useState(false);
@@ -111,13 +113,13 @@ const ResetPasswordPage: React.FC = () => {
                         className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
                     >
                         <img
-                            src={ecounselingLogo}
-                            alt="eCounseling logo"
+                            src={appLogo}
+                            alt={`${APP_NAME} logo`}
                             className="h-8 w-auto"
                         />
                         <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                                eCounseling Portal
+                                {APP_NAME}
                             </h1>
                             <p className="text-xs text-muted-foreground">
                                 JRMSU – Tampilisan Campus
@@ -139,7 +141,7 @@ const ResetPasswordPage: React.FC = () => {
                                             Reset your password
                                         </h1>
                                         <p className="text-sm text-muted-foreground text-balance">
-                                            Create a new password for your eCounseling account. Make
+                                            Create a new password for your {APP_NAME} account. Make
                                             sure it&apos;s something secure and easy for you to
                                             remember.
                                         </p>
@@ -305,7 +307,7 @@ const ResetPasswordPage: React.FC = () => {
                             <div className="bg-muted relative hidden md:block">
                                 <img
                                     src={heroIllustration}
-                                    alt="JRMSU student using the eCounseling platform"
+                                    alt={`JRMSU user using the ${APP_NAME}`}
                                     className="absolute inset-0 h-full w-full object-cover"
                                 />
                             </div>

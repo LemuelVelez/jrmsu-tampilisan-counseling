@@ -2,13 +2,15 @@ import React from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import heroIllustration from "@/assets/images/hero.png";
-import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import appLogo from "@/assets/images/ecounseling.svg";
 import { Loader2, CheckCircle2, XCircle } from "lucide-react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { fetchCurrentUserFromServer } from "@/lib/authentication";
 import { toast } from "sonner";
 
 type CallbackStatus = "processing" | "success" | "error";
+
+const APP_NAME = "E-Guidance Appointment System";
 
 const resolveDashboardPathForRole = (
     role: string | null | undefined,
@@ -62,17 +64,17 @@ const AuthCallbackPage: React.FC = () => {
                     setStatus("success");
                     setMessage(
                         explicitMessage ??
-                            (intent === "email-verification"
-                                ? "Your email has been verified. Redirecting you to your dashboard..."
-                                : "Sign-in completed. Redirecting you to your dashboard..."),
+                        (intent === "email-verification"
+                            ? "Your email has been verified. Redirecting you to your dashboard..."
+                            : "Sign-in completed. Redirecting you to your dashboard..."),
                     );
 
                     const roleValue =
                         typeof session.user.role === "string"
                             ? session.user.role
                             : session.user.role != null
-                            ? String(session.user.role)
-                            : "";
+                                ? String(session.user.role)
+                                : "";
 
                     const defaultDashboardPath =
                         resolveDashboardPathForRole(roleValue);
@@ -92,9 +94,9 @@ const AuthCallbackPage: React.FC = () => {
                     setStatus("error");
                     setMessage(
                         explicitMessage ??
-                            (explicitStatus === "error"
-                                ? "We couldn't complete the sign-in process. Please try signing in again."
-                                : "We couldn't find an active session after returning from the authentication provider. Please sign in again."),
+                        (explicitStatus === "error"
+                            ? "We couldn't complete the sign-in process. Please try signing in again."
+                            : "We couldn't find an active session after returning from the authentication provider. Please sign in again."),
                     );
                 }
             } catch (error) {
@@ -132,7 +134,7 @@ const AuthCallbackPage: React.FC = () => {
         if (status === "success") {
             toast.success(
                 message ??
-                    "You're all set. Redirecting you to your dashboard.",
+                "You're all set. Redirecting you to your dashboard.",
             );
         } else if (status === "error") {
             toast.error(
@@ -145,16 +147,16 @@ const AuthCallbackPage: React.FC = () => {
         status === "success"
             ? "You're all set"
             : status === "error"
-            ? "We couldn't finish sign-in"
-            : "Finishing sign-in";
+                ? "We couldn't finish sign-in"
+                : "Finishing sign-in";
 
     const description =
         message ??
         (status === "processing"
-            ? "Please wait while we verify your information and complete your eCounseling sign-in. This should only take a moment."
+            ? `Please wait while we verify your information and complete your ${APP_NAME} sign-in. This should only take a moment.`
             : status === "success"
-            ? "We've successfully verified your account. Redirecting you to your dashboard."
-            : "Something went wrong while finishing sign-in. You can safely return to the sign-in page and try again.");
+                ? "We've successfully verified your account. Redirecting you to your dashboard."
+                : "Something went wrong while finishing sign-in. You can safely return to the sign-in page and try again.");
 
     return (
         <div className="min-h-screen bg-linear-to-b from-yellow-50/80 via-amber-50/60 to-yellow-100/60 px-4 py-8">
@@ -166,13 +168,13 @@ const AuthCallbackPage: React.FC = () => {
                         className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
                     >
                         <img
-                            src={ecounselingLogo}
-                            alt="eCounseling logo"
+                            src={appLogo}
+                            alt={`${APP_NAME} logo`}
                             className="h-8 w-auto"
                         />
                         <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                                eCounseling Portal
+                                {APP_NAME}
                             </h1>
                             <p className="text-xs text-muted-foreground">
                                 JRMSU – Tampilisan Campus
@@ -221,7 +223,7 @@ const AuthCallbackPage: React.FC = () => {
                         <div className="bg-muted relative hidden md:block">
                             <img
                                 src={heroIllustration}
-                                alt="JRMSU student using the eCounseling platform"
+                                alt={`JRMSU student using the ${APP_NAME}`}
                                 className="absolute inset-0 h-full w-full object-cover"
                             />
                         </div>

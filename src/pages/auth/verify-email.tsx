@@ -10,11 +10,13 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import heroIllustration from "@/assets/images/hero.png";
-import ecounselingLogo from "@/assets/images/ecounseling.svg";
+import appLogo from "@/assets/images/ecounseling.svg";
 import { Link, useSearchParams } from "react-router-dom";
 import { useSession } from "@/hooks/use-session";
 import { AUTH_API_BASE_URL } from "@/api/auth/route";
 import { toast } from "sonner";
+
+const APP_NAME = "E-Guidance Appointment System";
 
 async function resendVerificationEmailRequest(email: string): Promise<void> {
     if (!AUTH_API_BASE_URL) {
@@ -138,13 +140,13 @@ const VerifyEmailPage: React.FC = () => {
                         className="flex flex-col items-center gap-1 sm:flex-row sm:items-center sm:gap-3"
                     >
                         <img
-                            src={ecounselingLogo}
-                            alt="eCounseling logo"
+                            src={appLogo}
+                            alt={`${APP_NAME} logo`}
                             className="h-8 w-auto"
                         />
                         <div className="flex flex-col text-center sm:text-left">
                             <h1 className="text-lg font-semibold tracking-tight text-amber-900">
-                                eCounseling Portal
+                                {APP_NAME}
                             </h1>
                             <p className="text-xs text-muted-foreground">
                                 JRMSU – Tampilisan Campus
@@ -165,7 +167,7 @@ const VerifyEmailPage: React.FC = () => {
                                         <p className="text-sm text-muted-foreground text-balance">
                                             We&apos;ve sent a verification link to your email.
                                             Please check your inbox and click the link to activate
-                                            your eCounseling account.
+                                            your {APP_NAME} account.
                                         </p>
                                     </div>
 
@@ -232,7 +234,7 @@ const VerifyEmailPage: React.FC = () => {
                             <div className="bg-muted relative hidden md:block">
                                 <img
                                     src={heroIllustration}
-                                    alt="JRMSU student using the eCounseling platform"
+                                    alt={`JRMSU user using the ${APP_NAME}`}
                                     className="absolute inset-0 h-full w-full object-cover"
                                 />
                             </div>
