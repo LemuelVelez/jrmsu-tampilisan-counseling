@@ -82,6 +82,17 @@ export interface GetStudentManualScoresResponseDto {
     scores: ManualAssessmentScoreDto[]
 }
 
+/**
+ * ✅ Directory list response (varies per backend implementation)
+ */
+export interface GetStudentsDirectoryResponseDto {
+    message?: string
+    students?: CaseLoadStudentDto[]
+    users?: CaseLoadStudentDto[]
+    data?: any
+    [key: string]: unknown
+}
+
 export interface ManualScoresApiError extends Error {
     status?: number
     data?: unknown
@@ -132,6 +143,27 @@ async function manualScoresApiFetch<T>(path: string, init: RequestInit = {}): Pr
     return data as T
 }
 
+function extractArray<T = any>(json: any): T[] {
+    if (Array.isArray(json)) return json as T[]
+
+    const candidates = [
+        json?.students,
+        json?.users,
+        json?.data,
+        json?.data?.students,
+        json?.data?.users,
+        json?.result,
+        json?.results,
+        json?.items,
+    ]
+
+    for (const c of candidates) {
+        if (Array.isArray(c)) return c as T[]
+    }
+
+    return []
+}
+
 /**
  * ✅ Counselor case load
  * GET /counselor/case-load
@@ -140,6 +172,50 @@ export async function getCounselorCaseLoadApi(): Promise<GetCaseLoadResponseDto>
     return manualScoresApiFetch<GetCaseLoadResponseDto>("/counselor/case-load", {
         method: "GET",
     })
+}
+
+/**
+ * ✅ Student users directory (fallback when case-load is empty/unavailable)
+ * Tries common endpoints used in this project:
+ * - GET /students
+ * - GET /users?role=student
+ * - GET /users?account_type=student
+ * - GET /counselor/students
+ */
+export async function getStudentUsersApi(): Promise<GetStudentsDirectoryResponseDto> {
+    const tryPaths = [
+        "/students",
+        "/users?role=student",
+        "/users?account_type=student",
+        "/counselor/students",
+    ]
+
+    let lastErr: any = null
+
+    for (const path of tryPaths) {
+        try {
+            const json = await manualScoresApiFetch<any>(path, { method: "GET" })
+            // If any of these shapes contain an array, treat it as a success
+            const list = extractArray<CaseLoadStudentDto>(json)
+            if (Array.isArray(list)) {
+                return {
+                    message: json?.message,
+                    students: Array.isArray(json?.students) ? json.students : undefined,
+                    users: Array.isArray(json?.users) ? json.users : undefined,
+                    data: json?.data,
+                    ...json,
+                } as GetStudentsDirectoryResponseDto
+            }
+        } catch (e: any) {
+            lastErr = e
+            const status = Number(e?.status)
+            if (status === 404 || status === 405) continue
+            // other errors should stop early (auth, 500, etc.)
+            throw e
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to fetch student users directory.")
 }
 
 /**
@@ -231,3 +307,6 @@ export async function getCounselorManualScoresApi(): Promise<GetStudentManualSco
 
     throw lastErr ?? new Error("Failed to fetch counselor manual scores.")
 }
+
+// re-export extractor (optional internal use)
+export const __internal_extractArray = extractArray

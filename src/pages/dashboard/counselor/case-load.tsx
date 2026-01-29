@@ -5,7 +5,7 @@ import { Loader2, RefreshCcw, Users } from "lucide-react"
 import { toast } from "sonner"
 
 import DashboardLayout from "@/components/DashboardLayout"
-import { fetchCounselorCaseLoad, type CaseLoadStudent } from "@/lib/manual-scores"
+import { fetchStudentsForManualScores, type CaseLoadStudent } from "@/lib/manual-scores"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -26,6 +26,20 @@ function initials(name?: string | null) {
     return (a + b).toUpperCase()
 }
 
+function getStudentDisplayName(s: CaseLoadStudent): string {
+    const anyS = s as any
+    const name =
+        s?.name ??
+        anyS?.full_name ??
+        anyS?.fullName ??
+        anyS?.student_name ??
+        anyS?.studentName ??
+        anyS?.user?.name ??
+        anyS?.student?.name ??
+        null
+    return typeof name === "string" && name.trim() ? name.trim() : "Unknown Student"
+}
+
 export default function CounselorCaseLoadPage() {
     const navigate = useNavigate()
 
@@ -38,10 +52,10 @@ export default function CounselorCaseLoadPage() {
     const load = React.useCallback(async () => {
         setError(null)
         try {
-            const res = await fetchCounselorCaseLoad()
+            const res = await fetchStudentsForManualScores()
             setStudents(res ?? [])
         } catch (e: any) {
-            setError(e?.message ?? "Failed to load case load.")
+            setError(e?.message ?? "Failed to load student users.")
         } finally {
             setLoading(false)
         }
@@ -55,9 +69,7 @@ export default function CounselorCaseLoadPage() {
         setRefreshing(true)
         try {
             await load()
-            toast.success("Case load refreshed.")
-        } catch {
-            // load() already sets error
+            toast.success("Students refreshed.")
         } finally {
             setRefreshing(false)
         }
@@ -67,13 +79,14 @@ export default function CounselorCaseLoadPage() {
         const q = query.trim().toLowerCase()
         if (!q) return students
         return students.filter((s) => {
+            const anyS = s as any
             const hay = [
-                s?.name,
-                s?.email,
-                s?.student_id,
-                s?.program,
-                s?.year_level,
-                String(s?.id ?? ""),
+                getStudentDisplayName(s),
+                anyS?.email,
+                anyS?.student_id,
+                anyS?.program,
+                anyS?.year_level,
+                String(anyS?.id ?? ""),
             ]
                 .filter(Boolean)
                 .join(" ")
@@ -83,7 +96,7 @@ export default function CounselorCaseLoadPage() {
     }, [students, query])
 
     return (
-        <DashboardLayout title="Case Load" description="Students currently under your care (based on assigned appointments).">
+        <DashboardLayout title="Case Load" description="Student users available for manual assessment score encoding.">
             <Card>
                 <CardHeader className="space-y-2">
                     <div className="flex items-start justify-between gap-3">
@@ -92,9 +105,7 @@ export default function CounselorCaseLoadPage() {
                                 <Users className="h-5 w-5" />
                                 Case Load
                             </CardTitle>
-                            <CardDescription>
-                                Select a student to encode hardcopy assessment scores.
-                            </CardDescription>
+                            <CardDescription>Select a student to encode hardcopy assessment scores.</CardDescription>
                         </div>
 
                         <Button
@@ -103,7 +114,11 @@ export default function CounselorCaseLoadPage() {
                             disabled={refreshing || loading}
                             className="gap-2"
                         >
-                            {refreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
+                            {refreshing ? (
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                                <RefreshCcw className="h-4 w-4" />
+                            )}
                             Refresh
                         </Button>
                     </div>
@@ -128,7 +143,7 @@ export default function CounselorCaseLoadPage() {
                 <CardContent>
                     {error ? (
                         <Alert variant="destructive">
-                            <AlertTitle>Unable to load case load</AlertTitle>
+                            <AlertTitle>Unable to load students</AlertTitle>
                             <AlertDescription>{error}</AlertDescription>
                         </Alert>
                     ) : null}
@@ -159,14 +174,15 @@ export default function CounselorCaseLoadPage() {
 
                                     <TableBody>
                                         {filtered.map((s) => {
-                                            const displayName = s?.name ?? "Unknown Student"
-                                            const sid = s?.student_id ?? "—"
-                                            const program = s?.program ?? "—"
-                                            const year = s?.year_level ?? "—"
-                                            const avatar = (s as any)?.avatar_url ?? null
+                                            const anyS = s as any
+                                            const displayName = getStudentDisplayName(s)
+                                            const sid = anyS?.student_id ?? "—"
+                                            const program = anyS?.program ?? "—"
+                                            const year = anyS?.year_level ?? "—"
+                                            const avatar = anyS?.avatar_url ?? null
 
                                             return (
-                                                <TableRow key={String(s.id)}>
+                                                <TableRow key={String(anyS?.id ?? s.id)}>
                                                     <TableCell>
                                                         <div className="flex items-center gap-3">
                                                             <Avatar className="h-9 w-9">
@@ -179,7 +195,7 @@ export default function CounselorCaseLoadPage() {
                                                                     {displayName}
                                                                 </div>
                                                                 <div className="truncate text-xs text-muted-foreground">
-                                                                    {s?.email ?? "—"}
+                                                                    {anyS?.email ?? "—"}
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -192,7 +208,7 @@ export default function CounselorCaseLoadPage() {
                                                     <TableCell className="text-right">
                                                         <Button
                                                             onClick={() => {
-                                                                const id = String(s.id)
+                                                                const id = String(anyS?.id ?? s.id)
                                                                 const name = encodeURIComponent(displayName)
                                                                 navigate(
                                                                     `/dashboard/counselor/assessment-score-input?studentId=${encodeURIComponent(

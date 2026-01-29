@@ -7,7 +7,7 @@ import { toast } from "sonner"
 
 import DashboardLayout from "@/components/DashboardLayout"
 import {
-    fetchCounselorCaseLoad,
+    fetchStudentsForManualScores,
     fetchStudentManualScores,
     saveManualAssessmentScore,
     type CaseLoadStudent,
@@ -49,6 +49,21 @@ function normalizeScoreDate(r: ManualScoreRecord): string | null {
     )
 }
 
+function getStudentDisplayName(s: CaseLoadStudent | null): string {
+    if (!s) return ""
+    const anyS = s as any
+    const name =
+        s?.name ??
+        anyS?.full_name ??
+        anyS?.fullName ??
+        anyS?.student_name ??
+        anyS?.studentName ??
+        anyS?.user?.name ??
+        anyS?.student?.name ??
+        null
+    return typeof name === "string" ? name : ""
+}
+
 export default function CounselorAssessmentScoreInputPage() {
     const navigate = useNavigate()
     const [searchParams, setSearchParams] = useSearchParams()
@@ -56,18 +71,18 @@ export default function CounselorAssessmentScoreInputPage() {
     const initialStudentId = searchParams.get("studentId")
     const initialStudentName = searchParams.get("studentName")
 
-    const [caseLoad, setCaseLoad] = React.useState<CaseLoadStudent[]>([])
-    const [caseLoadLoading, setCaseLoadLoading] = React.useState(true)
-    const [caseLoadError, setCaseLoadError] = React.useState<string | null>(null)
+    const [students, setStudents] = React.useState<CaseLoadStudent[]>([])
+    const [studentsLoading, setStudentsLoading] = React.useState(true)
+    const [studentsError, setStudentsError] = React.useState<string | null>(null)
 
     const [studentId, setStudentId] = React.useState<string>(initialStudentId ? String(initialStudentId) : "")
     const [studentName, setStudentName] = React.useState<string>(initialStudentName ? String(initialStudentName) : "")
 
     const selectedStudent = React.useMemo(() => {
         if (!studentId) return null
-        const found = caseLoad.find((s) => String(s.id) === String(studentId))
+        const found = students.find((s) => String(s.id) === String(studentId))
         return found ?? null
-    }, [caseLoad, studentId])
+    }, [students, studentId])
 
     const [studentPickerOpen, setStudentPickerOpen] = React.useState(false)
 
@@ -84,16 +99,17 @@ export default function CounselorAssessmentScoreInputPage() {
     const [historyLoading, setHistoryLoading] = React.useState(false)
     const [saving, setSaving] = React.useState(false)
 
-    const loadCaseLoad = React.useCallback(async () => {
-        setCaseLoadError(null)
-        setCaseLoadLoading(true)
+    const loadStudents = React.useCallback(async () => {
+        setStudentsError(null)
+        setStudentsLoading(true)
         try {
-            const students = await fetchCounselorCaseLoad()
-            setCaseLoad(students ?? [])
+            const list = await fetchStudentsForManualScores()
+            setStudents(list ?? [])
         } catch (e: any) {
-            setCaseLoadError(e?.message ?? "Failed to load counselor case load.")
+            setStudentsError(e?.message ?? "Failed to load student users.")
+            setStudents([])
         } finally {
-            setCaseLoadLoading(false)
+            setStudentsLoading(false)
         }
     }, [])
 
@@ -112,8 +128,8 @@ export default function CounselorAssessmentScoreInputPage() {
     }, [])
 
     React.useEffect(() => {
-        void loadCaseLoad()
-    }, [loadCaseLoad])
+        void loadStudents()
+    }, [loadStudents])
 
     React.useEffect(() => {
         if (!studentId) return
@@ -122,18 +138,21 @@ export default function CounselorAssessmentScoreInputPage() {
 
     React.useEffect(() => {
         if (!selectedStudent) return
-        setStudentName(selectedStudent?.name ?? "")
+        const n = getStudentDisplayName(selectedStudent)
+        if (n) setStudentName(n)
     }, [selectedStudent])
 
     const onPickStudent = React.useCallback(
         (s: CaseLoadStudent) => {
             const nextId = String(s.id)
+            const displayName = getStudentDisplayName(s)
             setStudentId(nextId)
-            setStudentName(s?.name ?? "")
+            setStudentName(displayName)
+
             setSearchParams((prev) => {
                 const next = new URLSearchParams(prev)
                 next.set("studentId", nextId)
-                if (s?.name) next.set("studentName", s.name)
+                if (displayName) next.set("studentName", displayName)
                 return next
             })
             setStudentPickerOpen(false)
@@ -165,7 +184,7 @@ export default function CounselorAssessmentScoreInputPage() {
         try {
             // ✅ Send BOTH keys to be compatible with either backend validation:
             // - some versions expect `date`
-            // - your controller snippet expects `assessed_date`
+            // - your controller expects `assessed_date`
             await saveManualAssessmentScore({
                 student_id: studentId,
                 score: n,
@@ -185,6 +204,13 @@ export default function CounselorAssessmentScoreInputPage() {
         }
     }, [studentId, scoreText, assessedDateValue, remarks, loadHistory])
 
+    const selectedLabel = React.useMemo(() => {
+        if (!selectedStudent) return ""
+        const n = getStudentDisplayName(selectedStudent) || "Student"
+        const sid = (selectedStudent as any)?.student_id ?? "—"
+        return `${n} • ${sid}`
+    }, [selectedStudent])
+
     return (
         <DashboardLayout
             title="Hardcopy Assessment Score Input"
@@ -198,17 +224,17 @@ export default function CounselorAssessmentScoreInputPage() {
                     </CardHeader>
 
                     <CardContent className="space-y-4">
-                        {caseLoadError ? (
+                        {studentsError ? (
                             <Alert variant="destructive">
-                                <AlertTitle>Case load unavailable</AlertTitle>
-                                <AlertDescription>{caseLoadError}</AlertDescription>
+                                <AlertTitle>Students unavailable</AlertTitle>
+                                <AlertDescription>{studentsError}</AlertDescription>
                             </Alert>
                         ) : null}
 
                         <div className="space-y-2">
                             <Label>Student</Label>
 
-                            {caseLoadLoading ? (
+                            {studentsLoading ? (
                                 <Skeleton className="h-10 w-full" />
                             ) : (
                                 <Popover open={studentPickerOpen} onOpenChange={setStudentPickerOpen}>
@@ -221,8 +247,7 @@ export default function CounselorAssessmentScoreInputPage() {
                                         >
                                             <span className="truncate">
                                                 {selectedStudent
-                                                    ? `${selectedStudent?.name ?? "Student"} • ${selectedStudent?.student_id ?? "—"
-                                                    }`
+                                                    ? selectedLabel
                                                     : studentName
                                                         ? studentName
                                                         : "Select student…"}
@@ -242,16 +267,17 @@ export default function CounselorAssessmentScoreInputPage() {
 
                                             <CommandGroup>
                                                 <ScrollArea className="h-64">
-                                                    {caseLoad.map((s) => {
+                                                    {students.map((s) => {
                                                         const id = String(s.id)
-                                                        const label = `${s?.name ?? "Student"} • ${s?.student_id ?? "—"}`
+                                                        const name = getStudentDisplayName(s) || "Student"
+                                                        const sid = (s as any)?.student_id ?? "—"
+                                                        const label = `${name} • ${sid}`
                                                         const active = String(studentId) === id
 
                                                         return (
                                                             <CommandItem
                                                                 key={id}
-                                                                value={`${s?.name ?? ""} ${s?.student_id ?? ""} ${s?.email ?? ""
-                                                                    } ${s?.program ?? ""}`}
+                                                                value={`${name} ${(s as any)?.student_id ?? ""} ${(s as any)?.email ?? ""} ${(s as any)?.program ?? ""}`}
                                                                 onSelect={() => onPickStudent(s)}
                                                                 className="flex items-center justify-between"
                                                             >
@@ -275,13 +301,13 @@ export default function CounselorAssessmentScoreInputPage() {
                             {selectedStudent ? (
                                 <div className="rounded-md border bg-muted/30 p-3 text-sm">
                                     <div className="font-medium text-foreground">
-                                        {selectedStudent?.name ?? "Student"}
+                                        {getStudentDisplayName(selectedStudent) || "Student"}
                                     </div>
                                     <div className="mt-1 grid grid-cols-1 gap-1 text-xs text-muted-foreground sm:grid-cols-2">
-                                        <div>Student ID: {selectedStudent?.student_id ?? "—"}</div>
-                                        <div>Year Level: {selectedStudent?.year_level ?? "—"}</div>
-                                        <div>Program: {selectedStudent?.program ?? "—"}</div>
-                                        <div>Email: {selectedStudent?.email ?? "—"}</div>
+                                        <div>Student ID: {(selectedStudent as any)?.student_id ?? "—"}</div>
+                                        <div>Year Level: {(selectedStudent as any)?.year_level ?? "—"}</div>
+                                        <div>Program: {(selectedStudent as any)?.program ?? "—"}</div>
+                                        <div>Email: {(selectedStudent as any)?.email ?? "—"}</div>
                                     </div>
                                 </div>
                             ) : (
@@ -328,10 +354,7 @@ export default function CounselorAssessmentScoreInputPage() {
                                 <PopoverTrigger asChild>
                                     <Button
                                         variant="outline"
-                                        className={cn(
-                                            "w-full justify-start gap-2",
-                                            !assessedDate && "text-muted-foreground",
-                                        )}
+                                        className={cn("w-full justify-start gap-2", !assessedDate && "text-muted-foreground")}
                                     >
                                         <CalendarIcon className="h-4 w-4" />
                                         {assessedDate ? format(assessedDate, "PPP") : "Pick a date"}
@@ -411,17 +434,14 @@ export default function CounselorAssessmentScoreInputPage() {
                                             {history.map((r) => {
                                                 const dt = normalizeScoreDate(r)
                                                 const scoreVal = (r as any)?.score
-                                                const ratingVal =
-                                                    (r as any)?.rating ?? scoreToRating(Number(scoreVal))
+                                                const ratingVal = (r as any)?.rating ?? scoreToRating(Number(scoreVal))
                                                 const remarksVal = (r as any)?.remarks ?? "—"
 
                                                 return (
                                                     <TableRow key={String((r as any)?.id ?? `${dt}-${scoreVal}`)}>
                                                         <TableCell className="font-mono text-xs">{dt ?? "—"}</TableCell>
                                                         <TableCell className="text-right font-medium">
-                                                            {Number.isFinite(Number(scoreVal))
-                                                                ? Number(scoreVal).toFixed(2)
-                                                                : "—"}
+                                                            {Number.isFinite(Number(scoreVal)) ? Number(scoreVal).toFixed(2) : "—"}
                                                         </TableCell>
                                                         <TableCell>
                                                             <Badge variant="secondary">{String(ratingVal)}</Badge>
