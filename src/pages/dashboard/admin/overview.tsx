@@ -11,6 +11,7 @@ import {
     GraduationCap,
     HeartHandshake,
     UserCog,
+    UserCheck,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
@@ -63,7 +64,9 @@ type UsersResponse =
     | AdminUser[]
     | { users?: AdminUser[]; data?: AdminUser[];[k: string]: unknown };
 
-const FALLBACK_ROLES = ["admin", "counselor", "student"] as const;
+// ✅ include referral_user in fallback roles
+const FALLBACK_ROLES = ["admin", "counselor", "student", "referral_user", "guest"] as const;
+
 const PIE_COLORS = ["#f59e0b", "#10b981", "#3b82f6", "#ef4444", "#a855f7", "#64748b"];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -139,12 +142,26 @@ function extractUsers(payload: UsersResponse): AdminUser[] {
     return [];
 }
 
+// ✅ Treat dean/registrar/program chair as referral_user (one bucket)
+function isReferralRole(roleRaw: string): boolean {
+    const r = normalizeRole(roleRaw);
+    return (
+        r.includes("referral") ||
+        r.includes("dean") ||
+        r.includes("registrar") ||
+        r.includes("program_chair") ||
+        r.includes("program chair") ||
+        r.includes("programchair")
+    );
+}
+
 function niceRoleLabel(roleRaw: string): string {
     const r = normalizeRole(roleRaw);
     if (!r) return "Unknown";
     if (r.includes("admin")) return "Admin";
     if (r.includes("counselor") || r.includes("counsellor")) return "Counselor";
     if (r.includes("student")) return "Student";
+    if (isReferralRole(roleRaw)) return "Referral user";
     if (r.includes("guest")) return "Guest";
     return roleRaw.trim() ? roleRaw.trim() : "Other";
 }
@@ -188,7 +205,7 @@ const AdminOverview: React.FC = () => {
             try {
                 await fetchAll();
 
-                const nowTs = Date.now(); // ✅ called in handler, not render
+                const nowTs = Date.now();
                 setSnapshotNowTs(nowTs);
                 setLastUpdated(format(new Date(nowTs), "MMM d, yyyy – h:mm a"));
 
@@ -231,6 +248,7 @@ const AdminOverview: React.FC = () => {
         let admins = 0;
         let counselors = 0;
         let students = 0;
+        let referrals = 0;
         let guests = 0;
         let unknown = 0;
 
@@ -244,7 +262,9 @@ const AdminOverview: React.FC = () => {
             else if (norm.includes("admin")) admins += 1;
             else if (norm.includes("counselor") || norm.includes("counsellor")) counselors += 1;
             else if (norm.includes("student")) students += 1;
+            else if (isReferralRole(raw)) referrals += 1;
             else if (norm.includes("guest")) guests += 1;
+            else unknown += 1;
 
             const label = niceRoleLabel(raw);
             counts.set(label, (counts.get(label) ?? 0) + 1);
@@ -257,10 +277,7 @@ const AdminOverview: React.FC = () => {
         const topRoles = roleData.slice(0, 6);
 
         const cutoff = snapshotNowTs > 0 ? snapshotNowTs - 7 * DAY_MS : 0;
-        const newLast7 =
-            cutoff > 0
-                ? users.filter((u) => safeCreatedAtTs(u) >= cutoff).length
-                : 0;
+        const newLast7 = cutoff > 0 ? users.filter((u) => safeCreatedAtTs(u) >= cutoff).length : 0;
 
         const recentUsers = [...users]
             .sort((a, b) => safeCreatedAtTs(b) - safeCreatedAtTs(a))
@@ -278,6 +295,7 @@ const AdminOverview: React.FC = () => {
             admins,
             counselors,
             students,
+            referrals,
             guests,
             unknown,
             topRoles,
@@ -288,27 +306,21 @@ const AdminOverview: React.FC = () => {
     }, [users, snapshotNowTs]);
 
     return (
-        <DashboardLayout
-            title="Overview"
-            description="Admin dashboard overview for User Management."
-        >
+        <DashboardLayout title="Overview" description="Admin dashboard overview for User Management.">
             <div className="mx-auto w-full px-4 space-y-4">
                 <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1 text-xs text-amber-900">
                         <p className="font-semibold">Admin Overview</p>
                         <p className="text-[0.7rem] text-amber-900/80">
                             Quick snapshot of users and role distribution.
-                            {lastUpdated ? <span className="ml-2">Last updated: {lastUpdated}</span> : null}
+                            {lastUpdated ? (
+                                <span className="ml-2">Last updated: {lastUpdated}</span>
+                            ) : null}
                         </p>
                     </div>
 
                     <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
-                        <Button
-                            asChild
-                            size="sm"
-                            className="w-full gap-2 sm:w-auto"
-                            disabled={isLoading}
-                        >
+                        <Button asChild size="sm" className="w-full gap-2 sm:w-auto" disabled={isLoading}>
                             <Link to="/dashboard/admin/users">
                                 <Users className="h-4 w-4" />
                                 Manage users
@@ -323,18 +335,14 @@ const AdminOverview: React.FC = () => {
                             disabled={isRefreshing || isLoading}
                             className="w-full gap-2 sm:w-auto"
                         >
-                            {isRefreshing ? (
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                                <RefreshCcw className="h-4 w-4" />
-                            )}
+                            {isRefreshing ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCcw className="h-4 w-4" />}
                             Refresh
                         </Button>
                     </div>
                 </div>
 
                 {/* Summary cards */}
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-1">
                             <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-900">
@@ -346,7 +354,8 @@ const AdminOverview: React.FC = () => {
                         <CardContent className="text-2xl font-bold text-amber-900">
                             {isLoading ? "—" : stats.total}
                             <div className="mt-1 text-[0.7rem] font-normal text-muted-foreground">
-                                New (last 7 days): <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.newLast7}</span>
+                                New (last 7 days):{" "}
+                                <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.newLast7}</span>
                             </div>
                         </CardContent>
                     </Card>
@@ -359,9 +368,7 @@ const AdminOverview: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs">System access</CardDescription>
                         </CardHeader>
-                        <CardContent className="text-2xl font-bold text-amber-900">
-                            {isLoading ? "—" : stats.admins}
-                        </CardContent>
+                        <CardContent className="text-2xl font-bold text-amber-900">{isLoading ? "—" : stats.admins}</CardContent>
                     </Card>
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -372,9 +379,7 @@ const AdminOverview: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs">Support staff</CardDescription>
                         </CardHeader>
-                        <CardContent className="text-2xl font-bold text-amber-900">
-                            {isLoading ? "—" : stats.counselors}
-                        </CardContent>
+                        <CardContent className="text-2xl font-bold text-amber-900">{isLoading ? "—" : stats.counselors}</CardContent>
                     </Card>
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -385,9 +390,19 @@ const AdminOverview: React.FC = () => {
                             </CardTitle>
                             <CardDescription className="text-xs">Learners</CardDescription>
                         </CardHeader>
-                        <CardContent className="text-2xl font-bold text-amber-900">
-                            {isLoading ? "—" : stats.students}
-                        </CardContent>
+                        <CardContent className="text-2xl font-bold text-amber-900">{isLoading ? "—" : stats.students}</CardContent>
+                    </Card>
+
+                    {/* ✅ Referral users card */}
+                    <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
+                        <CardHeader className="space-y-1">
+                            <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                                <UserCheck className="h-4 w-4 text-amber-600" />
+                                Referral users
+                            </CardTitle>
+                            <CardDescription className="text-xs">Dean / Registrar / Program Chair</CardDescription>
+                        </CardHeader>
+                        <CardContent className="text-2xl font-bold text-amber-900">{isLoading ? "—" : stats.referrals}</CardContent>
                     </Card>
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -401,9 +416,11 @@ const AdminOverview: React.FC = () => {
                         <CardContent className="text-2xl font-bold text-amber-900">
                             {isLoading ? "—" : stats.guests + stats.unknown}
                             <div className="mt-1 text-[0.7rem] font-normal text-muted-foreground">
-                                Guests: <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.guests}</span>
+                                Guests:{" "}
+                                <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.guests}</span>
                                 {" • "}
-                                Unknown: <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.unknown}</span>
+                                Unknown:{" "}
+                                <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.unknown}</span>
                             </div>
                         </CardContent>
                     </Card>
@@ -413,9 +430,7 @@ const AdminOverview: React.FC = () => {
                 <div className="grid gap-3 lg:grid-cols-2">
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-2">
-                            <CardTitle className="text-sm font-semibold text-amber-900">
-                                Role distribution
-                            </CardTitle>
+                            <CardTitle className="text-sm font-semibold text-amber-900">Role distribution</CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
                                 Based on current users table (admin/users).
                             </CardDescription>
@@ -464,9 +479,7 @@ const AdminOverview: React.FC = () => {
 
                     <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
                         <CardHeader className="space-y-1">
-                            <CardTitle className="text-sm font-semibold text-amber-900">
-                                Top roles
-                            </CardTitle>
+                            <CardTitle className="text-sm font-semibold text-amber-900">Top roles</CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
                                 Highest user counts by role label.
                             </CardDescription>
@@ -503,21 +516,13 @@ const AdminOverview: React.FC = () => {
                     <CardHeader className="space-y-2">
                         <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                             <div>
-                                <CardTitle className="text-sm font-semibold text-amber-900">
-                                    Recently added users
-                                </CardTitle>
+                                <CardTitle className="text-sm font-semibold text-amber-900">Recently added users</CardTitle>
                                 <CardDescription className="text-xs text-muted-foreground">
                                     Latest accounts (sorted by created_at when available).
                                 </CardDescription>
                             </div>
 
-                            <Button
-                                asChild
-                                size="sm"
-                                variant="outline"
-                                className="w-full sm:w-auto"
-                                disabled={isLoading}
-                            >
+                            <Button asChild size="sm" variant="outline" className="w-full sm:w-auto" disabled={isLoading}>
                                 <Link to="/dashboard/admin/users">Open user list</Link>
                             </Button>
                         </div>
@@ -551,9 +556,7 @@ const AdminOverview: React.FC = () => {
                                                 <TableCell className="text-sm">
                                                     <div className="font-medium text-foreground">{u.name}</div>
                                                     {u.created_at ? (
-                                                        <div className="text-[0.7rem] text-muted-foreground">
-                                                            Created: {u.created_at}
-                                                        </div>
+                                                        <div className="text-[0.7rem] text-muted-foreground">Created: {u.created_at}</div>
                                                     ) : (
                                                         <div className="text-[0.7rem] text-muted-foreground">Created: —</div>
                                                     )}

@@ -2,7 +2,16 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Loader2, RefreshCcw, Search, Eye, EyeOff, UserPlus } from "lucide-react";
+import {
+    Loader2,
+    RefreshCcw,
+    Search,
+    Eye,
+    EyeOff,
+    UserPlus,
+    Pencil,
+    Trash2,
+} from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
@@ -23,7 +32,18 @@ import {
     DialogHeader,
     DialogTitle,
     DialogDescription,
+    DialogFooter,
 } from "@/components/ui/dialog";
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
     Table,
     TableBody,
@@ -136,7 +156,15 @@ function extractUsers(payload: UsersResponse): AdminUser[] {
 }
 
 function extractUserFromCreateResponse(payload: any): AdminUser | null {
-    const candidate = payload?.user ?? payload?.data ?? payload?.created_user ?? null;
+    const candidate =
+        payload?.user ?? payload?.data ?? payload?.created_user ?? null;
+    if (!candidate || candidate.id == null || !candidate.email) return null;
+    return candidate as AdminUser;
+}
+
+function extractUserFromUpdateResponse(payload: any): AdminUser | null {
+    const candidate =
+        payload?.user ?? payload?.data ?? payload?.updated_user ?? null;
     if (!candidate || candidate.id == null || !candidate.email) return null;
     return candidate as AdminUser;
 }
@@ -153,13 +181,22 @@ function getInitials(name?: string | null, email?: string | null): string {
     return (email?.[0] ?? "U").toUpperCase();
 }
 
-const FALLBACK_ROLES = ["admin", "counselor", "student"] as const;
+// ✅ include referral_user
+const FALLBACK_ROLES = [
+    "admin",
+    "counselor",
+    "student",
+    "referral_user",
+    "guest",
+] as const;
 
 /**
  * Subscribe to global auth session (same approach as NavMain).
  */
 function useAuthSession(): AuthSession {
-    const [session, setSession] = React.useState<AuthSession>(() => getCurrentSession());
+    const [session, setSession] = React.useState<AuthSession>(() =>
+        getCurrentSession(),
+    );
 
     React.useEffect(() => {
         const unsubscribe = subscribeToSession((next) => setSession(next));
@@ -178,6 +215,15 @@ type CreateUserForm = {
     password_confirmation: string;
 };
 
+type EditUserForm = {
+    name: string;
+    email: string;
+    role: string;
+    gender: string;
+    password: string;
+    password_confirmation: string;
+};
+
 const AdminUsersInner: React.FC = () => {
     const [roles, setRoles] = React.useState<string[]>([]);
     const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -188,9 +234,14 @@ const AdminUsersInner: React.FC = () => {
     const [updatingIds, setUpdatingIds] = React.useState<Set<string | number>>(
         () => new Set(),
     );
+    const [deletingIds, setDeletingIds] = React.useState<Set<string | number>>(
+        () => new Set(),
+    );
 
     const [avatarOpen, setAvatarOpen] = React.useState(false);
-    const [selectedUser, setSelectedUser] = React.useState<AdminUser | null>(null);
+    const [selectedUser, setSelectedUser] = React.useState<AdminUser | null>(
+        null,
+    );
 
     // Add user dialog
     const [createOpen, setCreateOpen] = React.useState(false);
@@ -206,6 +257,28 @@ const AdminUsersInner: React.FC = () => {
         password: "",
         password_confirmation: "",
     });
+
+    // ✅ Edit user dialog (Update)
+    const [editOpen, setEditOpen] = React.useState(false);
+    const [isUpdatingUser, setIsUpdatingUser] = React.useState(false);
+    const [showEditPassword, setShowEditPassword] = React.useState(false);
+    const [showEditConfirmPassword, setShowEditConfirmPassword] =
+        React.useState(false);
+    const [editTarget, setEditTarget] = React.useState<AdminUser | null>(null);
+    const [editForm, setEditForm] = React.useState<EditUserForm>({
+        name: "",
+        email: "",
+        role: "student",
+        gender: "",
+        password: "",
+        password_confirmation: "",
+    });
+
+    // ✅ Delete confirmation (AlertDialog)
+    const [deleteOpen, setDeleteOpen] = React.useState(false);
+    const [deleteTarget, setDeleteTarget] = React.useState<AdminUser | null>(
+        null,
+    );
 
     const effectiveRoles = React.useMemo(() => {
         const clean = roles.map((r) => String(r).trim()).filter(Boolean);
@@ -227,10 +300,11 @@ const AdminUsersInner: React.FC = () => {
     React.useEffect(() => {
         setCreateForm((prev) => {
             const prevRoleNorm = normalizeRole(prev.role);
-            const inList = effectiveRoles.some((r) => normalizeRole(r) === prevRoleNorm);
+            const inList = effectiveRoles.some(
+                (r) => normalizeRole(r) === prevRoleNorm,
+            );
             if (inList) return prev;
 
-            // Prefer student if present, else first role
             const preferred =
                 effectiveRoles.find((r) => normalizeRole(r) === "student") ??
                 effectiveRoles[0] ??
@@ -258,7 +332,8 @@ const AdminUsersInner: React.FC = () => {
             try {
                 await fetchAll();
             } catch (err) {
-                const msg = err instanceof Error ? err.message : "Failed to load users.";
+                const msg =
+                    err instanceof Error ? err.message : "Failed to load users.";
                 toast.error(msg);
             } finally {
                 if (mounted) setIsLoading(false);
@@ -300,16 +375,22 @@ const AdminUsersInner: React.FC = () => {
         setAvatarOpen(true);
     };
 
-    const updateUserInState = (id: string | number, partial: Partial<AdminUser>) => {
+    const updateUserInState = (
+        id: string | number,
+        partial: Partial<AdminUser>,
+    ) => {
         setUsers((prev) =>
-            prev.map((u) => (String(u.id) === String(id) ? { ...u, ...partial } : u)),
+            prev.map((u) =>
+                String(u.id) === String(id) ? { ...u, ...partial } : u,
+            ),
         );
     };
 
     const handleRoleChange = async (user: AdminUser, nextRoleRaw: string) => {
         const nextRole = String(nextRoleRaw ?? "").trim();
         const prevRole = String(user.role ?? "").trim();
-        if (!nextRole || normalizeRole(nextRole) === normalizeRole(prevRole)) return;
+        if (!nextRole || normalizeRole(nextRole) === normalizeRole(prevRole))
+            return;
 
         const userId = user.id;
 
@@ -381,26 +462,13 @@ const AdminUsersInner: React.FC = () => {
         const password = createForm.password;
         const passwordConfirmation = createForm.password_confirmation;
 
-        if (!name) {
-            toast.error("Please enter the user's full name.");
-            return;
-        }
-        if (!email) {
-            toast.error("Please enter the user's email.");
-            return;
-        }
-        if (!role) {
-            toast.error("Please select a role.");
-            return;
-        }
-        if (!password || password.length < 8) {
-            toast.error("Password must be at least 8 characters.");
-            return;
-        }
-        if (password !== passwordConfirmation) {
-            toast.error("Password confirmation does not match.");
-            return;
-        }
+        if (!name) return toast.error("Please enter the user's full name.");
+        if (!email) return toast.error("Please enter the user's email.");
+        if (!role) return toast.error("Please select a role.");
+        if (!password || password.length < 8)
+            return toast.error("Password must be at least 8 characters.");
+        if (password !== passwordConfirmation)
+            return toast.error("Password confirmation does not match.");
 
         setIsCreating(true);
 
@@ -419,11 +487,8 @@ const AdminUsersInner: React.FC = () => {
 
             const created = extractUserFromCreateResponse(res);
 
-            if (created) {
-                setUsers((prev) => [created, ...prev]);
-            } else {
-                await fetchAll();
-            }
+            if (created) setUsers((prev) => [created, ...prev]);
+            else await fetchAll();
 
             toast.success(res?.message ?? "User created successfully.");
             setCreateOpen(false);
@@ -437,10 +502,140 @@ const AdminUsersInner: React.FC = () => {
         }
     };
 
+    // ✅ EDIT (Update) helpers
+    const openEditDialog = (user: AdminUser) => {
+        setEditTarget(user);
+
+        setEditForm({
+            name: String(user.name ?? "").trim(),
+            email: String(user.email ?? "").trim(),
+            role: String(user.role ?? "student").trim() || "student",
+            gender: String((user as any).gender ?? "").trim(),
+            password: "",
+            password_confirmation: "",
+        });
+
+        setShowEditPassword(false);
+        setShowEditConfirmPassword(false);
+        setEditOpen(true);
+    };
+
+    const handleUpdateUser = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (!editTarget) return;
+
+        const userId = editTarget.id;
+
+        const name = editForm.name.trim();
+        const email = editForm.email.trim();
+        const role = editForm.role.trim();
+        const gender = editForm.gender.trim();
+        const password = editForm.password;
+        const passwordConfirmation = editForm.password_confirmation;
+
+        if (!name) return toast.error("Name is required.");
+        if (!email) return toast.error("Email is required.");
+        if (!role) return toast.error("Role is required.");
+
+        if ((password || passwordConfirmation) && password.length < 8) {
+            return toast.error("Password must be at least 8 characters.");
+        }
+        if (password && password !== passwordConfirmation) {
+            return toast.error("Password confirmation does not match.");
+        }
+
+        setIsUpdatingUser(true);
+        setUpdatingIds((prev) => new Set(prev).add(userId));
+
+        try {
+            const res = await apiFetch<any>(`/admin/users/${userId}`, {
+                method: "PATCH",
+                body: JSON.stringify({
+                    name,
+                    email,
+                    role,
+                    ...(gender ? { gender } : { gender: null }),
+                    ...(password
+                        ? { password, password_confirmation: passwordConfirmation }
+                        : {}),
+                }),
+            });
+
+            const updated = extractUserFromUpdateResponse(res);
+            if (updated) {
+                updateUserInState(userId, {
+                    name: updated.name ?? name,
+                    email: updated.email ?? email,
+                    role: updated.role ?? role,
+                    avatar_url: updated.avatar_url ?? editTarget.avatar_url ?? null,
+                });
+            } else {
+                await fetchAll();
+            }
+
+            toast.success(res?.message ?? "User updated.");
+            setEditOpen(false);
+            setEditTarget(null);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : "Failed to update user.";
+            toast.error(msg);
+        } finally {
+            setIsUpdatingUser(false);
+            setUpdatingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
+        }
+    };
+
+    // ✅ DELETE helpers (now uses ShadCN AlertDialog)
+    const openDeleteDialog = (user: AdminUser) => {
+        setDeleteTarget(user);
+        setDeleteOpen(true);
+    };
+
+    const confirmDeleteUser = async () => {
+        if (!deleteTarget) return;
+        const userId = deleteTarget.id;
+
+        if (deletingIds.has(userId)) return;
+
+        setDeletingIds((prev) => new Set(prev).add(userId));
+
+        try {
+            const res = await apiFetch<any>(`/admin/users/${userId}`, {
+                method: "DELETE",
+            });
+
+            setUsers((prev) =>
+                prev.filter((u) => String(u.id) !== String(userId)),
+            );
+
+            toast.success(res?.message ?? "User deleted.");
+
+            // close dialog + reset target
+            setDeleteOpen(false);
+            setDeleteTarget(null);
+        } catch (err) {
+            const msg = err instanceof Error ? err.message : "Failed to delete user.";
+            toast.error(msg);
+        } finally {
+            setDeletingIds((prev) => {
+                const next = new Set(prev);
+                next.delete(userId);
+                return next;
+            });
+        }
+    };
+
+    const isDeletingTarget =
+        !!deleteTarget && deletingIds.has(deleteTarget.id as any);
+
     return (
         <DashboardLayout
             title="Users"
-            description="View all users, check avatars, update user roles, and add new users."
+            description="View all users, check avatars, update user roles, and manage (CRUD) users."
         >
             <div className="space-y-6">
                 <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
@@ -452,7 +647,9 @@ const AdminUsersInner: React.FC = () => {
                                 </CardTitle>
                                 <CardDescription className="text-xs text-muted-foreground">
                                     Roles available:{" "}
-                                    {effectiveRoles.length > 0 ? effectiveRoles.join(", ") : "—"}
+                                    {effectiveRoles.length > 0
+                                        ? effectiveRoles.join(", ")
+                                        : "—"}
                                 </CardDescription>
                             </div>
 
@@ -467,7 +664,6 @@ const AdminUsersInner: React.FC = () => {
                                     />
                                 </div>
 
-                                {/* Mobile: stack buttons vertically. Desktop unchanged (sm:flex-row). */}
                                 <div className="flex flex-col gap-2 sm:flex-row">
                                     <Button
                                         type="button"
@@ -506,7 +702,9 @@ const AdminUsersInner: React.FC = () => {
                                 {filteredUsers.length}
                             </span>{" "}
                             of{" "}
-                            <span className="font-medium text-foreground">{users.length}</span>{" "}
+                            <span className="font-medium text-foreground">
+                                {users.length}
+                            </span>{" "}
                             users
                         </div>
                     </CardHeader>
@@ -526,6 +724,9 @@ const AdminUsersInner: React.FC = () => {
                                             <TableHead>Name</TableHead>
                                             <TableHead>Email</TableHead>
                                             <TableHead className="w-[220px]">Role</TableHead>
+                                            <TableHead className="w-[180px] text-right">
+                                                Actions
+                                            </TableHead>
                                         </TableRow>
                                     </TableHeader>
 
@@ -533,7 +734,7 @@ const AdminUsersInner: React.FC = () => {
                                         {filteredUsers.length === 0 ? (
                                             <TableRow>
                                                 <TableCell
-                                                    colSpan={4}
+                                                    colSpan={5}
                                                     className="py-10 text-center text-sm text-muted-foreground"
                                                 >
                                                     No users found.
@@ -543,6 +744,7 @@ const AdminUsersInner: React.FC = () => {
                                             filteredUsers.map((u) => {
                                                 const idKey = String(u.id);
                                                 const isUpdating = updatingIds.has(u.id);
+                                                const isDeleting = deletingIds.has(u.id);
 
                                                 const avatarUrl =
                                                     typeof u.avatar_url === "string" &&
@@ -614,7 +816,7 @@ const AdminUsersInner: React.FC = () => {
                                                                     onValueChange={(v) =>
                                                                         handleRoleChange(u, v)
                                                                     }
-                                                                    disabled={isUpdating}
+                                                                    disabled={isUpdating || isDeleting}
                                                                 >
                                                                     <SelectTrigger className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300">
                                                                         <SelectValue placeholder="Select role" />
@@ -639,6 +841,38 @@ const AdminUsersInner: React.FC = () => {
                                                                 ) : null}
                                                             </div>
                                                         </TableCell>
+
+                                                        <TableCell className="text-right">
+                                                            <div className="flex justify-end gap-2">
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    variant="outline"
+                                                                    className="h-9 gap-2"
+                                                                    onClick={() => openEditDialog(u)}
+                                                                    disabled={isUpdating || isDeleting}
+                                                                >
+                                                                    <Pencil className="h-4 w-4" />
+                                                                    Edit
+                                                                </Button>
+
+                                                                <Button
+                                                                    type="button"
+                                                                    size="sm"
+                                                                    variant="destructive"
+                                                                    className="h-9 gap-2"
+                                                                    onClick={() => openDeleteDialog(u)}
+                                                                    disabled={isUpdating || isDeleting}
+                                                                >
+                                                                    {isDeleting ? (
+                                                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                                                    ) : (
+                                                                        <Trash2 className="h-4 w-4" />
+                                                                    )}
+                                                                    Delete
+                                                                </Button>
+                                                            </div>
+                                                        </TableCell>
                                                     </TableRow>
                                                 );
                                             })
@@ -650,7 +884,7 @@ const AdminUsersInner: React.FC = () => {
                     </CardContent>
                 </Card>
 
-                {/* View avatar dialog (with vertical scrollbar) */}
+                {/* View avatar dialog */}
                 <Dialog
                     open={avatarOpen}
                     onOpenChange={(open) => {
@@ -658,14 +892,14 @@ const AdminUsersInner: React.FC = () => {
                         if (!open) setSelectedUser(null);
                     }}
                 >
-                    {/* Mobile: add left/right breathing room via width calc. Desktop unchanged. */}
                     <DialogContent className="w-[calc(100vw-2rem)] max-w-md max-h-[85vh] overflow-y-auto sm:w-full">
                         <DialogHeader>
                             <DialogTitle className="text-sm font-semibold text-amber-900">
                                 User Avatar
                             </DialogTitle>
                             <DialogDescription className="text-xs text-muted-foreground">
-                                {selectedUser?.name ?? "User"} • {selectedUser?.email ?? ""}
+                                {selectedUser?.name ?? "User"} •{" "}
+                                {selectedUser?.email ?? ""}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -706,7 +940,6 @@ const AdminUsersInner: React.FC = () => {
                         }
                     }}
                 >
-                    {/* Mobile: add left/right breathing room via width calc. Desktop unchanged. */}
                     <DialogContent className="w-[calc(100vw-2rem)] max-w-lg sm:w-full">
                         <DialogHeader>
                             <DialogTitle className="text-sm font-semibold text-amber-900">
@@ -726,7 +959,10 @@ const AdminUsersInner: React.FC = () => {
                                     id="create-name"
                                     value={createForm.name}
                                     onChange={(e) =>
-                                        setCreateForm((p) => ({ ...p, name: e.target.value }))
+                                        setCreateForm((p) => ({
+                                            ...p,
+                                            name: e.target.value,
+                                        }))
                                     }
                                     placeholder="Juan Dela Cruz"
                                     className="h-9 text-sm"
@@ -744,7 +980,10 @@ const AdminUsersInner: React.FC = () => {
                                     type="email"
                                     value={createForm.email}
                                     onChange={(e) =>
-                                        setCreateForm((p) => ({ ...p, email: e.target.value }))
+                                        setCreateForm((p) => ({
+                                            ...p,
+                                            email: e.target.value,
+                                        }))
                                     }
                                     placeholder="user@example.com"
                                     className="h-9 text-sm"
@@ -787,7 +1026,6 @@ const AdminUsersInner: React.FC = () => {
                                         Gender (optional)
                                     </Label>
 
-                                    {/* Radix Select items can't use empty string value, so we map empty -> "none" */}
                                     <Select
                                         value={createForm.gender ? createForm.gender : "none"}
                                         onValueChange={(v) =>
@@ -842,9 +1080,13 @@ const AdminUsersInner: React.FC = () => {
                                         <button
                                             type="button"
                                             className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
-                                            onClick={() => setShowCreatePassword((prev) => !prev)}
+                                            onClick={() =>
+                                                setShowCreatePassword((prev) => !prev)
+                                            }
                                             aria-label={
-                                                showCreatePassword ? "Hide password" : "Show password"
+                                                showCreatePassword
+                                                    ? "Hide password"
+                                                    : "Show password"
                                             }
                                             disabled={isCreating}
                                         >
@@ -858,7 +1100,10 @@ const AdminUsersInner: React.FC = () => {
                                 </div>
 
                                 <div className="space-y-2">
-                                    <Label className="text-xs" htmlFor="create-password-confirm">
+                                    <Label
+                                        className="text-xs"
+                                        htmlFor="create-password-confirm"
+                                    >
                                         Confirm password
                                     </Label>
                                     <div className="relative">
@@ -924,13 +1169,304 @@ const AdminUsersInner: React.FC = () => {
                         </form>
                     </DialogContent>
                 </Dialog>
+
+                {/* ✅ Edit user dialog (UPDATE) */}
+                <Dialog
+                    open={editOpen}
+                    onOpenChange={(open) => {
+                        setEditOpen(open);
+                        if (!open) {
+                            setIsUpdatingUser(false);
+                            setEditTarget(null);
+                        }
+                    }}
+                >
+                    <DialogContent className="w-[calc(100vw-2rem)] max-w-lg sm:w-full">
+                        <DialogHeader>
+                            <DialogTitle className="text-sm font-semibold text-amber-900">
+                                Edit user
+                            </DialogTitle>
+                            <DialogDescription className="text-xs text-muted-foreground">
+                                Update user profile and role. Password is optional.
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        <form className="space-y-4" onSubmit={handleUpdateUser}>
+                            <div className="space-y-2">
+                                <Label className="text-xs" htmlFor="edit-name">
+                                    Full name
+                                </Label>
+                                <Input
+                                    id="edit-name"
+                                    value={editForm.name}
+                                    onChange={(e) =>
+                                        setEditForm((p) => ({
+                                            ...p,
+                                            name: e.target.value,
+                                        }))
+                                    }
+                                    className="h-9 text-sm"
+                                    disabled={isUpdatingUser}
+                                />
+                            </div>
+
+                            <div className="space-y-2">
+                                <Label className="text-xs" htmlFor="edit-email">
+                                    Email
+                                </Label>
+                                <Input
+                                    id="edit-email"
+                                    type="email"
+                                    value={editForm.email}
+                                    onChange={(e) =>
+                                        setEditForm((p) => ({
+                                            ...p,
+                                            email: e.target.value,
+                                        }))
+                                    }
+                                    className="h-9 text-sm"
+                                    disabled={isUpdatingUser}
+                                />
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="edit-role">
+                                        Role
+                                    </Label>
+
+                                    <Select
+                                        value={editForm.role}
+                                        onValueChange={(v) =>
+                                            setEditForm((p) => ({ ...p, role: v }))
+                                        }
+                                        disabled={isUpdatingUser}
+                                    >
+                                        <SelectTrigger
+                                            id="edit-role"
+                                            className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300"
+                                        >
+                                            <SelectValue placeholder="Select role" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            {effectiveRoles.map((r) => (
+                                                <SelectItem key={r} value={r}>
+                                                    {r}
+                                                </SelectItem>
+                                            ))}
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="edit-gender">
+                                        Gender (optional)
+                                    </Label>
+
+                                    <Select
+                                        value={editForm.gender ? editForm.gender : "none"}
+                                        onValueChange={(v) =>
+                                            setEditForm((p) => ({
+                                                ...p,
+                                                gender: v === "none" ? "" : v,
+                                            }))
+                                        }
+                                        disabled={isUpdatingUser}
+                                    >
+                                        <SelectTrigger
+                                            id="edit-gender"
+                                            className="h-9 w-full text-sm focus:ring-2 focus:ring-amber-300"
+                                        >
+                                            <SelectValue placeholder="—" />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                            <SelectItem value="none">—</SelectItem>
+                                            <SelectItem value="male">Male</SelectItem>
+                                            <SelectItem value="female">Female</SelectItem>
+                                            <SelectItem value="nonbinary">Non-binary</SelectItem>
+                                            <SelectItem value="prefer-not-to-say">
+                                                Prefer not to say
+                                            </SelectItem>
+                                            <SelectItem value="other">Other</SelectItem>
+                                        </SelectContent>
+                                    </Select>
+                                </div>
+                            </div>
+
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                <div className="space-y-2">
+                                    <Label className="text-xs" htmlFor="edit-password">
+                                        New password (optional)
+                                    </Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="edit-password"
+                                            type={showEditPassword ? "text" : "password"}
+                                            value={editForm.password}
+                                            onChange={(e) =>
+                                                setEditForm((p) => ({
+                                                    ...p,
+                                                    password: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="Leave blank to keep current"
+                                            className="h-9 pr-10 text-sm"
+                                            autoComplete="new-password"
+                                            disabled={isUpdatingUser}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
+                                            onClick={() =>
+                                                setShowEditPassword((prev) => !prev)
+                                            }
+                                            aria-label={
+                                                showEditPassword ? "Hide password" : "Show password"
+                                            }
+                                            disabled={isUpdatingUser}
+                                        >
+                                            {showEditPassword ? (
+                                                <EyeOff className="h-4 w-4" />
+                                            ) : (
+                                                <Eye className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <div className="space-y-2">
+                                    <Label
+                                        className="text-xs"
+                                        htmlFor="edit-password-confirm"
+                                    >
+                                        Confirm password
+                                    </Label>
+                                    <div className="relative">
+                                        <Input
+                                            id="edit-password-confirm"
+                                            type={showEditConfirmPassword ? "text" : "password"}
+                                            value={editForm.password_confirmation}
+                                            onChange={(e) =>
+                                                setEditForm((p) => ({
+                                                    ...p,
+                                                    password_confirmation: e.target.value,
+                                                }))
+                                            }
+                                            placeholder="Re-enter password"
+                                            className="h-9 pr-10 text-sm"
+                                            autoComplete="new-password"
+                                            disabled={isUpdatingUser}
+                                        />
+                                        <button
+                                            type="button"
+                                            className="absolute inset-y-0 right-0 flex items-center pr-2 text-muted-foreground hover:text-foreground"
+                                            onClick={() =>
+                                                setShowEditConfirmPassword((prev) => !prev)
+                                            }
+                                            aria-label={
+                                                showEditConfirmPassword
+                                                    ? "Hide password"
+                                                    : "Show password"
+                                            }
+                                            disabled={isUpdatingUser}
+                                        >
+                                            {showEditConfirmPassword ? (
+                                                <EyeOff className="h-4 w-4" />
+                                            ) : (
+                                                <Eye className="h-4 w-4" />
+                                            )}
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <DialogFooter className="gap-2 sm:gap-0">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    onClick={() => setEditOpen(false)}
+                                    disabled={isUpdatingUser}
+                                    className="mx-2"
+                                >
+                                    Cancel
+                                </Button>
+                                <Button type="submit" disabled={isUpdatingUser}>
+                                    {isUpdatingUser ? (
+                                        <>
+                                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                            Saving...
+                                        </>
+                                    ) : (
+                                        "Save changes"
+                                    )}
+                                </Button>
+                            </DialogFooter>
+                        </form>
+                    </DialogContent>
+                </Dialog>
+
+                {/* ✅ Delete confirm dialog (ShadCN AlertDialog) */}
+                <AlertDialog
+                    open={deleteOpen}
+                    onOpenChange={(open) => {
+                        setDeleteOpen(open);
+                        if (!open) setDeleteTarget(null);
+                    }}
+                >
+                    <AlertDialogContent className="w-[calc(100vw-2rem)] max-w-md sm:w-full">
+                        <AlertDialogHeader>
+                            <AlertDialogTitle className="text-sm font-semibold text-amber-900">
+                                Delete user
+                            </AlertDialogTitle>
+                            <AlertDialogDescription className="text-xs text-muted-foreground">
+                                This action cannot be undone.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+
+                        <div className="rounded-md border bg-amber-50/60 p-3 text-sm">
+                            <div className="font-medium text-amber-900">
+                                {deleteTarget?.name ?? "—"}
+                            </div>
+                            <div className="text-xs text-muted-foreground">
+                                {deleteTarget?.email ?? ""}
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                                ID: {deleteTarget?.id ?? "—"}
+                            </div>
+                        </div>
+
+                        <AlertDialogFooter className="gap-2 sm:gap-0">
+                            <AlertDialogCancel disabled={isDeletingTarget}>
+                                Cancel
+                            </AlertDialogCancel>
+
+                            <AlertDialogAction
+                                // prevent auto-close while deleting
+                                onClick={(e) => {
+                                    e.preventDefault();
+                                    void confirmDeleteUser();
+                                }}
+                                disabled={!deleteTarget || isDeletingTarget}
+                                className="bg-destructive text-white mx-2 hover:bg-destructive/90"
+                            >
+                                {isDeletingTarget ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Deleting...
+                                    </>
+                                ) : (
+                                    "Delete"
+                                )}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
             </div>
         </DashboardLayout>
     );
 };
 
 const AdminUsersPage: React.FC = () => {
-    // ✅ Hooks are always called, no conditional hook usage.
     const session = useAuthSession();
     const me = session.user;
     const myRole = normalizeRole(me?.role ?? "");
