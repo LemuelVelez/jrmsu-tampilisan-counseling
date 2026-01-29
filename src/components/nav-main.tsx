@@ -155,6 +155,7 @@ const referralUserNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
     { title: "Overview", to: "/dashboard/admin", icon: LayoutDashboard, exact: true },
     { title: "Users", to: "/dashboard/admin/users", icon: Users },
+    { title: "Analytics", to: "/dashboard/admin/analytics", icon: BarChart3 },
     { title: "Settings", to: "/dashboard/admin/settings", icon: Settings },
 ];
 
