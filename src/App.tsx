@@ -12,6 +12,7 @@ import AuthCallbackPage from "./pages/auth/callback";
 import AdminOverview from "./pages/dashboard/admin/overview";
 import AdminUsersPage from "./pages/dashboard/admin/user";
 import AdminAnalytics from "./pages/dashboard/admin/analytics";
+import AdminMessages from "./pages/dashboard/admin/message";
 
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import CounselorIntake from "./pages/dashboard/counselor/intake";
@@ -185,6 +186,14 @@ function App() {
             element={
               <RequireRole allowedRoles={["admin"]}>
                 <AdminAnalytics />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/admin/messages"
+            element={
+              <RequireRole allowedRoles={["admin"]}>
+                <AdminMessages />
               </RequireRole>
             }
           />

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
     // Student/Guest APIs
     getStudentMessagesApi,
@@ -28,6 +29,24 @@ import {
     type CreateReferralUserMessagePayload,
     type CreateReferralUserMessageResponseDto,
 } from "@/api/messages/route";
+
+import {
+    getAdminConversationsApi,
+    getAdminConversationMessagesApi,
+    deleteAdminConversationApi,
+    updateAdminMessageApi,
+    deleteAdminMessageApi,
+    // ✅ NEW (send)
+    createAdminMessageApi,
+    type CreateAdminMessagePayload,
+    type CreateAdminMessageResponseDto,
+
+    type AdminConversationDto,
+    type AdminMessageDto,
+    type GetAdminConversationsResponseDto,
+    type GetAdminConversationMessagesResponseDto,
+    type UpdateAdminMessageResponseDto,
+} from "@/api/admin/messages/route";
 
 /**
  * Convenience type aliases for use in React components.
@@ -129,4 +148,59 @@ export async function markReferralUserMessagesAsRead(
         messageIds && messageIds.length > 0 ? { message_ids: messageIds } : undefined;
 
     return markReferralUserMessagesReadApi(payload);
+}
+
+/* ---------------------------------------
+ * ✅ Admin Messages (NEW)
+ * --------------------------------------*/
+
+export type AdminMessage = AdminMessageDto;
+export type AdminConversationSummary = AdminConversationDto;
+
+export async function fetchAdminMessageConversations(args?: {
+    page?: number;
+    per_page?: number;
+    search?: string;
+}): Promise<GetAdminConversationsResponseDto> {
+    return getAdminConversationsApi(args);
+}
+
+export async function fetchAdminConversationMessages(
+    conversationId: number | string,
+    args?: { page?: number; per_page?: number },
+): Promise<GetAdminConversationMessagesResponseDto> {
+    return getAdminConversationMessagesApi(conversationId, args);
+}
+
+export async function deleteAdminConversation(
+    conversationId: number | string,
+    args?: { force?: boolean },
+): Promise<{ message?: string; conversation_id: number | string; deleted_at?: string;[key: string]: unknown }> {
+    return deleteAdminConversationApi(conversationId, args);
+}
+
+export async function updateAdminMessage(
+    id: number | string,
+    content: string,
+): Promise<UpdateAdminMessageResponseDto> {
+    return updateAdminMessageApi(id, { content });
+}
+
+export async function deleteAdminMessage(
+    id: number | string,
+): Promise<{ message?: string; id: number | string;[key: string]: unknown }> {
+    return deleteAdminMessageApi(id);
+}
+
+/**
+ * ✅ NEW: Send message as admin (admin can message any user).
+ * Backend endpoint: POST /admin/messages
+ */
+export type SendAdminMessagePayload = CreateAdminMessagePayload;
+
+export async function sendAdminMessage(
+    input: string | SendAdminMessagePayload,
+): Promise<CreateAdminMessageResponseDto> {
+    const payload: CreateAdminMessagePayload = typeof input === "string" ? ({ content: input } as any) : input;
+    return createAdminMessageApi(payload);
 }

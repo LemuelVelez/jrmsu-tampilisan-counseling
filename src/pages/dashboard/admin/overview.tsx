@@ -12,6 +12,8 @@ import {
     HeartHandshake,
     UserCog,
     UserCheck,
+    MessageCircle,
+    BarChart3,
 } from "lucide-react";
 
 import DashboardLayout from "@/components/DashboardLayout";
@@ -36,6 +38,10 @@ import {
 import { AUTH_API_BASE_URL, type AuthenticatedUserDto } from "@/api/auth/route";
 import { normalizeRole } from "@/lib/role";
 
+import { fetchAdminMessageConversations } from "@/lib/messages";
+import { getAdminAnalyticsApi } from "@/api/admin-analytics/route";
+import type { MonthlyCountRow } from "@/api/analytics/route";
+
 import {
     ResponsiveContainer,
     PieChart,
@@ -48,6 +54,8 @@ import {
     XAxis,
     YAxis,
     CartesianGrid,
+    LineChart,
+    Line,
 } from "recharts";
 
 type AdminUser = AuthenticatedUserDto & {
@@ -178,6 +186,200 @@ function safeCreatedAtTs(u: AdminUser): number {
     return Number.isFinite(t) ? t : 0;
 }
 
+// =====================
+// Messages overview utils
+// =====================
+type PeerRole = "student" | "guest" | "counselor" | "admin" | "referral_user";
+
+type MessageThreadRow = {
+    id: string;
+    peerName: string;
+    peerRole: PeerRole;
+    lastMessage: string;
+    lastTimestampIso: string;
+};
+
+type MessagesOverview = {
+    totalThreads: number;
+    threadsLast7Days: number;
+    lastActivityLabel: string;
+    roleBreakdown: { name: string; value: number }[];
+    latestThreads: MessageThreadRow[];
+};
+
+function toPeerRole(raw: any): PeerRole | null {
+    if (raw == null) return null;
+    const r0 = String(raw).trim();
+    const r = r0.toLowerCase();
+
+    if (r === "student" || r === "students") return "student";
+    if (r === "guest" || r === "guests") return "guest";
+    if (r === "counselor" || r === "counsellor" || r === "counselors") return "counselor";
+    if (r === "admin" || r === "admins") return "admin";
+
+    if (
+        r === "referral_user" ||
+        r === "referral user" ||
+        r === "referral-user" ||
+        r === "referral_users" ||
+        r === "referral-users" ||
+        r === "referralusers"
+    )
+        return "referral_user";
+
+    // office roles
+    if (r === "dean" || r === "registrar" || r === "program_chair" || r === "program chair" || r === "programchair") return "referral_user";
+
+    return null;
+}
+
+function roleLabel(r: PeerRole): string {
+    if (r === "counselor") return "Counselor";
+    if (r === "guest") return "Guest";
+    if (r === "admin") return "Admin";
+    if (r === "referral_user") return "Referral user";
+    return "Student";
+}
+
+function extractArrayFromPayload(payload: any): any[] {
+    if (!payload) return [];
+    if (Array.isArray(payload)) return payload;
+    const candidates = [
+        payload.conversations,
+        payload.data,
+        payload.items,
+        payload.results,
+        payload.records,
+        payload?.payload?.conversations,
+        payload?.payload?.data,
+    ];
+    for (const c of candidates) if (Array.isArray(c)) return c;
+    return [];
+}
+
+function safeSnippet(s: any, maxLen = 84): string {
+    const t = String(s ?? "").replace(/\s+/g, " ").trim();
+    if (!t) return "—";
+    return t.length > maxLen ? `${t.slice(0, maxLen - 1)}…` : t;
+}
+
+function bestIsoFromAny(v: any): string {
+    const s = String(v ?? "").trim();
+    if (!s) return "";
+    const t = Date.parse(s);
+    if (!Number.isFinite(t)) return "";
+    return new Date(t).toISOString();
+}
+
+function conversationRoleFromId(conversationId: string): PeerRole {
+    const id = String(conversationId ?? "").trim().toLowerCase();
+    if (!id) return "student";
+
+    const m = id.match(/^(student|guest|admin|referral_user)-\d+/i);
+    if (m && toPeerRole(m[1])) return toPeerRole(m[1]) as PeerRole;
+
+    if (id.startsWith("counselor-")) return "counselor";
+    if (id.startsWith("referral_user-")) return "referral_user";
+    return "student";
+}
+
+function pickPeerNameFromThread(thread: any, role: PeerRole): string {
+    const last = thread?.last_message ?? thread?.lastMessage ?? thread?.last ?? null;
+
+    const candidates = [
+        last?.owner_name,
+        last?.recipient_name,
+        last?.sender_name,
+        thread?.peer_name,
+        thread?.peerName,
+        thread?.owner_name,
+        thread?.recipient_name,
+        thread?.sender_name,
+    ];
+
+    for (const c of candidates) {
+        const s = typeof c === "string" ? c.trim() : "";
+        if (s) return s;
+    }
+
+    return roleLabel(role);
+}
+
+function pickLastContent(thread: any): string {
+    const last = thread?.last_message ?? thread?.lastMessage ?? thread?.last ?? null;
+    return (
+        (typeof last?.content === "string" ? last.content : "") ||
+        (typeof thread?.last_message_text === "string" ? thread.last_message_text : "") ||
+        (typeof thread?.lastMessage === "string" ? thread.lastMessage : "") ||
+        ""
+    );
+}
+
+function pickLastTimestampIso(thread: any): string {
+    const last = thread?.last_message ?? thread?.lastMessage ?? thread?.last ?? null;
+
+    const candidates = [
+        last?.created_at,
+        last?.createdAt,
+        thread?.last_timestamp,
+        thread?.lastTimestamp,
+        thread?.updated_at,
+        thread?.updatedAt,
+        thread?.created_at,
+        thread?.createdAt,
+    ];
+
+    for (const c of candidates) {
+        const iso = bestIsoFromAny(c);
+        if (iso) return iso;
+    }
+
+    return "";
+}
+
+// =====================
+// Analytics overview utils
+// =====================
+function safeNumber(v: unknown): number {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+}
+
+function monthLabel(year: number, month: number) {
+    const d = new Date(year, Math.max(0, month - 1), 1);
+    return format(d, "MMM yyyy");
+}
+
+type ChartTheme = {
+    chart1: string;
+    border: string;
+    mutedForeground: string;
+    card: string;
+};
+
+function getCssVar(name: string, fallback: string): string {
+    if (typeof window === "undefined") return fallback;
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fallback;
+}
+
+function readChartTheme(): ChartTheme {
+    return {
+        chart1: getCssVar("--chart-1", "oklch(0.646 0.222 41.116)"),
+        border: getCssVar("--border", "oklch(0.922 0 0)"),
+        mutedForeground: getCssVar("--muted-foreground", "oklch(0.556 0 0)"),
+        card: getCssVar("--card", "oklch(1 0 0)"),
+    };
+}
+
+type AnalyticsOverview = {
+    thisMonth: number;
+    thisSemester: number;
+    totalInRange: number;
+    rangeText: string;
+    chartData: { name: string; count: number; year: number; month: number }[];
+};
+
 const AdminOverview: React.FC = () => {
     const [roles, setRoles] = React.useState<string[]>([]);
     const [users, setUsers] = React.useState<AdminUser[]>([]);
@@ -187,14 +389,165 @@ const AdminOverview: React.FC = () => {
     const [lastUpdated, setLastUpdated] = React.useState<string>("");
     const [snapshotNowTs, setSnapshotNowTs] = React.useState<number>(0);
 
-    const fetchAll = React.useCallback(async () => {
+    // messages overview
+    const [messagesLoading, setMessagesLoading] = React.useState<boolean>(true);
+    const [messagesError, setMessagesError] = React.useState<string | null>(null);
+    const [messagesOverview, setMessagesOverview] = React.useState<MessagesOverview>(() => ({
+        totalThreads: 0,
+        threadsLast7Days: 0,
+        lastActivityLabel: "",
+        roleBreakdown: [],
+        latestThreads: [],
+    }));
+
+    // analytics overview
+    const [analyticsLoading, setAnalyticsLoading] = React.useState<boolean>(true);
+    const [analyticsError, setAnalyticsError] = React.useState<string | null>(null);
+    const [analyticsOverview, setAnalyticsOverview] = React.useState<AnalyticsOverview>(() => ({
+        thisMonth: 0,
+        thisSemester: 0,
+        totalInRange: 0,
+        rangeText: "",
+        chartData: [],
+    }));
+
+    // chart theme (analytics mini chart)
+    const [theme, setTheme] = React.useState<ChartTheme>(() => readChartTheme());
+
+    React.useEffect(() => {
+        setTheme(readChartTheme());
+        const obs = new MutationObserver(() => setTheme(readChartTheme()));
+        obs.observe(document.documentElement, {
+            attributes: true,
+            attributeFilter: ["class", "style"],
+        });
+        return () => obs.disconnect();
+    }, []);
+
+    const fetchUsersAndRoles = React.useCallback(async () => {
         const [rolesRes, usersRes] = await Promise.all([
             apiFetch<RolesResponse>("/admin/roles", { method: "GET" }),
             apiFetch<UsersResponse>("/admin/users", { method: "GET" }),
         ]);
 
-        setRoles(extractRoles(rolesRes));
-        setUsers(extractUsers(usersRes));
+        return {
+            roles: extractRoles(rolesRes),
+            users: extractUsers(usersRes),
+        };
+    }, []);
+
+    const fetchMessagesOverview = React.useCallback(async (): Promise<MessagesOverview> => {
+        const nowTs = Date.now();
+        const cutoff = nowTs - 7 * DAY_MS;
+
+        const res = await fetchAdminMessageConversations({
+            page: 1,
+            per_page: 200,
+        });
+
+        const raw = extractArrayFromPayload(res);
+        const rows: MessageThreadRow[] = raw
+            .map((t: any) => {
+                const conversationId = String(t?.conversation_id ?? t?.id ?? t?.conversationId ?? "").trim();
+                if (!conversationId) return null;
+
+                const role =
+                    conversationRoleFromId(conversationId) ??
+                    toPeerRole(t?.peer_role ?? t?.owner_role ?? t?.role) ??
+                    "student";
+
+                const lastIso = pickLastTimestampIso(t);
+                const lastTs = lastIso ? Date.parse(lastIso) : 0;
+
+                return {
+                    id: conversationId,
+                    peerRole: role,
+                    peerName: pickPeerNameFromThread(t, role),
+                    lastMessage: pickLastContent(t),
+                    lastTimestampIso: lastIso || (lastTs ? new Date(lastTs).toISOString() : ""),
+                } as MessageThreadRow;
+            })
+            .filter(Boolean) as MessageThreadRow[];
+
+        const totalThreads = rows.length;
+
+        const threadsLast7Days = rows.filter((r) => {
+            const ts = r.lastTimestampIso ? Date.parse(r.lastTimestampIso) : 0;
+            return Number.isFinite(ts) && ts >= cutoff;
+        }).length;
+
+        const sorted = [...rows].sort((a, b) => {
+            const ta = a.lastTimestampIso ? Date.parse(a.lastTimestampIso) : 0;
+            const tb = b.lastTimestampIso ? Date.parse(b.lastTimestampIso) : 0;
+            return tb - ta;
+        });
+
+        const latestThreads = sorted.slice(0, 6);
+
+        const lastActivityIso = sorted[0]?.lastTimestampIso ?? "";
+        const lastActivityLabel = lastActivityIso
+            ? format(new Date(lastActivityIso), "MMM d, yyyy – h:mm a")
+            : "";
+
+        const counts = new Map<string, number>();
+        for (const r of rows) {
+            const label = roleLabel(r.peerRole);
+            counts.set(label, (counts.get(label) ?? 0) + 1);
+        }
+
+        const roleBreakdown = Array.from(counts.entries())
+            .map(([name, value]) => ({ name, value }))
+            .sort((a, b) => b.value - a.value);
+
+        return {
+            totalThreads,
+            threadsLast7Days,
+            lastActivityLabel,
+            roleBreakdown,
+            latestThreads,
+        };
+    }, []);
+
+    const fetchAnalyticsOverview = React.useCallback(async (): Promise<AnalyticsOverview> => {
+        const today = new Date();
+        const endDate = format(today, "yyyy-MM-dd");
+        const startDate = format(new Date(today.getFullYear(), today.getMonth() - 5, 1), "yyyy-MM-dd");
+
+        const res: any = await getAdminAnalyticsApi({
+            start_date: startDate,
+            end_date: endDate,
+        });
+
+        const thisMonth = safeNumber(res?.this_month_count);
+        const thisSemester = safeNumber(res?.this_semester_count);
+
+        const monthly: MonthlyCountRow[] = Array.isArray(res?.monthly_counts) ? res.monthly_counts : [];
+        const totalInRange = (monthly ?? []).reduce((acc, r) => acc + safeNumber((r as any)?.count), 0);
+
+        const sorted = [...(monthly ?? [])].sort((a: any, b: any) => {
+            const da = safeNumber(a.year) * 100 + safeNumber(a.month);
+            const db = safeNumber(b.year) * 100 + safeNumber(b.month);
+            return da - db;
+        });
+
+        const chartData = sorted.map((r: any) => ({
+            name: monthLabel(safeNumber(r.year), safeNumber(r.month)),
+            count: safeNumber(r.count),
+            year: safeNumber(r.year),
+            month: safeNumber(r.month),
+        }));
+
+        const rs = res?.range?.start_date ?? startDate;
+        const re = res?.range?.end_date ?? endDate;
+        const rangeText = rs && re ? `${rs} to ${re}` : "";
+
+        return {
+            thisMonth,
+            thisSemester,
+            totalInRange,
+            rangeText,
+            chartData,
+        };
     }, []);
 
     const reload = React.useCallback(
@@ -202,8 +555,43 @@ const AdminOverview: React.FC = () => {
             if (mode === "initial") setIsLoading(true);
             else setIsRefreshing(true);
 
+            setMessagesLoading(true);
+            setAnalyticsLoading(true);
+            setMessagesError(null);
+            setAnalyticsError(null);
+
             try {
-                await fetchAll();
+                const results = await Promise.allSettled([
+                    fetchUsersAndRoles(),
+                    fetchMessagesOverview(),
+                    fetchAnalyticsOverview(),
+                ]);
+
+                const usersRoles = results[0];
+                if (usersRoles.status === "fulfilled") {
+                    setRoles(usersRoles.value.roles);
+                    setUsers(usersRoles.value.users);
+                } else {
+                    setRoles([]);
+                    setUsers([]);
+                    toast.error(usersRoles.reason instanceof Error ? usersRoles.reason.message : "Failed to load users/roles.");
+                }
+
+                const msgs = results[1];
+                if (msgs.status === "fulfilled") {
+                    setMessagesOverview(msgs.value);
+                } else {
+                    const msg = msgs.reason instanceof Error ? msgs.reason.message : "Failed to load messages overview.";
+                    setMessagesError(msg);
+                }
+
+                const an = results[2];
+                if (an.status === "fulfilled") {
+                    setAnalyticsOverview(an.value);
+                } else {
+                    const msg = an.reason instanceof Error ? an.reason.message : "Failed to load analytics overview.";
+                    setAnalyticsError(msg);
+                }
 
                 const nowTs = Date.now();
                 setSnapshotNowTs(nowTs);
@@ -214,11 +602,14 @@ const AdminOverview: React.FC = () => {
                 const msg = err instanceof Error ? err.message : "Failed to load admin overview.";
                 toast.error(msg);
             } finally {
+                setMessagesLoading(false);
+                setAnalyticsLoading(false);
+
                 if (mode === "initial") setIsLoading(false);
                 else setIsRefreshing(false);
             }
         },
-        [fetchAll],
+        [fetchUsersAndRoles, fetchMessagesOverview, fetchAnalyticsOverview],
     );
 
     React.useEffect(() => {
@@ -305,25 +696,47 @@ const AdminOverview: React.FC = () => {
         };
     }, [users, snapshotNowTs]);
 
+    const messagesRoleTop = React.useMemo(() => {
+        return (messagesOverview.roleBreakdown ?? []).slice(0, 6);
+    }, [messagesOverview.roleBreakdown]);
+
+    const analyticsMini = React.useMemo(() => {
+        // Show at most last 6 points (already last 6 months range, but keep safe)
+        const data = analyticsOverview.chartData ?? [];
+        return data.slice(Math.max(0, data.length - 6));
+    }, [analyticsOverview.chartData]);
+
     return (
         <DashboardLayout title="Overview" description="Admin dashboard overview for User Management.">
-            <div className="mx-auto w-full px-4 space-y-4">
+            <div className="mx-auto w-full space-y-4 px-4">
                 <div className="flex flex-col gap-3 rounded-lg border border-amber-100 bg-amber-50/70 p-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="space-y-1 text-xs text-amber-900">
                         <p className="font-semibold">Admin Overview</p>
                         <p className="text-[0.7rem] text-amber-900/80">
-                            Quick snapshot of users and role distribution.
-                            {lastUpdated ? (
-                                <span className="ml-2">Last updated: {lastUpdated}</span>
-                            ) : null}
+                            Quick snapshot of users, messages, and analytics.
+                            {lastUpdated ? <span className="ml-2">Last updated: {lastUpdated}</span> : null}
                         </p>
                     </div>
 
-                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-center">
+                    <div className="flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:flex-wrap sm:items-center">
                         <Button asChild size="sm" className="w-full gap-2 sm:w-auto" disabled={isLoading}>
                             <Link to="/dashboard/admin/users">
                                 <Users className="h-4 w-4" />
                                 Manage users
+                            </Link>
+                        </Button>
+
+                        <Button asChild size="sm" variant="outline" className="w-full gap-2 sm:w-auto" disabled={isLoading}>
+                            <Link to="/dashboard/admin/message">
+                                <MessageCircle className="h-4 w-4" />
+                                Messages
+                            </Link>
+                        </Button>
+
+                        <Button asChild size="sm" variant="outline" className="w-full gap-2 sm:w-auto" disabled={isLoading}>
+                            <Link to="/dashboard/admin/analytics">
+                                <BarChart3 className="h-4 w-4" />
+                                Analytics
                             </Link>
                         </Button>
 
@@ -422,6 +835,240 @@ const AdminOverview: React.FC = () => {
                                 Unknown:{" "}
                                 <span className="font-semibold text-amber-900">{isLoading ? "—" : stats.unknown}</span>
                             </div>
+                        </CardContent>
+                    </Card>
+                </div>
+
+                {/* ✅ Messages + Analytics overview */}
+                <div className="grid gap-3 lg:grid-cols-2">
+                    {/* Messages overview */}
+                    <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
+                        <CardHeader className="space-y-2">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                                        <MessageCircle className="h-4 w-4 text-amber-600" />
+                                        Messages overview
+                                    </CardTitle>
+                                    <CardDescription className="text-xs text-muted-foreground">
+                                        Snapshot of admin inbox threads.
+                                    </CardDescription>
+                                </div>
+
+                                <Button asChild size="sm" variant="outline" className="w-full sm:w-auto" disabled={messagesLoading}>
+                                    <Link to="/dashboard/admin/message">Open messages</Link>
+                                </Button>
+                            </div>
+
+                            <Separator />
+
+                            {messagesError ? (
+                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                                    {messagesError}
+                                </div>
+                            ) : null}
+
+                            <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">Total threads</div>
+                                    <div className="mt-1 text-xl font-bold text-amber-900">
+                                        {messagesLoading ? "—" : messagesOverview.totalThreads}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">Active (last 7 days)</div>
+                                    <div className="mt-1 text-xl font-bold text-amber-900">
+                                        {messagesLoading ? "—" : messagesOverview.threadsLast7Days}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">Last activity</div>
+                                    <div className="mt-1 text-sm font-semibold text-amber-900">
+                                        {messagesLoading ? "—" : (messagesOverview.lastActivityLabel || "—")}
+                                    </div>
+                                </div>
+                            </div>
+                        </CardHeader>
+
+                        <CardContent className="space-y-3">
+                            {messagesLoading ? (
+                                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Loading messages overview...
+                                </div>
+                            ) : messagesOverview.totalThreads === 0 ? (
+                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-8 text-center text-xs text-muted-foreground">
+                                    No threads found yet.
+                                </div>
+                            ) : (
+                                <>
+                                    {/* Role breakdown (threads) */}
+                                    <div className="rounded-md border bg-white">
+                                        <Table>
+                                            <TableHeader>
+                                                <TableRow>
+                                                    <TableHead>Thread role</TableHead>
+                                                    <TableHead className="w-24 text-right">Count</TableHead>
+                                                </TableRow>
+                                            </TableHeader>
+                                            <TableBody>
+                                                {messagesRoleTop.length === 0 ? (
+                                                    <TableRow>
+                                                        <TableCell colSpan={2} className="text-center text-xs text-muted-foreground">
+                                                            No breakdown available.
+                                                        </TableCell>
+                                                    </TableRow>
+                                                ) : (
+                                                    messagesRoleTop.map((r) => (
+                                                        <TableRow key={r.name}>
+                                                            <TableCell className="text-sm">{r.name}</TableCell>
+                                                            <TableCell className="text-right text-sm font-semibold">{r.value}</TableCell>
+                                                        </TableRow>
+                                                    ))
+                                                )}
+                                            </TableBody>
+                                        </Table>
+                                    </div>
+
+                                    <Separator />
+
+                                    {/* Latest threads */}
+                                    <div>
+                                        <div className="mb-2 text-xs font-semibold text-amber-900">Latest threads</div>
+                                        <div className="overflow-auto rounded-md border bg-white">
+                                            <Table>
+                                                <TableHeader>
+                                                    <TableRow>
+                                                        <TableHead>User</TableHead>
+                                                        <TableHead className="w-32">Role</TableHead>
+                                                        <TableHead>Last message</TableHead>
+                                                        <TableHead className="w-44">Time</TableHead>
+                                                    </TableRow>
+                                                </TableHeader>
+                                                <TableBody>
+                                                    {messagesOverview.latestThreads.map((t) => (
+                                                        <TableRow key={t.id}>
+                                                            <TableCell className="text-sm">
+                                                                <div className="font-medium text-foreground">{t.peerName}</div>
+                                                                <div className="text-[0.7rem] text-muted-foreground">Thread: {t.id}</div>
+                                                            </TableCell>
+                                                            <TableCell className="text-sm">{roleLabel(t.peerRole)}</TableCell>
+                                                            <TableCell className="text-sm text-muted-foreground">{safeSnippet(t.lastMessage)}</TableCell>
+                                                            <TableCell className="text-sm">
+                                                                {t.lastTimestampIso ? format(new Date(t.lastTimestampIso), "MMM d, yyyy • h:mm a") : "—"}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    ))}
+                                                </TableBody>
+                                            </Table>
+                                        </div>
+                                    </div>
+                                </>
+                            )}
+                        </CardContent>
+                    </Card>
+
+                    {/* Analytics overview */}
+                    <Card className="border-amber-100/80 bg-white/80 shadow-sm shadow-amber-100/60 backdrop-blur">
+                        <CardHeader className="space-y-2">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <CardTitle className="flex items-center gap-2 text-sm font-semibold text-amber-900">
+                                        <BarChart3 className="h-4 w-4 text-amber-600" />
+                                        Analytics overview
+                                    </CardTitle>
+                                    <CardDescription className="text-xs text-muted-foreground">
+                                        Quick metrics + monthly trend (last ~6 months).
+                                    </CardDescription>
+                                </div>
+
+                                <Button asChild size="sm" variant="outline" className="w-full sm:w-auto" disabled={analyticsLoading}>
+                                    <Link to="/dashboard/admin/analytics">Open analytics</Link>
+                                </Button>
+                            </div>
+
+                            <Separator />
+
+                            {analyticsError ? (
+                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-3 py-2 text-xs text-amber-900">
+                                    {analyticsError}
+                                </div>
+                            ) : null}
+
+                            {analyticsOverview.rangeText ? (
+                                <div className="text-[0.7rem] text-muted-foreground">
+                                    Range: <span className="font-medium text-foreground">{analyticsOverview.rangeText}</span>
+                                </div>
+                            ) : null}
+
+                            <div className="grid gap-2 sm:grid-cols-3">
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">This month</div>
+                                    <div className="mt-1 text-xl font-bold text-amber-900">
+                                        {analyticsLoading ? "—" : analyticsOverview.thisMonth}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">This semester</div>
+                                    <div className="mt-1 text-xl font-bold text-amber-900">
+                                        {analyticsLoading ? "—" : analyticsOverview.thisSemester}
+                                    </div>
+                                </div>
+
+                                <div className="rounded-lg border border-amber-100 bg-white/70 p-3">
+                                    <div className="text-[0.7rem] text-muted-foreground">Total in range</div>
+                                    <div className="mt-1 text-xl font-bold text-amber-900">
+                                        {analyticsLoading ? "—" : analyticsOverview.totalInRange}
+                                    </div>
+                                </div>
+                            </div>
+                        </CardHeader>
+
+                        <CardContent>
+                            {analyticsLoading ? (
+                                <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                    Loading analytics overview...
+                                </div>
+                            ) : analyticsMini.length === 0 ? (
+                                <div className="rounded-md border border-dashed border-amber-100 bg-amber-50/60 px-4 py-10 text-center text-xs text-muted-foreground">
+                                    No analytics data for the selected range.
+                                </div>
+                            ) : (
+                                <div className="h-64">
+                                    <ResponsiveContainer width="100%" height="100%">
+                                        <LineChart data={analyticsMini} margin={{ top: 10, right: 18, bottom: 10, left: 0 }}>
+                                            <CartesianGrid stroke={theme.border} strokeDasharray="3 3" />
+                                            <XAxis
+                                                dataKey="name"
+                                                tickMargin={10}
+                                                tick={{ fill: theme.mutedForeground, fontSize: 11 }}
+                                                axisLine={{ stroke: theme.border }}
+                                                tickLine={{ stroke: theme.border }}
+                                            />
+                                            <YAxis
+                                                allowDecimals={false}
+                                                width={40}
+                                                tick={{ fill: theme.mutedForeground, fontSize: 11 }}
+                                                axisLine={{ stroke: theme.border }}
+                                                tickLine={{ stroke: theme.border }}
+                                            />
+                                            <Tooltip />
+                                            <Line
+                                                type="monotone"
+                                                dataKey="count"
+                                                stroke={theme.chart1}
+                                                strokeWidth={2}
+                                                dot={false}
+                                                activeDot={{ r: 4, fill: theme.chart1, stroke: theme.card, strokeWidth: 2 }}
+                                            />
+                                        </LineChart>
+                                    </ResponsiveContainer>
+                                </div>
+                            )}
                         </CardContent>
                     </Card>
                 </div>
@@ -543,7 +1190,7 @@ const AdminOverview: React.FC = () => {
                                 <Table>
                                     <TableHeader>
                                         <TableRow>
-                                            <TableHead className="w-[90px]">ID</TableHead>
+                                            <TableHead className="w-24">ID</TableHead>
                                             <TableHead>Name</TableHead>
                                             <TableHead>Email</TableHead>
                                             <TableHead className="w-40">Role</TableHead>

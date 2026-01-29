@@ -155,6 +155,7 @@ const referralUserNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
     { title: "Overview", to: "/dashboard/admin", icon: LayoutDashboard, exact: true },
     { title: "Users", to: "/dashboard/admin/users", icon: Users },
+    { title: "Messages", to: "/dashboard/admin/messages", icon: MessageCircle },
     { title: "Analytics", to: "/dashboard/admin/analytics", icon: BarChart3 },
     { title: "Settings", to: "/dashboard/admin/settings", icon: Settings },
 ];
@@ -239,7 +240,8 @@ export const NavMain: React.FC = () => {
         currentPath.endsWith("/messages") ||
         currentPath.includes("/dashboard/counselor/messages") ||
         currentPath.includes("/dashboard/student/messages") ||
-        currentPath.includes("/dashboard/referral-user/messages");
+        currentPath.includes("/dashboard/referral-user/messages") ||
+        currentPath.includes("/dashboard/admin/messages");
 
     const [counts, setCounts] = React.useState<NotificationCounts>({
         messages: 0,
@@ -274,16 +276,12 @@ export const NavMain: React.FC = () => {
      */
     React.useEffect(() => {
         refreshCounts();
-
     }, [location.pathname, refreshCounts]);
 
     /**
      * ✅ Smarter polling:
      * - Normal pages: every 30s
      * - While on Messages page AND there are unread messages: poll faster (every 3s)
-     *
-     * This ensures the badge clears quickly after marking messages as read,
-     * without hammering the API all the time.
      */
     React.useEffect(() => {
         if (!shouldFetchCounts) return;
