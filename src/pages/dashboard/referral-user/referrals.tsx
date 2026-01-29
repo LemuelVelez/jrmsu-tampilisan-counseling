@@ -76,22 +76,10 @@ type UiReferral = {
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined
 const API_BASE_URL = RAW_BASE_URL ? RAW_BASE_URL.replace(/\/+$/, "") : undefined
 
-const INSTITUTION_EMAIL_DOMAIN =
-    (import.meta.env.VITE_INSTITUTION_EMAIL_DOMAIN as string | undefined)?.trim()?.replace(/^@/, "") ||
-    "jrmsu.edu.ph"
-
 function resolveApiUrl(path: string): string {
     if (!API_BASE_URL) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.")
     const trimmed = path.replace(/^\/+/, "")
     return `${API_BASE_URL}/${trimmed}`
-}
-
-function isOfficialDomainEmail(email?: string | null): boolean {
-    const e = String(email ?? "").trim().toLowerCase()
-    if (!e) return false
-    const d = String(INSTITUTION_EMAIL_DOMAIN || "").trim().toLowerCase().replace(/^@/, "")
-    if (!d) return true
-    return e.endsWith(`@${d}`)
 }
 
 function safeText(v: any, fallback = ""): string {
@@ -328,7 +316,7 @@ function StudentCombobox(props: {
                     <span className={cn("min-w-0 truncate text-left", !value ? "text-muted-foreground" : "")}>
                         {value ? `${value.name} • ID: ${value.id}` : "Search student…"}
                     </span>
-                    <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    <ChevronsUpDown className="ml-4 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
             </PopoverTrigger>
 
@@ -347,17 +335,12 @@ function StudentCombobox(props: {
                         <CommandGroup>
                             {students.map((u) => {
                                 const selected = !!value && String(value.id) === String(u.id)
-                                const emailOk = !u.email ? true : isOfficialDomainEmail(u.email)
 
                                 return (
                                     <CommandItem
                                         key={String(u.id)}
                                         value={`${u.name} ${u.email ?? ""} ${u.id}`}
                                         onSelect={() => {
-                                            if (!emailOk) {
-                                                toast.error(`Student email must use official domain @${INSTITUTION_EMAIL_DOMAIN}`)
-                                                return
-                                            }
                                             onChange(u)
                                             setOpen(false)
                                         }}
@@ -365,14 +348,7 @@ function StudentCombobox(props: {
                                     >
                                         <Check className={cn("h-4 w-4", selected ? "opacity-100" : "opacity-0")} />
                                         <div className="min-w-0 flex-1">
-                                            <div className="flex items-center gap-2">
-                                                <div className="truncate text-sm">{u.name}</div>
-                                                {!emailOk ? (
-                                                    <Badge variant="destructive" className="h-5 px-2 text-[0.65rem]">
-                                                        Domain restricted
-                                                    </Badge>
-                                                ) : null}
-                                            </div>
+                                            <div className="truncate text-sm">{u.name}</div>
                                             <div className="truncate text-xs text-muted-foreground">
                                                 ID: {u.id}
                                                 {u.email ? ` • ${u.email}` : ""}
@@ -438,7 +414,6 @@ const ReferralUserReferrals: React.FC = () => {
 
     React.useEffect(() => {
         load("initial")
-
     }, [])
 
     const refresh = async () => {
@@ -553,11 +528,7 @@ const ReferralUserReferrals: React.FC = () => {
             return
         }
 
-        // ✅ Domain restriction (only if we actually have the student's email)
-        if (studentMode === "search" && selectedStudent?.email && !isOfficialDomainEmail(selectedStudent.email)) {
-            toast.error(`Student email must use official domain @${INSTITUTION_EMAIL_DOMAIN}`)
-            return
-        }
+        // ✅ Domain restriction removed
 
         setCreateBusy(true)
 
@@ -673,9 +644,7 @@ const ReferralUserReferrals: React.FC = () => {
 
                         <div className="rounded-xl border bg-white/60 p-3 text-[0.75rem] text-muted-foreground">
                             <span className="font-medium text-slate-700">Requested by:</span> {myName} •{" "}
-                            <span className="font-medium text-slate-700">Role:</span> {myRole} •{" "}
-                            <span className="font-medium text-slate-700">Domain restriction:</span> Only official emails{" "}
-                            <span className="font-semibold text-slate-700">@{INSTITUTION_EMAIL_DOMAIN}</span>
+                            <span className="font-medium text-slate-700">Role:</span> {myRole}
                         </div>
                     </CardHeader>
 
@@ -813,10 +782,7 @@ const ReferralUserReferrals: React.FC = () => {
 
                                     {selectedStudent?.email ? (
                                         <div className="text-[0.70rem] text-muted-foreground">
-                                            Selected email:{" "}
-                                            <span className={cn("font-semibold", isOfficialDomainEmail(selectedStudent.email) ? "text-slate-700" : "text-destructive")}>
-                                                {selectedStudent.email}
-                                            </span>
+                                            Selected email: <span className="font-semibold text-slate-700">{selectedStudent.email}</span>
                                         </div>
                                     ) : null}
                                 </TabsContent>
@@ -877,10 +843,6 @@ const ReferralUserReferrals: React.FC = () => {
                                 </div>
                                 <div>
                                     <span className="font-semibold text-slate-700">Role:</span> {myRole}
-                                </div>
-                                <div>
-                                    <span className="font-semibold text-slate-700">Domain restriction:</span> Official email{" "}
-                                    <span className="font-semibold text-slate-700">@{INSTITUTION_EMAIL_DOMAIN}</span>
                                 </div>
                             </div>
                         </div>

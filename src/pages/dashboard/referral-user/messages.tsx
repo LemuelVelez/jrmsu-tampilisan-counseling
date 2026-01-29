@@ -6,7 +6,14 @@ import { format } from "date-fns"
 import { getCurrentSession } from "@/lib/authentication"
 
 import { cn } from "@/lib/utils"
-import { Check, ChevronsUpDown, MoreVertical, RefreshCw, Trash2 } from "lucide-react"
+import {
+    Check,
+    ChevronsUpDown,
+    MoreVertical,
+    Pencil,
+    RefreshCw,
+    Trash2,
+} from "lucide-react"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -37,7 +44,7 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 
-type SenderKind = "student" | "guest" | "counselor" | "system"
+type SenderKind = "student" | "guest" | "counselor" | "system" | "referral_user"
 
 type UiMessage = {
     id: number | string
@@ -52,7 +59,7 @@ type UiMessage = {
 
     senderId?: number | string | null
     recipientId?: number | string | null
-    recipientRole?: "counselor" | "student" | "guest" | "admin" | null
+    recipientRole?: "counselor" | "student" | "guest" | "admin" | "referral_user" | null
 
     userId?: number | string | null
 
@@ -83,10 +90,6 @@ type DirectoryUser = {
 
 const RAW_BASE_URL = import.meta.env.VITE_API_LARAVEL_BASE_URL as string | undefined
 const API_BASE_URL = RAW_BASE_URL ? RAW_BASE_URL.replace(/\/+$/, "") : undefined
-
-const INSTITUTION_EMAIL_DOMAIN =
-    (import.meta.env.VITE_INSTITUTION_EMAIL_DOMAIN as string | undefined)?.trim()?.replace(/^@/, "") ||
-    "jrmsu.edu.ph"
 
 function resolveApiUrl(path: string): string {
     if (!API_BASE_URL) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.")
@@ -154,14 +157,6 @@ function resolveAvatarSrc(raw?: string | null): string | null {
     const finalPath = path.startsWith("/") ? path : `/${path}`
     const origin = getApiOrigin()
     return origin ? `${origin}${finalPath}` : finalPath
-}
-
-function isOfficialDomainEmail(email?: string | null): boolean {
-    const e = String(email ?? "").trim().toLowerCase()
-    if (!e) return false
-    const d = String(INSTITUTION_EMAIL_DOMAIN || "").trim().toLowerCase().replace(/^@/, "")
-    if (!d) return true
-    return e.endsWith(`@${d}`)
 }
 
 function initials(name: string) {
@@ -266,6 +261,7 @@ function extractMessagesArray(payload: any): any[] {
 function normalizeSender(raw: any): SenderKind {
     const s = String(raw ?? "").trim().toLowerCase()
     if (s === "student" || s === "guest" || s === "counselor" || s === "system") return s
+    if (s === "referral_user" || s === "dean" || s === "registrar" || s === "program_chair") return "referral_user"
     return "system"
 }
 
@@ -290,6 +286,7 @@ function safeConversationId(dto: any): string {
 
 function mapDtoToUi(dto: any): UiMessage {
     const sender = normalizeSender(dto?.sender)
+
     const senderName =
         (dto?.sender_name && String(dto.sender_name).trim()) ||
         (sender === "system"
@@ -342,9 +339,7 @@ function buildConversations(messages: UiMessage[]): Conversation[] {
         const unreadCount = ordered.filter((m) => m.isUnread).length
 
         // peer = counselor in this module
-        const counselorMsg =
-            ordered.find((m) => m.sender === "counselor") ??
-            last
+        const counselorMsg = ordered.find((m) => m.sender === "counselor") ?? last
 
         const peerName = counselorMsg.sender === "counselor" ? counselorMsg.senderName || "Counselor" : "Counselor"
         const peerId =
@@ -380,6 +375,18 @@ function buildConversations(messages: UiMessage[]): Conversation[] {
     return convs
 }
 
+function isNumericId(id: unknown): boolean {
+    if (typeof id === "number") return Number.isInteger(id)
+    if (typeof id === "string") return /^\d+$/.test(id.trim())
+    return false
+}
+
+function normalizeIdToNumberOrNull(id: unknown): number | null {
+    if (!isNumericId(id)) return null
+    const n = typeof id === "number" ? id : Number.parseInt(String(id), 10)
+    return Number.isFinite(n) ? n : null
+}
+
 async function tryFetchReferralUserMessages(token?: string | null): Promise<any[]> {
     const candidates = [
         "/referral-user/messages",
@@ -402,10 +409,7 @@ async function tryFetchReferralUserMessages(token?: string | null): Promise<any[
     throw lastErr ?? new Error("Failed to load messages.")
 }
 
-async function trySendReferralUserMessage(
-    payload: any,
-    token?: string | null,
-): Promise<any> {
+async function trySendReferralUserMessage(payload: any, token?: string | null): Promise<any> {
     const candidates = [
         "/referral-user/messages",
         "/student/messages",
@@ -480,6 +484,62 @@ async function tryDeleteConversationApi(conversationId: string, token?: string |
     throw lastErr ?? new Error("Failed to delete conversation.")
 }
 
+/**
+ * ✅ NEW: Update a single message (edit)
+ */
+async function tryUpdateMessageApi(messageId: number, content: string, token?: string | null): Promise<any> {
+    const id = encodeURIComponent(String(messageId))
+    const candidates = [
+        `/referral-user/messages/${id}`,
+        `/messages/${id}`,
+        `/student/messages/${id}`,
+    ]
+
+    const methods: Array<"PATCH" | "PUT"> = ["PATCH", "PUT"]
+    let lastErr: any = null
+
+    for (const p of candidates) {
+        for (const method of methods) {
+            try {
+                const data = await apiFetch(
+                    p,
+                    { method, body: JSON.stringify({ content }) },
+                    token,
+                )
+                return data
+            } catch (e) {
+                lastErr = e
+            }
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to update message.")
+}
+
+/**
+ * ✅ NEW: Delete a single message
+ */
+async function tryDeleteMessageApi(messageId: number, token?: string | null): Promise<any> {
+    const id = encodeURIComponent(String(messageId))
+    const candidates = [
+        `/referral-user/messages/${id}`,
+        `/messages/${id}`,
+        `/student/messages/${id}`,
+    ]
+
+    let lastErr: any = null
+    for (const p of candidates) {
+        try {
+            const data = await apiFetch(p, { method: "DELETE" }, token)
+            return data
+        } catch (e) {
+            lastErr = e
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to delete message.")
+}
+
 async function trySearchCounselorsFromDb(query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim()
     const qq = encodeURIComponent(q)
@@ -529,12 +589,9 @@ async function trySearchCounselorsFromDb(query: string, token?: string | null): 
                 })
                 .filter(Boolean) as DirectoryUser[]
 
-            // ✅ Domain restriction in UI (only official domain)
-            const filtered = mapped.filter((u) => !u.email || isOfficialDomainEmail(u.email))
-
             // de-dupe
             const seen = new Set<string>()
-            return filtered.filter((u) => {
+            return mapped.filter((u) => {
                 const k = String(u.id)
                 if (seen.has(k)) return false
                 seen.add(k)
@@ -646,6 +703,15 @@ const ReferralUserMessages: React.FC = () => {
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false)
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false)
 
+    // ✅ NEW: edit/delete single message
+    const [editingMessageId, setEditingMessageId] = React.useState<string>("")
+    const [editDraft, setEditDraft] = React.useState("")
+    const [isUpdatingMessage, setIsUpdatingMessage] = React.useState(false)
+
+    const [deleteMessageOpen, setDeleteMessageOpen] = React.useState(false)
+    const [deleteTarget, setDeleteTarget] = React.useState<UiMessage | null>(null)
+    const [isDeletingMessage, setIsDeletingMessage] = React.useState(false)
+
     const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
         const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing
         setBusy(true)
@@ -744,12 +810,6 @@ const ReferralUserMessages: React.FC = () => {
             return
         }
 
-        // Domain restriction already applied in search results
-        if (newRecipient.email && !isOfficialDomainEmail(newRecipient.email)) {
-            toast.error(`Counselor email must use official domain @${INSTITUTION_EMAIL_DOMAIN}`)
-            return
-        }
-
         const peerId = newRecipient.id
         const peerName = newRecipient.name
 
@@ -837,6 +897,101 @@ const ReferralUserMessages: React.FC = () => {
         return resolveAvatarSrc(c.peerAvatarUrl ?? null)
     }
 
+    const beginEditMessage = (m: UiMessage) => {
+        setEditingMessageId(String(m.id))
+        setEditDraft(m.content ?? "")
+    }
+
+    const cancelEditMessage = () => {
+        setEditingMessageId("")
+        setEditDraft("")
+        setIsUpdatingMessage(false)
+    }
+
+    const saveEditMessage = async (m: UiMessage) => {
+        const next = editDraft.trim()
+        if (!next) {
+            toast.error("Message cannot be empty.")
+            return
+        }
+
+        const msgIdNum = normalizeIdToNumberOrNull(m.id)
+        const prevContent = m.content
+
+        // optimistic UI
+        setIsUpdatingMessage(true)
+        setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...x, content: next } : x)))
+
+        try {
+            // If it's a local-only message (seed/local id), just keep client-side update
+            if (msgIdNum == null) {
+                toast.success("Message updated.")
+                cancelEditMessage()
+                return
+            }
+
+            const res = await tryUpdateMessageApi(msgIdNum, next, token)
+
+            const dto =
+                (res as any)?.messageRecord ||
+                (res as any)?.message ||
+                (res as any)?.data ||
+                (res as any)?.record ||
+                null
+
+            if (dto) {
+                const serverMsg = mapDtoToUi(dto)
+                setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...serverMsg, isUnread: false } : x)))
+            }
+
+            toast.success("Message updated.")
+            cancelEditMessage()
+        } catch (err) {
+            // rollback
+            setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...x, content: prevContent } : x)))
+            toast.error(err instanceof Error ? err.message : "Failed to update message.")
+            setIsUpdatingMessage(false)
+        }
+    }
+
+    const askDeleteMessage = (m: UiMessage) => {
+        setDeleteTarget(m)
+        setDeleteMessageOpen(true)
+    }
+
+    const confirmDeleteMessage = async () => {
+        if (!deleteTarget) return
+
+        const target = deleteTarget
+        const msgIdNum = normalizeIdToNumberOrNull(target.id)
+
+        setIsDeletingMessage(true)
+
+        // optimistic remove
+        setMessages((prev) => prev.filter((x) => String(x.id) !== String(target.id)))
+
+        try {
+            // local-only delete
+            if (msgIdNum == null) {
+                toast.success("Message deleted.")
+                setDeleteMessageOpen(false)
+                setDeleteTarget(null)
+                return
+            }
+
+            await tryDeleteMessageApi(msgIdNum, token)
+            toast.success("Message deleted.")
+            setDeleteMessageOpen(false)
+            setDeleteTarget(null)
+        } catch (err) {
+            // rollback: reinsert (best-effort)
+            setMessages((prev) => [...prev, target])
+            toast.error(err instanceof Error ? err.message : "Failed to delete message.")
+        } finally {
+            setIsDeletingMessage(false)
+        }
+    }
+
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault()
 
@@ -857,7 +1012,7 @@ const ReferralUserMessages: React.FC = () => {
         const optimistic: UiMessage = {
             id: tempId,
             conversationId: activeConversation.id,
-            sender: "guest", // referral user behaves like non-counselor sender
+            sender: "referral_user",
             senderName: myName,
             content: text,
             createdAt: nowIso,
@@ -952,7 +1107,7 @@ const ReferralUserMessages: React.FC = () => {
                                             <div className="space-y-2">
                                                 <div className="space-y-1">
                                                     <Label className="text-[0.70rem] font-medium text-slate-700">
-                                                        Counselor (official domain only)
+                                                        Counselor
                                                     </Label>
 
                                                     <UserCombobox
@@ -966,10 +1121,6 @@ const ReferralUserMessages: React.FC = () => {
                                                         }}
                                                         isLoading={recipientLoading}
                                                     />
-
-                                                    <div className="text-[0.70rem] text-muted-foreground">
-                                                        Domain restriction: <span className="font-semibold">@{INSTITUTION_EMAIL_DOMAIN}</span>
-                                                    </div>
                                                 </div>
 
                                                 <Button
@@ -1194,7 +1345,7 @@ const ReferralUserMessages: React.FC = () => {
                                         ) : (
                                             activeMessages.map((m) => {
                                                 const mine =
-                                                    (m.sender === "student" || m.sender === "guest") &&
+                                                    (m.sender === "student" || m.sender === "guest" || m.sender === "referral_user") &&
                                                     (String(m.senderId ?? "") === myUserId || String(m.userId ?? "") === myUserId)
 
                                                 const system = m.sender === "system"
@@ -1205,6 +1356,8 @@ const ReferralUserMessages: React.FC = () => {
                                                     : mine
                                                         ? "border-indigo-200 bg-indigo-50/90"
                                                         : "border-slate-200 bg-white/90"
+
+                                                const isEditing = String(m.id) === editingMessageId
 
                                                 return (
                                                     <div key={String(m.id)} className={`flex ${align}`}>
@@ -1222,10 +1375,81 @@ const ReferralUserMessages: React.FC = () => {
                                                                 )}
                                                                 <span aria-hidden="true">•</span>
                                                                 <span>{formatTimestamp(m.createdAt)}</span>
+
+                                                                {/* ✅ NEW: per-message actions (edit/delete) */}
+                                                                {!system && mine ? (
+                                                                    <DropdownMenu>
+                                                                        <DropdownMenuTrigger asChild>
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="ghost"
+                                                                                size="icon"
+                                                                                className="h-6 w-6 rounded-full"
+                                                                                aria-label="Message actions"
+                                                                                disabled={isUpdatingMessage || isDeletingMessage}
+                                                                            >
+                                                                                <MoreVertical className="h-3.5 w-3.5" />
+                                                                            </Button>
+                                                                        </DropdownMenuTrigger>
+                                                                        <DropdownMenuContent align="end">
+                                                                            <DropdownMenuItem
+                                                                                onSelect={(e) => {
+                                                                                    e.preventDefault()
+                                                                                    beginEditMessage(m)
+                                                                                }}
+                                                                                disabled={isEditing || isUpdatingMessage}
+                                                                            >
+                                                                                <Pencil className="mr-2 h-4 w-4" />
+                                                                                Edit
+                                                                            </DropdownMenuItem>
+                                                                            <DropdownMenuItem
+                                                                                className="text-destructive focus:text-destructive"
+                                                                                onSelect={(e) => {
+                                                                                    e.preventDefault()
+                                                                                    askDeleteMessage(m)
+                                                                                }}
+                                                                                disabled={isDeletingMessage}
+                                                                            >
+                                                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                                                Delete
+                                                                            </DropdownMenuItem>
+                                                                        </DropdownMenuContent>
+                                                                    </DropdownMenu>
+                                                                ) : null}
                                                             </div>
 
                                                             <div className={cn("rounded-2xl border px-3 py-2 text-sm leading-relaxed shadow-sm", bubble)}>
-                                                                {m.content}
+                                                                {isEditing ? (
+                                                                    <div className="space-y-2">
+                                                                        <Textarea
+                                                                            value={editDraft}
+                                                                            onChange={(e) => setEditDraft(e.target.value)}
+                                                                            className="min-h-20 resize-none rounded-xl"
+                                                                            disabled={isUpdatingMessage}
+                                                                        />
+                                                                        <div className={cn("flex gap-2", mine ? "justify-end" : "justify-start")}>
+                                                                            <Button
+                                                                                type="button"
+                                                                                variant="outline"
+                                                                                className="h-9"
+                                                                                onClick={cancelEditMessage}
+                                                                                disabled={isUpdatingMessage}
+                                                                            >
+                                                                                Cancel
+                                                                            </Button>
+                                                                            <Button
+                                                                                type="button"
+                                                                                className="h-9"
+                                                                                onClick={() => saveEditMessage(m)}
+                                                                                disabled={isUpdatingMessage || !editDraft.trim()}
+                                                                            >
+                                                                                {isUpdatingMessage ? "Saving…" : "Save"}
+                                                                            </Button>
+                                                                        </div>
+                                                                    </div>
+                                                                ) : (
+                                                                    m.content
+                                                                )}
                                                             </div>
                                                         </div>
                                                     </div>
@@ -1280,6 +1504,31 @@ const ReferralUserMessages: React.FC = () => {
                                 className="bg-destructive text-white hover:bg-destructive/90"
                             >
                                 {isDeletingConvo ? "Deleting…" : "Delete conversation"}
+                            </AlertDialogAction>
+                        </AlertDialogFooter>
+                    </AlertDialogContent>
+                </AlertDialog>
+
+                {/* ✅ NEW: Delete message confirm */}
+                <AlertDialog
+                    open={deleteMessageOpen}
+                    onOpenChange={(v) => (!isDeletingMessage ? setDeleteMessageOpen(v) : null)}
+                >
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete message?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This will delete the selected message. This action can’t be undone.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+                        <AlertDialogFooter>
+                            <AlertDialogCancel disabled={isDeletingMessage}>Cancel</AlertDialogCancel>
+                            <AlertDialogAction
+                                onClick={confirmDeleteMessage}
+                                disabled={isDeletingMessage}
+                                className="bg-destructive text-white hover:bg-destructive/90"
+                            >
+                                {isDeletingMessage ? "Deleting…" : "Delete message"}
                             </AlertDialogAction>
                         </AlertDialogFooter>
                     </AlertDialogContent>

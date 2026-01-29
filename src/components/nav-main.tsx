@@ -145,6 +145,7 @@ const counselorNavItems: NavItem[] = [
  * REFERRAL USER NAV ITEMS
  */
 const referralUserNavItems: NavItem[] = [
+    { title: "Overview", to: "/dashboard/referral-user/overview", icon: LayoutDashboard, exact: true },
     { title: "Referrals", to: "/dashboard/referral-user/referrals", icon: Share2, badgeKey: "referrals" },
     { title: "Messages", to: "/dashboard/referral-user/messages", icon: MessageCircle, badgeKey: "messages" },
 ];
@@ -155,7 +156,6 @@ const referralUserNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
     { title: "Overview", to: "/dashboard/admin", icon: LayoutDashboard, exact: true },
     { title: "Users", to: "/dashboard/admin/users", icon: Users },
-    // ✅ add badge support for admin unread messages too
     { title: "Messages", to: "/dashboard/admin/messages", icon: MessageCircle, badgeKey: "messages" },
     { title: "Analytics", to: "/dashboard/admin/analytics", icon: BarChart3 },
     { title: "Settings", to: "/dashboard/admin/settings", icon: Settings },
@@ -203,12 +203,32 @@ async function fetchNotificationCountsRaw(authToken?: string | null): Promise<an
 
     const json = await res.json();
 
-    // ✅ DEV-ONLY: this is how you can copy the real backend payload quickly
     if (import.meta.env.DEV) {
         console.debug("[/notifications/counts] raw payload:", json);
     }
 
     return json;
+}
+
+function isReferralUserRole(normalizedRole: string): boolean {
+    // ✅ include explicit referral variants AND role-based referral user types
+    if (
+        normalizedRole.includes("referral") ||
+        normalizedRole.includes("referral-user") ||
+        normalizedRole.includes("referral_user") ||
+        normalizedRole.includes("referraluser")
+    ) {
+        return true;
+    }
+
+    // ✅ your existing mapping (dean/registrar/chair variants)
+    return (
+        normalizedRole.includes("dean") ||
+        normalizedRole.includes("registrar") ||
+        normalizedRole.includes("program chair") ||
+        normalizedRole.includes("program_chair") ||
+        normalizedRole.includes("chair")
+    );
 }
 
 export const NavMain: React.FC = () => {
@@ -223,13 +243,7 @@ export const NavMain: React.FC = () => {
         roleKey = "admin";
     } else if (normalizedRole.includes("counselor") || normalizedRole.includes("counsellor")) {
         roleKey = "counselor";
-    } else if (
-        normalizedRole.includes("dean") ||
-        normalizedRole.includes("registrar") ||
-        normalizedRole.includes("program chair") ||
-        normalizedRole.includes("program_chair") ||
-        normalizedRole.includes("chair")
-    ) {
+    } else if (isReferralUserRole(normalizedRole)) {
         roleKey = "referralUser";
     }
 
@@ -256,7 +270,6 @@ export const NavMain: React.FC = () => {
         (session as any)?.accessToken ??
         null;
 
-    // ✅ include admin so /dashboard/admin/messages can show badge (and settings nav stays correct)
     const shouldFetchCounts = !!user;
 
     const refreshCounts = React.useCallback(async () => {
@@ -271,19 +284,10 @@ export const NavMain: React.FC = () => {
         }
     }, [authToken, shouldFetchCounts]);
 
-    /**
-     * ✅ Refresh immediately on mount AND whenever route changes.
-     * This helps the badge disappear quickly after you mark conversations as read.
-     */
     React.useEffect(() => {
         refreshCounts();
     }, [location.pathname, refreshCounts]);
 
-    /**
-     * ✅ Smarter polling:
-     * - Normal pages: every 30s
-     * - While on Messages page AND there are unread messages: poll faster (every 3s)
-     */
     React.useEffect(() => {
         if (!shouldFetchCounts) return;
 

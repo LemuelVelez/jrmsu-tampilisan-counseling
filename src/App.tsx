@@ -34,7 +34,8 @@ import CounselorAssessmentScoreInput from "./pages/dashboard/counselor/assessmen
 // ✅ NEW: Assessment report page (Counselor)
 import CounselorAssessmentReport from "./pages/dashboard/counselor/assessment-report";
 
-// ✅ NEW: Referral-user pages
+// ✅ Referral-user pages
+import ReferralUserOverview from "./pages/dashboard/referral-user/overview";
 import ReferralUserMessages from "./pages/dashboard/referral-user/messages";
 import ReferralUserReferrals from "./pages/dashboard/referral-user/referrals";
 
@@ -150,6 +151,20 @@ function SettingsIndexRoute() {
 }
 
 function App() {
+  const referralUserAllowedRoles = [
+    // explicit variants
+    "referral-user",
+    "referral_user",
+    "referraluser",
+    "referral",
+    // role-based referral user types (as used across your UI)
+    "dean",
+    "registrar",
+    "program chair",
+    "program_chair",
+    "chair",
+  ];
+
   return (
     <BrowserRouter>
       <Suspense fallback={<Loading />}>
@@ -286,7 +301,7 @@ function App() {
             }
           />
 
-          {/* ✅ FIX: Counselor assessment report page (this was missing → caused 404) */}
+          {/* ✅ Counselor assessment report page */}
           <Route
             path="/dashboard/counselor/assessment-report"
             element={
@@ -322,33 +337,27 @@ function App() {
           />
 
           {/* ✅ Referral-user routes (referral user only) */}
-          {/* Default referral-user entry → referrals list */}
+          {/* Canonical referral-user root → overview */}
           <Route
             path="/dashboard/referral-user"
             element={
-              <RequireRole
-                allowedRoles={[
-                  "referral-user",
-                  "referral_user",
-                  "referraluser",
-                  "referral",
-                ]}
-              >
-                <ReferralUserReferrals />
+              <RequireRole allowedRoles={referralUserAllowedRoles}>
+                <Navigate to="/dashboard/referral-user/overview" replace />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/referral-user/overview"
+            element={
+              <RequireRole allowedRoles={referralUserAllowedRoles}>
+                <ReferralUserOverview />
               </RequireRole>
             }
           />
           <Route
             path="/dashboard/referral-user/referrals"
             element={
-              <RequireRole
-                allowedRoles={[
-                  "referral-user",
-                  "referral_user",
-                  "referraluser",
-                  "referral",
-                ]}
-              >
+              <RequireRole allowedRoles={referralUserAllowedRoles}>
                 <ReferralUserReferrals />
               </RequireRole>
             }
@@ -356,14 +365,7 @@ function App() {
           <Route
             path="/dashboard/referral-user/messages"
             element={
-              <RequireRole
-                allowedRoles={[
-                  "referral-user",
-                  "referral_user",
-                  "referraluser",
-                  "referral",
-                ]}
-              >
+              <RequireRole allowedRoles={referralUserAllowedRoles}>
                 <ReferralUserMessages />
               </RequireRole>
             }
