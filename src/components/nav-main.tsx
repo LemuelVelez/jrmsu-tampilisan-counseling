@@ -155,7 +155,8 @@ const referralUserNavItems: NavItem[] = [
 const adminNavItems: NavItem[] = [
     { title: "Overview", to: "/dashboard/admin", icon: LayoutDashboard, exact: true },
     { title: "Users", to: "/dashboard/admin/users", icon: Users },
-    { title: "Messages", to: "/dashboard/admin/messages", icon: MessageCircle },
+    // ✅ add badge support for admin unread messages too
+    { title: "Messages", to: "/dashboard/admin/messages", icon: MessageCircle, badgeKey: "messages" },
     { title: "Analytics", to: "/dashboard/admin/analytics", icon: BarChart3 },
     { title: "Settings", to: "/dashboard/admin/settings", icon: Settings },
 ];
@@ -255,8 +256,8 @@ export const NavMain: React.FC = () => {
         (session as any)?.accessToken ??
         null;
 
-    const shouldFetchCounts =
-        !!user && (roleKey === "student" || roleKey === "counselor" || roleKey === "referralUser");
+    // ✅ include admin so /dashboard/admin/messages can show badge (and settings nav stays correct)
+    const shouldFetchCounts = !!user;
 
     const refreshCounts = React.useCallback(async () => {
         if (!shouldFetchCounts) return;

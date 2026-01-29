@@ -13,6 +13,7 @@ import AdminOverview from "./pages/dashboard/admin/overview";
 import AdminUsersPage from "./pages/dashboard/admin/user";
 import AdminAnalytics from "./pages/dashboard/admin/analytics";
 import AdminMessages from "./pages/dashboard/admin/message";
+import AdminSettings from "./pages/dashboard/admin/settings";
 
 import CounselorOverview from "./pages/dashboard/counselor/overview";
 import CounselorIntake from "./pages/dashboard/counselor/intake";
@@ -128,6 +129,11 @@ function SettingsIndexRoute() {
 
   const role = normalizeRole(user.role ?? "");
 
+  // Admin
+  if (role.includes("admin")) {
+    return <Navigate to="/dashboard/admin/settings" replace />;
+  }
+
   // Student + guest
   if (role.includes("student") || role.includes("guest")) {
     return <Navigate to="/dashboard/student/settings" replace />;
@@ -194,6 +200,14 @@ function App() {
             element={
               <RequireRole allowedRoles={["admin"]}>
                 <AdminMessages />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/admin/settings"
+            element={
+              <RequireRole allowedRoles={["admin"]}>
+                <AdminSettings />
               </RequireRole>
             }
           />
@@ -312,7 +326,14 @@ function App() {
           <Route
             path="/dashboard/referral-user"
             element={
-              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+              <RequireRole
+                allowedRoles={[
+                  "referral-user",
+                  "referral_user",
+                  "referraluser",
+                  "referral",
+                ]}
+              >
                 <ReferralUserReferrals />
               </RequireRole>
             }
@@ -320,7 +341,14 @@ function App() {
           <Route
             path="/dashboard/referral-user/referrals"
             element={
-              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+              <RequireRole
+                allowedRoles={[
+                  "referral-user",
+                  "referral_user",
+                  "referraluser",
+                  "referral",
+                ]}
+              >
                 <ReferralUserReferrals />
               </RequireRole>
             }
@@ -328,7 +356,14 @@ function App() {
           <Route
             path="/dashboard/referral-user/messages"
             element={
-              <RequireRole allowedRoles={["referral-user", "referral_user", "referraluser", "referral"]}>
+              <RequireRole
+                allowedRoles={[
+                  "referral-user",
+                  "referral_user",
+                  "referraluser",
+                  "referral",
+                ]}
+              >
                 <ReferralUserMessages />
               </RequireRole>
             }
