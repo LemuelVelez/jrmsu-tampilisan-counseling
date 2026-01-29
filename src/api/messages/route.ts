@@ -28,7 +28,26 @@ export interface MessageDto {
     sender_id?: number | string | null;
 
     sender: MessageSenderApi;
+
+    /**
+     * ✅ Now guaranteed (backend resolves it) for counselor inbox:
+     * - system => "Guidance & Counseling Office"
+     * - else => messages.sender_name OR users.name fallbacks
+     */
     sender_name?: string | null;
+
+    /**
+     * ✅ NEW (backend provides it for counselor inbox + send response):
+     * Lets counselor-initiated conversations show the real recipient name
+     * (instead of "Student #7") even if the student hasn't replied yet.
+     */
+    recipient_name?: string | null;
+
+    /**
+     * ✅ Optional convenience (backend provides for counselor inbox):
+     * Thread owner name for legacy messages where sender_id may be null.
+     */
+    user_name?: string | null;
 
     content: string;
 

@@ -78,6 +78,13 @@ type UiMessage = {
 
     userId?: number | string | null
 
+    /**
+     * ✅ NEW:
+     * Use backend-provided names so counselor-initiated threads never show "Student #7".
+     */
+    recipientName?: string | null
+    userName?: string | null
+
     // ✅ avatar hints (best-effort)
     senderAvatarUrl?: string | null
     recipientAvatarUrl?: string | null
@@ -412,7 +419,8 @@ function toPeerRole(role: any): PeerRole | null {
     if (r === "admin") return "admin"
 
     // referral user (office)
-    if (r === "referral_user" || r === "referral user" || r === "referral-user" || r === "referralusers") return "referral_user"
+    if (r === "referral_user" || r === "referral user" || r === "referral-user" || r === "referralusers")
+        return "referral_user"
     if (r === "dean" || r === "registrar" || r === "program_chair" || r === "program chair" || r === "programchair")
         return "referral_user"
 
@@ -540,6 +548,13 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
     const recipientRoleRaw = (dto as any).recipient_role ?? (dto as any).recipientRole ?? null
     const recipientRole = normalizeRecipientRole(recipientRoleRaw)
 
+    // ✅ Use backend-provided names
+    const recipientNameRaw = (dto as any).recipient_name ?? (dto as any).recipientName ?? null
+    const userNameRaw = (dto as any).user_name ?? (dto as any).userName ?? null
+
+    const recipientName = typeof recipientNameRaw === "string" ? recipientNameRaw : recipientNameRaw == null ? null : String(recipientNameRaw)
+    const userName = typeof userNameRaw === "string" ? userNameRaw : userNameRaw == null ? null : String(userNameRaw)
+
     return {
         id: dto.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`,
         conversationId: safeConversationId(dto),
@@ -553,6 +568,9 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
         recipientId: (dto as any).recipient_id ?? null,
         recipientRole,
         userId: (dto as any).user_id ?? dto.user_id ?? null,
+
+        recipientName: recipientName?.trim() ? recipientName.trim() : null,
+        userName: userName?.trim() ? userName.trim() : null,
 
         senderAvatarUrl,
         recipientAvatarUrl,
@@ -608,10 +626,17 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerRole = rr
             peerId = peerMsg.recipientId ?? null
 
-            if (peerRole === "student" || peerRole === "guest" || peerRole === "admin" || peerRole === "referral_user") {
-                peerName = peerId ? `${roleLabel(peerRole)} #${peerId}` : roleLabel(peerRole)
+            // ✅ FIX: prefer backend-provided recipient_name/user_name (no "Student #7" fallback)
+            const nameCandidate = String(peerMsg.recipientName ?? peerMsg.userName ?? "").trim()
+            if (nameCandidate) {
+                peerName = nameCandidate
             } else {
-                peerName = peerId ? `Counselor #${peerId}` : "Counselor Office"
+                // keep a non-number fallback (no "#id")
+                if (peerRole === "counselor") {
+                    peerName = peerId ? "Counselor" : "Counselor Office"
+                } else {
+                    peerName = roleLabel(peerRole)
+                }
             }
         }
 
@@ -753,7 +778,9 @@ function UserCombobox(props: {
                             {users.map((u) => {
                                 const selected = !!value && value.role === u.role && String(value.id) === String(u.id)
                                 const referralLabel =
-                                    u.role === "referral_user" ? (u.role_name ? u.role_name : roleLabel(u.role)) : roleLabel(u.role)
+                                    u.role === "referral_user"
+                                        ? (u.role_name ? u.role_name : roleLabel(u.role))
+                                        : roleLabel(u.role)
 
                                 return (
                                     <CommandItem
@@ -789,6 +816,7 @@ function UserCombobox(props: {
  * ✅ UPDATED:
  * - Added referral_user support (Dean/Registrar/Program Chair).
  * - For referral_user, we try multiple endpoint spellings: referral_users / referral-users / users?role=referral_user
+ * - Preserve specific office role when backend provides it (role_name / office_role / designation).
  */
 async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim()
@@ -862,7 +890,18 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 
                     const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null
 
-                    const referralSpecific = dbRole === "referral_user" ? referralRoleName(rawRole) : null
+                    // preserve office role if provided separately
+                    const officeRoleRaw =
+                        u?.office_role ??
+                        u?.designation ??
+                        (dbRole === "referral_user" ? u?.role_name : null) ??
+                        raw?.office_role ??
+                        raw?.designation ??
+                        (dbRole === "referral_user" ? raw?.role_name : null) ??
+                        null
+
+                    const referralSpecific =
+                        dbRole === "referral_user" ? (referralRoleName(officeRoleRaw ?? rawRole) ?? null) : null
 
                     return {
                         id,
@@ -1052,7 +1091,6 @@ const CounselorMessages: React.FC = () => {
     const profileInflightRef = React.useRef(new Set<string>())
 
     React.useEffect(() => {
-        // keep ref in sync and persist
         for (const [k, v] of Object.entries(profileByPeerKey)) {
             profileCacheRef.current.set(k, v)
         }
@@ -1082,34 +1120,58 @@ const CounselorMessages: React.FC = () => {
     React.useEffect(() => {
         const payload = (location.state as any)?.autoStartConversation as AutoStartConversationPayload | undefined
         if (!payload) return
-        // keep conservative: auto-start currently intended for student/guest links
-        if (payload.role !== "student" && payload.role !== "guest") return
+        // allow any valid role from payload
+        if (!payload.role || !toPeerRole(payload.role)) return
         autoStartRef.current = payload
     }, [location.state])
 
     const seedProfilesFromMessages = React.useCallback((ui: UiMessage[]) => {
-        // If messages include real sender_name, store it so remount doesn't lose it.
         const next: Record<string, PeerProfile> = {}
-        for (const m of ui) {
-            if (m.sender === "system" || m.sender === "counselor") continue
 
-            const id = (m.senderId ?? m.userId) as any
-            const k = peerKey(m.sender as PeerRole, id)
+        for (const m of ui) {
+            if (m.sender === "system") continue
+
+            // ✅ Seed from incoming (student/guest/admin/referral) senders
+            if (m.sender !== "counselor") {
+                const id = (m.senderId ?? m.userId) as any
+                const k = peerKey(m.sender as PeerRole, id)
+                if (!k) continue
+
+                const candidateName = String(m.senderName ?? "").trim()
+                if (!candidateName) continue
+
+                const low = candidateName.toLowerCase()
+                if (low === "student" || low === "guest" || low === "admin" || low === "referral user") continue
+
+                const prev = profileCacheRef.current.get(k) ?? null
+                if (prev?.name && String(prev.name).trim()) continue
+
+                next[k] = {
+                    name: candidateName,
+                    avatar_url: m.senderAvatarUrl ?? prev?.avatar_url ?? null,
+                }
+                continue
+            }
+
+            // ✅ Seed from counselor-sent messages using backend recipient_name/user_name
+            const rr = m.recipientRole ?? null
+            const rid = m.recipientId ?? null
+            if (!rr || rid == null) continue
+            const k = peerKey(rr, rid)
             if (!k) continue
 
-            const candidateName = String(m.senderName ?? "").trim()
+            const candidateName = String(m.recipientName ?? m.userName ?? "").trim()
             if (!candidateName) continue
 
-            // ignore generic placeholders
             const low = candidateName.toLowerCase()
-            if (low === "student" || low === "guest" || low === "admin" || low === "referral user") continue
+            if (low === "student" || low === "guest" || low === "admin" || low === "referral user" || low === "counselor") continue
 
             const prev = profileCacheRef.current.get(k) ?? null
             if (prev?.name && String(prev.name).trim()) continue
 
             next[k] = {
                 name: candidateName,
-                avatar_url: m.senderAvatarUrl ?? prev?.avatar_url ?? null,
+                avatar_url: m.recipientAvatarUrl ?? prev?.avatar_url ?? null,
             }
         }
 
@@ -1267,8 +1329,7 @@ const CounselorMessages: React.FC = () => {
                             const prev = profileCacheRef.current.get(item.key) ?? { name: null, avatar_url: null }
                             const merged: PeerProfile = {
                                 name: prof.name && prof.name.trim() ? prof.name.trim() : prev.name,
-                                avatar_url:
-                                    prof.avatar_url && prof.avatar_url.trim() ? prof.avatar_url.trim() : prev.avatar_url,
+                                avatar_url: prof.avatar_url && prof.avatar_url.trim() ? prof.avatar_url.trim() : prev.avatar_url,
                             }
 
                             profileCacheRef.current.set(item.key, merged)
@@ -1318,7 +1379,7 @@ const CounselorMessages: React.FC = () => {
                 const convo: Conversation = {
                     id: conversationId,
                     peerRole: targetRole,
-                    peerName: payload.name ?? `${roleLabel(targetRole)} #${targetId}`,
+                    peerName: payload.name ?? roleLabel(targetRole),
                     peerId: payload.id,
                     subtitle,
                     unreadCount: 0,
@@ -1330,6 +1391,13 @@ const CounselorMessages: React.FC = () => {
                 setDraftConversations((prev) => [convo, ...prev])
                 setActiveConversationId(conversationId)
                 setMobileView("chat")
+
+                const k = peerKey(convo.peerRole, convo.peerId)
+                if (k) {
+                    const merged: PeerProfile = { name: convo.peerName, avatar_url: null }
+                    profileCacheRef.current.set(k, merged)
+                    setProfileByPeerKey((prev) => ({ ...prev, [k]: merged }))
+                }
             }
         }
 
@@ -1346,7 +1414,11 @@ const CounselorMessages: React.FC = () => {
             .filter((c) => {
                 const name = getConversationDisplayName(c).toLowerCase()
                 if (!q) return true
-                return name.includes(q) || c.subtitle.toLowerCase().includes(q) || roleLabel(c.peerRole).toLowerCase().includes(q)
+                return (
+                    name.includes(q) ||
+                    c.subtitle.toLowerCase().includes(q) ||
+                    roleLabel(c.peerRole).toLowerCase().includes(q)
+                )
             })
     }, [conversations, roleFilter, search, getConversationDisplayName])
 
@@ -1435,7 +1507,9 @@ const CounselorMessages: React.FC = () => {
                 await markCounselorMessagesAsRead(numericIds)
             }
 
-            setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)))
+            setMessages((prev) =>
+                prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)),
+            )
         } catch (err) {
             toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
         } finally {
@@ -1557,6 +1631,21 @@ const CounselorMessages: React.FC = () => {
                 setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)))
                 if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
                     setActiveConversationId(serverMsg.conversationId)
+                }
+
+                // ✅ Seed profile immediately from send response (recipient_name)
+                if (serverMsg.recipientRole && serverMsg.recipientId != null) {
+                    const k = peerKey(serverMsg.recipientRole, serverMsg.recipientId)
+                    const nm = String(serverMsg.recipientName ?? serverMsg.userName ?? "").trim()
+                    if (k && nm) {
+                        const prev = profileCacheRef.current.get(k) ?? { name: null, avatar_url: null }
+                        const merged: PeerProfile = {
+                            name: nm,
+                            avatar_url: serverMsg.recipientAvatarUrl ?? prev.avatar_url ?? null,
+                        }
+                        profileCacheRef.current.set(k, merged)
+                        setProfileByPeerKey((p) => ({ ...p, [k]: merged }))
+                    }
                 }
             }
 
