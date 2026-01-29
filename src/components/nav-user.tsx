@@ -12,11 +12,7 @@ import {
     DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import {
-    Avatar,
-    AvatarFallback,
-    AvatarImage,
-} from "@/components/ui/avatar";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useSession } from "@/hooks/use-session";
 import {
     AlertDialog,
@@ -50,9 +46,7 @@ export const NavUser: React.FC = () => {
 
     // Read avatar URL from user object if backend provides it
     const avatarUrl =
-        user &&
-            (user as any).avatar_url &&
-            typeof (user as any).avatar_url === "string"
+        user && (user as any).avatar_url && typeof (user as any).avatar_url === "string"
             ? ((user as any).avatar_url as string)
             : null;
 
@@ -74,9 +68,11 @@ export const NavUser: React.FC = () => {
     }, [signOut, navigate]);
 
     const handleOpenSettings = React.useCallback(() => {
-        // Currently, the only settings page route is the student settings page.
-        // Route all roles to this existing settings page to avoid 404s.
-        navigate("/dashboard/student/settings");
+        // ✅ Redirect to centralized settings route (auto-resolves per role):
+        // - admin -> /dashboard/admin/settings
+        // - counselor -> /dashboard/counselor/settings
+        // - student/guest -> /dashboard/student/settings
+        navigate("/dashboard/settings");
     }, [navigate]);
 
     return (
@@ -89,22 +85,14 @@ export const NavUser: React.FC = () => {
                     >
                         <Avatar className="h-7 w-7">
                             {avatarUrl ? (
-                                <AvatarImage
-                                    src={avatarUrl}
-                                    alt={name}
-                                    className="object-cover"
-                                />
+                                <AvatarImage src={avatarUrl} alt={name} className="object-cover" />
                             ) : (
-                                <AvatarFallback className="text-[0.65rem]">
-                                    {initials}
-                                </AvatarFallback>
+                                <AvatarFallback className="text-[0.65rem]">{initials}</AvatarFallback>
                             )}
                         </Avatar>
 
                         <div className="flex min-w-0 flex-1 flex-col text-left leading-tight">
-                            <span className="truncate text-xs font-medium">
-                                {name}
-                            </span>
+                            <span className="truncate text-xs font-medium">{name}</span>
                             {email && (
                                 <span className="truncate text-[0.7rem] text-sidebar-foreground/70">
                                     {email}
@@ -130,23 +118,14 @@ export const NavUser: React.FC = () => {
                 >
                     <DropdownMenuLabel className="font-normal">
                         <div className="flex flex-col gap-0.5">
-                            <p className="text-xs font-medium leading-tight">
-                                {name}
-                            </p>
-                            {email && (
-                                <p className="text-[0.7rem] text-muted-foreground">
-                                    {email}
-                                </p>
-                            )}
+                            <p className="text-xs font-medium leading-tight">{name}</p>
+                            {email && <p className="text-[0.7rem] text-muted-foreground">{email}</p>}
                         </div>
                     </DropdownMenuLabel>
 
                     <DropdownMenuSeparator />
 
-                    <DropdownMenuItem
-                        className="text-xs"
-                        onSelect={handleOpenSettings}
-                    >
+                    <DropdownMenuItem className="text-xs" onSelect={handleOpenSettings}>
                         Settings
                     </DropdownMenuItem>
 
@@ -168,14 +147,12 @@ export const NavUser: React.FC = () => {
                 <AlertDialogHeader>
                     <AlertDialogTitle>Sign out</AlertDialogTitle>
                     <AlertDialogDescription>
-                        Are you sure you want to sign out of your account? You can
-                        always sign back in later.
+                        Are you sure you want to sign out of your account? You can always sign back in
+                        later.
                     </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
-                    <AlertDialogCancel className="text-xs">
-                        Cancel
-                    </AlertDialogCancel>
+                    <AlertDialogCancel className="text-xs">Cancel</AlertDialogCancel>
                     <AlertDialogAction
                         onClick={handleSignOut}
                         className="text-xs bg-destructive text-white hover:bg-destructive/90"
