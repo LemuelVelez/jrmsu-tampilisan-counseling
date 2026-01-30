@@ -287,10 +287,51 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
 
     if (!res.ok) {
         const msg = data?.message || data?.error || res.statusText || "Server request failed."
-        throw new Error(msg)
+        const err: any = new Error(msg)
+        err.status = res.status
+        err.data = data ?? text
+        throw err
     }
 
     return data
+}
+
+/**
+ * ✅ Mark-as-read (Admin) — robust endpoint fallbacks.
+ * We only call this AFTER the admin opens the thread OR sends a reply.
+ */
+async function tryAdminMarkRead(messageIds: number[], token?: string | null): Promise<void> {
+    const endpoints = [
+        "/admin/messages/mark-as-read",
+        "/admin/messages/mark-read",
+        "/admin/messages/mark_as_read",
+        "/admin/messages/read",
+        "/messages/mark-as-read",
+        "/messages/mark-read",
+        "/messages/mark_as_read",
+        "/messages/read",
+    ]
+
+    const payloads = [
+        { message_ids: messageIds },
+        { ids: messageIds },
+        { messageIds: messageIds },
+    ]
+
+    let lastErr: any = null
+
+    for (const ep of endpoints) {
+        for (const payload of payloads) {
+            try {
+                await apiFetch(ep, { method: "POST", body: JSON.stringify(payload) }, token)
+                return
+            } catch (e) {
+                lastErr = e
+            }
+        }
+    }
+
+    throw lastErr ?? new Error("Failed to mark messages as read.")
 }
 
 /**
@@ -527,7 +568,23 @@ function parseConversationId(conversationId: string): { role: PeerRole | null; i
     return { role: null, id: null }
 }
 
-function mapAdminMessageToUi(dto: AdminMessage, conversationFallback: string): UiMessage {
+function unreadFlagForAdmin(dto: any): boolean {
+    const candidates = [
+        dto?.admin_is_read,
+        dto?.is_read_by_admin,
+        dto?.read_by_admin,
+        dto?.admin_read,
+        dto?.is_read, // fallback
+    ]
+
+    for (const v of candidates) {
+        if (v === true || v === 1) return false
+        if (v === false || v === 0) return true
+    }
+    return false
+}
+
+function mapAdminMessageToUi(dto: AdminMessage, conversationFallback: string, myUserId?: string): UiMessage {
     const sender = normalizeSender((dto as any).sender_role ?? (dto as any).sender ?? "system")
 
     const senderName =
@@ -549,8 +606,12 @@ function mapAdminMessageToUi(dto: AdminMessage, conversationFallback: string): U
 
     const recipientRole = toPeerRole((dto as any).recipient_role) ?? null
 
-    // read flag not critical for admin view; keep false unless backend gives it
-    const isUnread = (dto as any).is_read === false || (dto as any).is_read === 0
+    // ✅ IMPORTANT:
+    // Admin unread should be about what ADMIN has not read, not what the other party hasn't read.
+    // If the message is sent by the current admin, it should never appear unread for admin.
+    const senderIdRaw = (dto as any).sender_id ?? null
+    const senderIsMe = sender === "admin" && myUserId && senderIdRaw != null && String(senderIdRaw) === String(myUserId)
+    const isUnread = senderIsMe ? false : unreadFlagForAdmin(dto as any)
 
     const senderAvatarUrl =
         (dto as any).sender_avatar_url ??
@@ -613,13 +674,22 @@ function mapAdminConversationToUi(c: AdminConversationSummary): Conversation {
         (last as any)?.sender_avatar_url ??
         null
 
+    const unreadCountRaw =
+        (c as any)?.unread_count ??
+        (c as any)?.unreadCount ??
+        (c as any)?.unread_messages ??
+        (c as any)?.unreadMessages ??
+        0
+
+    const unreadCount = Number.isFinite(Number(unreadCountRaw)) ? Number(unreadCountRaw) : 0
+
     return {
         id: conversationId,
         peerRole,
         peerName,
         peerId,
         subtitle: roleThreadLabel(peerRole),
-        unreadCount: 0,
+        unreadCount,
         lastMessage: (last as any)?.content ?? "",
         lastTimestamp: (last as any)?.created_at ?? "",
         peerAvatarUrl,
@@ -652,6 +722,18 @@ const AdminMessages: React.FC = () => {
     const [messagesByConversation, setMessagesByConversation] = React.useState<Record<string, UiMessage[]>>({})
     const bottomRef = React.useRef<HTMLDivElement | null>(null)
     const localIdRef = React.useRef(0)
+
+    // ✅ SAME BEHAVIOR AS counselor/messages.tsx:
+    // Only mark as read AFTER user opens a thread or sends a reply.
+    const openedConversationIdsRef = React.useRef(new Set<string>())
+    const markInflightRef = React.useRef(new Set<string>())
+
+    const openConversation = React.useCallback((conversationId: string) => {
+        if (!conversationId) return
+        openedConversationIdsRef.current.add(conversationId)
+        setActiveConversationId(conversationId)
+        setMobileView("chat")
+    }, [])
 
     // ✅ Extracted dependency value so exhaustive-deps can statically check it
     const activeMessageCount = React.useMemo(() => {
@@ -706,17 +788,17 @@ const AdminMessages: React.FC = () => {
 
                 setConversations(mapped)
 
+                // ✅ REQUIRED:
+                // Do NOT auto-open or auto-select a thread when page loads.
+                // Only keep current active if it still exists.
                 const current = activeConversationId
                 const mergedIds = new Set<string>(mapped.map((x: Conversation) => x.id))
                 for (const d of draftConversations) mergedIds.add(d.id)
 
-                if (!current) {
-                    if (mapped.length > 0) setActiveConversationId(mapped[0].id)
-                    else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id)
-                } else if (!mergedIds.has(current)) {
-                    if (mapped.length > 0) setActiveConversationId(mapped[0].id)
-                    else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id)
-                    else setActiveConversationId("")
+                if (current && !mergedIds.has(current)) {
+                    openedConversationIdsRef.current.delete(current)
+                    setActiveConversationId("")
+                    setMobileView("list")
                 }
             } catch (err) {
                 toast.error(err instanceof Error ? err.message : "Failed to load admin conversations.")
@@ -740,7 +822,7 @@ const AdminMessages: React.FC = () => {
                 const res = await fetchAdminConversationMessages(conversationId, { page: 1, per_page: 500 })
                 const raw = Array.isArray((res as any).messages) ? (res as any).messages : []
 
-                const ui: UiMessage[] = raw.map((m: any) => mapAdminMessageToUi(m as AdminMessage, conversationId))
+                const ui: UiMessage[] = raw.map((m: any) => mapAdminMessageToUi(m as AdminMessage, conversationId, myUserId))
                 ui.sort((a: UiMessage, b: UiMessage) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
 
                 setMessagesByConversation((prev) => ({ ...prev, [conversationId]: ui }))
@@ -748,7 +830,7 @@ const AdminMessages: React.FC = () => {
                 toast.error(err instanceof Error ? err.message : "Failed to load conversation messages.")
             }
         },
-        [],
+        [myUserId],
     )
 
     React.useEffect(() => {
@@ -836,8 +918,7 @@ const AdminMessages: React.FC = () => {
             mergedConversations.find((c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId) ?? null
 
         if (existing) {
-            setActiveConversationId(existing.id)
-            setMobileView("chat")
+            openConversation(existing.id)
         } else {
             const nowIso = new Date().toISOString()
             const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`
@@ -855,14 +936,13 @@ const AdminMessages: React.FC = () => {
             }
 
             setDraftConversations((prev) => [convo, ...prev])
-            setActiveConversationId(conversationId)
-            setMobileView("chat")
+            openConversation(conversationId)
         }
 
         setShowNewMessage(false)
         autoStartRef.current = null
         navigate("/dashboard/admin/message", { replace: true, state: {} })
-    }, [mergedConversations, isLoading, navigate])
+    }, [mergedConversations, isLoading, navigate, openConversation])
 
     const filteredConversations = React.useMemo(() => {
         const q = search.trim().toLowerCase()
@@ -918,14 +998,67 @@ const AdminMessages: React.FC = () => {
         }
 
         setDraftConversations((prev) => [convo, ...prev])
-        setActiveConversationId(conversationId)
-        setMobileView("chat")
+        openConversation(conversationId)
         setShowNewMessage(false)
 
         setNewRecipient(null)
         setRecipientQuery("")
         setRecipientResults([])
     }
+
+    const markConversationReadById = React.useCallback(
+        async (conversationId: string, opts?: { silent?: boolean }) => {
+            if (!conversationId) return
+            if (conversationId.startsWith("new-")) return
+            if (markInflightRef.current.has(conversationId)) return
+
+            const unread = (messagesByConversation[conversationId] ?? []).filter((m) => m.isUnread)
+            if (unread.length === 0) return
+
+            markInflightRef.current.add(conversationId)
+            try {
+                const numericIds = unread
+                    .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
+                    .filter((n) => Number.isInteger(n)) as number[]
+
+                if (numericIds.length > 0) {
+                    await tryAdminMarkRead(numericIds, token)
+                }
+
+                // ✅ Update UI state (no NEW badges inside thread)
+                setMessagesByConversation((prev) => {
+                    const arr = prev[conversationId] ?? []
+                    return {
+                        ...prev,
+                        [conversationId]: arr.map((m) => (m.isUnread ? { ...m, isUnread: false } : m)),
+                    }
+                })
+
+                // best-effort update list unreadCount
+                setConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
+                setDraftConversations((prev) => prev.map((c) => (c.id === conversationId ? { ...c, unreadCount: 0 } : c)))
+            } catch (err: any) {
+                if (!opts?.silent) {
+                    if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+                    else toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+                }
+            } finally {
+                markInflightRef.current.delete(conversationId)
+            }
+        },
+        [messagesByConversation, token],
+    )
+
+    /**
+     * ✅ REQUIRED BEHAVIOR (same as counselor/messages.tsx):
+     * - Do NOT mark as read until the admin OPENED the thread OR sent a reply.
+     * - Once opened, automatically mark as read (so nothing shows as NEW inside the thread).
+     */
+    React.useEffect(() => {
+        if (!activeConversationId) return
+        if (!openedConversationIdsRef.current.has(activeConversationId)) return
+        void markConversationReadById(activeConversationId, { silent: true })
+    }, [activeConversationId, activeMessageCount, markConversationReadById])
 
     const handleSend = async (e: React.FormEvent) => {
         e.preventDefault()
@@ -934,6 +1067,9 @@ const AdminMessages: React.FC = () => {
             toast.error("Select a conversation first.")
             return
         }
+
+        // ✅ Sending counts as "opened" for auto-read behavior
+        openedConversationIdsRef.current.add(activeConversation.id)
 
         const text = draft.trim()
         if (!text) return
@@ -979,16 +1115,17 @@ const AdminMessages: React.FC = () => {
             const res: any = await sendAdminMessage(payload)
             const dto = res?.messageRecord ?? res?.data ?? res?.message ?? res?.record ?? null
 
-            // Refresh the active conversation from server if possible
+            // Refresh the conversation list (server order/last message)
             await loadConversations("refresh")
 
             if (dto && (dto.id != null || dto.content != null)) {
-                const serverMsg = mapAdminMessageToUi(dto as AdminMessage, activeConversation.id)
+                const serverMsg = mapAdminMessageToUi(dto as AdminMessage, activeConversation.id, myUserId)
 
                 // if backend returned a canonical conversation id, switch to it
-                const serverConversationId = serverMsg.conversationId && !String(serverMsg.conversationId).startsWith("new-")
-                    ? String(serverMsg.conversationId)
-                    : activeConversation.id
+                const serverConversationId =
+                    serverMsg.conversationId && !String(serverMsg.conversationId).startsWith("new-")
+                        ? String(serverMsg.conversationId)
+                        : activeConversation.id
 
                 // replace optimistic
                 setMessagesByConversation((prev) => {
@@ -1000,18 +1137,20 @@ const AdminMessages: React.FC = () => {
                     if (serverConversationId !== oldId) {
                         const moved = replaced.map((m) => ({ ...m, conversationId: serverConversationId }))
                         const existing = prev[serverConversationId] ?? []
-                        return {
-                            ...prev,
-                            [oldId]: undefined as any,
-                            [serverConversationId]: [...existing, ...moved].filter(Boolean),
-                        }
+                        const next = { ...prev }
+                        delete (next as any)[oldId]
+                        next[serverConversationId] = [...existing, ...moved].filter(Boolean)
+                        return next
                     }
 
                     return { ...prev, [oldId]: replaced }
                 })
 
+                // ✅ Ensure opened flag follows canonical conversation id
+                openedConversationIdsRef.current.add(serverConversationId)
+
                 if (serverConversationId !== activeConversation.id) {
-                    setActiveConversationId(serverConversationId)
+                    openConversation(serverConversationId)
                     setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id))
                     await loadConversationMessages(serverConversationId)
                 } else {
@@ -1019,17 +1158,24 @@ const AdminMessages: React.FC = () => {
                     setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id))
                     await loadConversationMessages(activeConversation.id)
                 }
+
+                // ✅ Auto-mark-read after sending (silent)
+                void markConversationReadById(serverConversationId, { silent: true })
             } else {
                 // no dto: just reload messages for current view
                 if (!activeConversation.id.startsWith("new-")) await loadConversationMessages(activeConversation.id)
+
+                // still attempt to mark read if opened
+                void markConversationReadById(activeConversation.id, { silent: true })
             }
-        } catch (err) {
+        } catch (err: any) {
             // rollback optimistic
             setMessagesByConversation((prev) => {
                 const arr = prev[activeConversation.id] ?? []
                 return { ...prev, [activeConversation.id]: arr.filter((m) => m.id !== tempId) }
             })
-            toast.error(err instanceof Error ? err.message : "Failed to send message.")
+            if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+            else toast.error(err instanceof Error ? err.message : "Failed to send message.")
         } finally {
             setIsSending(false)
         }
@@ -1134,12 +1280,12 @@ const AdminMessages: React.FC = () => {
         if (!activeConversation) return
 
         const convoId = activeConversation.id
-        const nextCandidate = mergedConversations.filter((c) => c.id !== convoId)[0]?.id ?? ""
 
         setIsDeletingConvo(true)
 
         const prevMessages = messagesByConversation[convoId] ?? []
         const prevDraft = draftConversations.find((d) => d.id === convoId) ?? null
+        const prevConversations = conversations
 
         // optimistic remove
         setConversations((prev) => prev.filter((c) => c.id !== convoId))
@@ -1154,11 +1300,14 @@ const AdminMessages: React.FC = () => {
             await deleteAdminConversation(convoId)
             toast.success("Conversation deleted.")
             setDeleteConvoOpen(false)
-            setActiveConversationId(nextCandidate)
-            if (!nextCandidate) setMobileView("list")
+
+            // ✅ Do NOT auto-activate another thread after delete
+            openedConversationIdsRef.current.delete(convoId)
+            setActiveConversationId("")
+            setMobileView("list")
         } catch (err) {
             // rollback
-            await loadConversations("refresh")
+            setConversations(prevConversations)
             setMessagesByConversation((prev) => ({ ...prev, [convoId]: prevMessages }))
             if (prevDraft) setDraftConversations((prev) => [prevDraft, ...prev])
             toast.error(err instanceof Error ? err.message : "Failed to delete conversation.")
@@ -1331,10 +1480,7 @@ const AdminMessages: React.FC = () => {
                                                         key={c.id}
                                                         type="button"
                                                         variant="ghost"
-                                                        onClick={() => {
-                                                            setActiveConversationId(c.id)
-                                                            setMobileView("chat")
-                                                        }}
+                                                        onClick={() => openConversation(c.id)}
                                                         className={cn(
                                                             "h-auto w-full justify-start rounded-xl border p-0 text-left",
                                                             active ? "bg-white shadow-sm hover:bg-white" : "bg-white/60 hover:bg-white",
@@ -1482,6 +1628,9 @@ const AdminMessages: React.FC = () => {
 
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
                                                                     <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
+
+                                                                    {/* ✅ No in-thread NEW pill.
+                                                                        Auto-read happens only after open/reply (see effects above). */}
 
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>

@@ -1,15 +1,18 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
+import { getCurrentSession } from "@/lib/authentication";
 
 /**
  * Sender role as stored in the database.
  * Includes guest so counselor inbox can display guest-authored messages.
  * Includes referral_user roles too (Dean/Registrar/Program Chair).
+ * ✅ UPDATED: include admin so counselor can converse with admins.
  */
 export type MessageSenderApi =
     | "student"
     | "guest"
     | "counselor"
+    | "admin"
     | "system"
     | "referral_user"
     | "dean"
@@ -40,7 +43,11 @@ export interface MessageDto {
 
     conversation_id?: number | string;
     recipient_id?: number | string | null;
-    recipient_role?: "student" | "guest" | "counselor" | "referral_user" | string | null;
+
+    /**
+     * ✅ UPDATED: include admin
+     */
+    recipient_role?: "student" | "guest" | "counselor" | "admin" | "referral_user" | string | null;
 
     message_type?: string;
 
@@ -69,12 +76,183 @@ function resolveMessagesApiUrl(path: string): string {
     return `${AUTH_API_BASE_URL}/${trimmedPath}`;
 }
 
+/**
+ * Normalize tokens to avoid accidental:
+ * - "Bearer Bearer <token>"
+ * - "bearer <token>" stored in local/session storage
+ * - "null"/"undefined" strings
+ */
+function normalizeAuthTokenValue(raw: unknown): string | null {
+    const s =
+        typeof raw === "string"
+            ? raw
+            : raw == null
+                ? ""
+                : String(raw);
+
+    const t = s.trim();
+    if (!t) return null;
+
+    const low = t.toLowerCase();
+    if (low === "undefined" || low === "null") return null;
+
+    // If caller stored "Bearer <token>", strip it here.
+    return t.replace(/^bearer\s+/i, "").trim() || null;
+}
+
+function tryReadTokenFromSessionObject(session: any): string | null {
+    if (!session) return null;
+
+    // common top-level fields
+    const direct =
+        session?.token ??
+        session?.access_token ??
+        session?.accessToken ??
+        session?.auth_token ??
+        session?.authToken ??
+        null;
+
+    const v1 = normalizeAuthTokenValue(direct);
+    if (v1) return v1;
+
+    // common nested fields
+    const nested =
+        session?.user?.token ??
+        session?.user?.access_token ??
+        session?.user?.accessToken ??
+        session?.data?.token ??
+        session?.data?.access_token ??
+        session?.data?.accessToken ??
+        null;
+
+    const v2 = normalizeAuthTokenValue(nested);
+    if (v2) return v2;
+
+    return null;
+}
+
+function tryReadTokenFromStorage(storage: Storage | null | undefined): string | null {
+    if (!storage) return null;
+
+    // common direct keys
+    const directKeys = [
+        "token",
+        "access_token",
+        "accessToken",
+        "auth_token",
+        "authToken",
+        "bearer_token",
+        "bearerToken",
+    ];
+
+    for (const k of directKeys) {
+        const v = normalizeAuthTokenValue(storage.getItem(k));
+        if (v) return v;
+    }
+
+    // common JSON session keys
+    const jsonKeys = [
+        "session",
+        "auth_session",
+        "authSession",
+        "user_session",
+        "userSession",
+        "current_session",
+        "currentSession",
+    ];
+
+    for (const k of jsonKeys) {
+        const raw = storage.getItem(k);
+        if (!raw) continue;
+
+        try {
+            const parsed = JSON.parse(raw);
+            const v = tryReadTokenFromSessionObject(parsed);
+            if (v) return v;
+        } catch {
+            // ignore
+        }
+    }
+
+    // last resort: scan token-like keys (lightweight)
+    try {
+        for (let i = 0; i < storage.length; i++) {
+            const key = storage.key(i);
+            if (!key) continue;
+
+            const low = key.toLowerCase();
+            if (!low.includes("token")) continue;
+
+            const v = normalizeAuthTokenValue(storage.getItem(key));
+            if (v) return v;
+        }
+    } catch {
+        // ignore
+    }
+
+    return null;
+}
+
+/**
+ * ✅ FIX (401 Unauthorized):
+ * Automatically attach Bearer token from the current session when available.
+ * ALSO handles tokens that are already stored with "Bearer " prefix.
+ */
+function readAuthToken(): string | null {
+    // 1) Primary: your app session helper
+    try {
+        const session: any = getCurrentSession();
+        const v = tryReadTokenFromSessionObject(session);
+        if (v) return v;
+    } catch {
+        // ignore
+    }
+
+    // 2) Fallback: storage (some apps persist token directly)
+    if (typeof window !== "undefined") {
+        const v1 = tryReadTokenFromStorage(window.sessionStorage);
+        if (v1) return v1;
+
+        const v2 = tryReadTokenFromStorage(window.localStorage);
+        if (v2) return v2;
+    }
+
+    return null;
+}
+
+function normalizeAuthorizationHeaderValue(raw: string | null): string | null {
+    const v = normalizeAuthTokenValue(raw);
+    return v ? `Bearer ${v}` : null;
+}
+
 async function messagesApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     const url = resolveMessagesApiUrl(path);
 
+    // buildJsonHeaders may return a plain object or HeadersInit; normalize to Headers so we can .has()
+    const headers = new Headers(buildJsonHeaders(init.headers));
+
+    // Ensure Accept is always present
+    if (!headers.has("Accept")) headers.set("Accept", "application/json");
+
+    // Helpful for many Laravel setups
+    if (!headers.has("X-Requested-With")) headers.set("X-Requested-With", "XMLHttpRequest");
+
+    // If caller already provided Authorization, normalize it (avoid Bearer Bearer)
+    if (headers.has("Authorization")) {
+        const normalized = normalizeAuthorizationHeaderValue(headers.get("Authorization"));
+        if (normalized) headers.set("Authorization", normalized);
+        else headers.delete("Authorization");
+    }
+
+    // Only set Authorization if caller didn't explicitly pass one
+    if (!headers.has("Authorization")) {
+        const token = readAuthToken();
+        if (token) headers.set("Authorization", `Bearer ${token}`);
+    }
+
     const response = await fetch(url, {
         ...init,
-        headers: buildJsonHeaders(init.headers),
+        headers,
         credentials: "include",
     });
 
@@ -168,9 +346,13 @@ export interface GetCounselorMessagesResponseDto {
     messages: MessageDto[];
 }
 
+/**
+ * ✅ UPDATED:
+ * counselor can message: student, guest, counselor, admin, referral_user
+ */
 export interface CreateCounselorMessagePayload {
     content: string;
-    recipient_role?: "student" | "guest" | "counselor" | "referral_user";
+    recipient_role?: "student" | "guest" | "counselor" | "admin" | "referral_user";
     recipient_id?: number | string;
     conversation_id?: number | string;
 }

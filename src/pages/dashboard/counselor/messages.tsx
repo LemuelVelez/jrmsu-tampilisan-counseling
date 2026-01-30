@@ -5,13 +5,18 @@ import DashboardLayout from "@/components/DashboardLayout"
 import { toast } from "sonner"
 import { format } from "date-fns"
 import { getCurrentSession } from "@/lib/authentication"
+import type { CounselorMessage } from "@/lib/messages"
+
+import { cn } from "@/lib/utils"
 import {
-    fetchCounselorMessages,
-    sendCounselorMessage,
-    markCounselorMessagesAsRead,
-    type CounselorMessage,
-} from "@/lib/messages"
-import { markCounselorMessageReadByIdApi } from "@/api/messages/[id]/route"
+    Check,
+    ChevronsUpDown,
+    MoreVertical,
+    Pencil,
+    RefreshCw,
+    Trash2,
+    ChevronLeft,
+} from "lucide-react"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -44,9 +49,6 @@ import {
     AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
-
-import { cn } from "@/lib/utils"
-import { Check, ChevronsUpDown, MoreVertical, Pencil, RefreshCw, Trash2 } from "lucide-react"
 
 /**
  * ✅ UPDATED:
@@ -265,6 +267,11 @@ function pickAvatarUrl(obj: any): string | null {
     return null
 }
 
+/**
+ * ✅ THOROUGH 401 FIX:
+ * This apiFetch now attaches an Error.status + Error.data so we can reliably detect 401
+ * and show a proper auth message (instead of a generic error).
+ */
 async function apiFetch(path: string, init: RequestInit, token?: string | null): Promise<unknown> {
     const url = resolveApiUrl(path)
     const res = await fetch(url, {
@@ -290,10 +297,32 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
 
     if (!res.ok) {
         const msg = data?.message || data?.error || res.statusText || "Server request failed."
-        throw new Error(msg)
+        const err: any = new Error(msg)
+        err.status = res.status
+        err.data = data ?? text
+        throw err
     }
 
     return data
+}
+
+/**
+ * ✅ THOROUGH 401 FIX:
+ * Force counselor inbox APIs to use the SAME fetch path as your other working calls,
+ * AND always include Bearer token from the current session.
+ */
+async function counselorInboxGet(token?: string | null) {
+    return apiFetch("/counselor/messages", { method: "GET" }, token) as Promise<any>
+}
+async function counselorInboxSend(payload: any, token?: string | null) {
+    return apiFetch("/counselor/messages", { method: "POST", body: JSON.stringify(payload) }, token) as Promise<any>
+}
+async function counselorInboxMarkRead(messageIds: number[], token?: string | null) {
+    return apiFetch(
+        "/counselor/messages/mark-as-read",
+        { method: "POST", body: JSON.stringify({ message_ids: messageIds }) },
+        token,
+    ) as Promise<any>
 }
 
 async function tryDeleteMessageApi(messageId: number, token?: string | null) {
@@ -323,8 +352,6 @@ async function tryUpdateMessageApi(messageId: number, content: string, token?: s
 
 /**
  * Delete (hide) a conversation for the current user.
- * IMPORTANT: We DO NOT fallback to deleting each message anymore.
- * The backend now supports "delete conversation" semantics persistently.
  */
 async function tryDeleteConversationApi(conversationId: string, token?: string | null) {
     const candidates = [
@@ -392,7 +419,6 @@ function referralRoleName(rawRole?: any): string | null {
     if (r === "registrar") return "Registrar"
     if (r === "program_chair" || r === "program chair" || r === "programchair") return "Program Chair"
 
-    // sometimes backend sends in human-case already
     if (r.includes("dean")) return "Dean"
     if (r.includes("registrar")) return "Registrar"
     if (r.includes("program") && r.includes("chair")) return "Program Chair"
@@ -403,10 +429,6 @@ function referralRoleName(rawRole?: any): string | null {
 /**
  * IMPORTANT:
  * Role is the basis, NOT account_type.
- * We only map explicit role-like fields (role / role_name / type).
- *
- * ✅ UPDATED:
- * Adds referral_user + dean/registrar/program_chair mapping.
  */
 function toPeerRole(role: any): PeerRole | null {
     if (role == null) return null
@@ -418,13 +440,11 @@ function toPeerRole(role: any): PeerRole | null {
     if (r === "counselor") return "counselor"
     if (r === "admin") return "admin"
 
-    // referral user (office)
     if (r === "referral_user" || r === "referral user" || r === "referral-user" || r === "referralusers")
         return "referral_user"
     if (r === "dean" || r === "registrar" || r === "program_chair" || r === "program chair" || r === "programchair")
         return "referral_user"
 
-    // common alternates
     if (r === "guidance" || r === "guidance_counselor" || r === "guidance counselor") return "counselor"
     if (r === "administrator" || r === "superadmin" || r === "super_admin") return "admin"
 
@@ -433,7 +453,6 @@ function toPeerRole(role: any): PeerRole | null {
     if (r === "counselors") return "counselor"
     if (r === "admins") return "admin"
 
-    // plural/alt referral
     if (r === "referral_users" || r === "referral-users") return "referral_user"
 
     return null
@@ -483,12 +502,10 @@ function safeConversationId(dto: CounselorMessage): string {
     const recipientId = (dto as any).recipient_id ?? null
     const userId = (dto as any).user_id ?? dto.user_id ?? null
 
-    // sender-based stable ids
     if ((sender === "student" || sender === "guest" || sender === "referral_user" || sender === "admin") && userId != null) {
         return `${sender}-${userId}`
     }
 
-    // recipient-based stable ids
     if (
         (recipientRole === "student" ||
             recipientRole === "guest" ||
@@ -501,7 +518,6 @@ function safeConversationId(dto: CounselorMessage): string {
 
     if (userId != null) return `student-${userId}`
 
-    // counselor-to-counselor stable thread
     if (sender === "counselor" && recipientRole === "counselor" && senderId != null && recipientId != null) {
         const a = `counselor-${String(senderId)}`
         const b = `counselor-${String(recipientId)}`
@@ -535,10 +551,7 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
     const createdAt = dto.created_at ?? new Date(0).toISOString()
 
     const senderAvatarUrl =
-        pickAvatarUrl(dto as any) ??
-        pickAvatarUrl((dto as any)?.sender) ??
-        pickAvatarUrl((dto as any)?.user) ??
-        null
+        pickAvatarUrl(dto as any) ?? pickAvatarUrl((dto as any)?.sender) ?? pickAvatarUrl((dto as any)?.user) ?? null
 
     const recipientAvatarUrl =
         pickAvatarUrl((dto as any)?.recipient) ??
@@ -548,12 +561,18 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
     const recipientRoleRaw = (dto as any).recipient_role ?? (dto as any).recipientRole ?? null
     const recipientRole = normalizeRecipientRole(recipientRoleRaw)
 
-    // ✅ Use backend-provided names
     const recipientNameRaw = (dto as any).recipient_name ?? (dto as any).recipientName ?? null
     const userNameRaw = (dto as any).user_name ?? (dto as any).userName ?? null
 
-    const recipientName = typeof recipientNameRaw === "string" ? recipientNameRaw : recipientNameRaw == null ? null : String(recipientNameRaw)
-    const userName = typeof userNameRaw === "string" ? userNameRaw : userNameRaw == null ? null : String(userNameRaw)
+    const recipientName =
+        typeof recipientNameRaw === "string"
+            ? recipientNameRaw
+            : recipientNameRaw == null
+                ? null
+                : String(recipientNameRaw)
+
+    const userName =
+        typeof userNameRaw === "string" ? userNameRaw : userNameRaw == null ? null : String(userNameRaw)
 
     return {
         id: dto.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`,
@@ -626,12 +645,10 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
             peerRole = rr
             peerId = peerMsg.recipientId ?? null
 
-            // ✅ FIX: prefer backend-provided recipient_name/user_name (no "Student #7" fallback)
             const nameCandidate = String(peerMsg.recipientName ?? peerMsg.userName ?? "").trim()
             if (nameCandidate) {
                 peerName = nameCandidate
             } else {
-                // keep a non-number fallback (no "#id")
                 if (peerRole === "counselor") {
                     peerName = peerId ? "Counselor" : "Counselor Office"
                 } else {
@@ -812,11 +829,6 @@ function UserCombobox(props: {
 
 /**
  * ✅ Fetch users from DB (NOT from message history).
- *
- * ✅ UPDATED:
- * - Added referral_user support (Dean/Registrar/Program Chair).
- * - For referral_user, we try multiple endpoint spellings: referral_users / referral-users / users?role=referral_user
- * - Preserve specific office role when backend provides it (role_name / office_role / designation).
  */
 async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim()
@@ -840,14 +852,12 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
         const qq = encodeURIComponent(q)
 
         if (role === "referral_user") {
-            // underscore + hyphen pluralizations
             pushRoleCandidates("referral_users", qq)
             pushRoleCandidates("referral-users", qq)
         } else {
             pushRoleCandidates(`${role}s`, qq)
         }
 
-        // generic
         candidates.push(`/users?role=${roleParam}&search=${qq}`)
         candidates.push(`/users?role=${roleParam}&q=${qq}`)
         candidates.push(`/users/search?role=${roleParam}&q=${qq}`)
@@ -890,7 +900,6 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 
                     const avatarRaw = pickAvatarUrl(u) ?? pickAvatarUrl(raw) ?? null
 
-                    // preserve office role if provided separately
                     const officeRoleRaw =
                         u?.office_role ??
                         u?.designation ??
@@ -932,10 +941,6 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 
 /**
  * ✅ Fetch a single user's profile (name + avatar) for conversations coming from history.
- * Helps replace placeholders after navigation.
- *
- * ✅ UPDATED:
- * - Added referral_user endpoint patterns.
  */
 async function tryFetchUserProfileById(
     role: PeerRole,
@@ -951,18 +956,15 @@ async function tryFetchUserProfileById(
 
     const candidates: string[] = []
 
-    // If you have a dedicated student profile endpoint, try it first
     if (role === "student") {
         candidates.push(`/counselor/students/${q}`)
     }
 
-    // Referral user common show endpoints
     if (role === "referral_user") {
         candidates.push(`/referral-users/${q}`)
         candidates.push(`/referral_users/${q}`)
     }
 
-    // Role-specific directory endpoints
     if (role === "referral_user") {
         candidates.push(`/referral-users?search=${q}&limit=1`)
         candidates.push(`/referral-users?q=${q}&limit=1`)
@@ -980,7 +982,6 @@ async function tryFetchUserProfileById(
     candidates.push(`/users?role=${roleParam}&q=${q}&limit=1`)
     candidates.push(`/users?role=${roleParam}&query=${q}&limit=1`)
 
-    // Fallback: query all roles
     candidates.push(`/users?search=${q}&limit=1`)
     candidates.push(`/users?q=${q}&limit=1`)
     candidates.push(`/users?query=${q}&limit=1`)
@@ -1063,6 +1064,8 @@ const CounselorMessages: React.FC = () => {
     const [isLoading, setIsLoading] = React.useState(true)
     const [isRefreshing, setIsRefreshing] = React.useState(false)
     const [isSending, setIsSending] = React.useState(false)
+
+    // manual "Mark read" button busy state
     const [isMarking, setIsMarking] = React.useState(false)
 
     const [roleFilter, setRoleFilter] = React.useState<"all" | PeerRole>("all")
@@ -1115,12 +1118,25 @@ const CounselorMessages: React.FC = () => {
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false)
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false)
 
+    // ✅ Track which conversations the user actually opened on this page
+    // (So we only auto-mark-read AFTER they open the thread or send a reply.)
+    const openedConversationIdsRef = React.useRef(new Set<string>())
+
+    // ✅ Avoid duplicate mark-read calls for the same conversation
+    const markInflightRef = React.useRef(new Set<string>())
+
+    const openConversation = React.useCallback((conversationId: string) => {
+        if (!conversationId) return
+        openedConversationIdsRef.current.add(conversationId)
+        setActiveConversationId(conversationId)
+        setMobileView("chat")
+    }, [])
+
     // Auto-start conversation when navigating from Users page
     const autoStartRef = React.useRef<AutoStartConversationPayload | null>(null)
     React.useEffect(() => {
         const payload = (location.state as any)?.autoStartConversation as AutoStartConversationPayload | undefined
         if (!payload) return
-        // allow any valid role from payload
         if (!payload.role || !toPeerRole(payload.role)) return
         autoStartRef.current = payload
     }, [location.state])
@@ -1131,7 +1147,6 @@ const CounselorMessages: React.FC = () => {
         for (const m of ui) {
             if (m.sender === "system") continue
 
-            // ✅ Seed from incoming (student/guest/admin/referral) senders
             if (m.sender !== "counselor") {
                 const id = (m.senderId ?? m.userId) as any
                 const k = peerKey(m.sender as PeerRole, id)
@@ -1153,7 +1168,6 @@ const CounselorMessages: React.FC = () => {
                 continue
             }
 
-            // ✅ Seed from counselor-sent messages using backend recipient_name/user_name
             const rr = m.recipientRole ?? null
             const rid = m.recipientId ?? null
             if (!rr || rid == null) continue
@@ -1164,7 +1178,8 @@ const CounselorMessages: React.FC = () => {
             if (!candidateName) continue
 
             const low = candidateName.toLowerCase()
-            if (low === "student" || low === "guest" || low === "admin" || low === "referral user" || low === "counselor") continue
+            if (low === "student" || low === "guest" || low === "admin" || low === "referral user" || low === "counselor")
+                continue
 
             const prev = profileCacheRef.current.get(k) ?? null
             if (prev?.name && String(prev.name).trim()) continue
@@ -1186,29 +1201,33 @@ const CounselorMessages: React.FC = () => {
 
         setBusy(true)
         try {
-            const res = await fetchCounselorMessages()
-            const raw = Array.isArray(res.messages) ? res.messages : []
+            const res = await counselorInboxGet(token)
+            const raw = Array.isArray(res?.messages) ? res.messages : []
             const ui = raw.map(mapDtoToUi)
 
             setMessages(ui)
             seedProfilesFromMessages(ui)
 
+            // ✅ IMPORTANT:
+            // Do NOT auto-select / auto-activate a thread on page open.
+            // Only clear the active thread if it no longer exists.
             const convs = buildConversations(ui, myUserId, counselorName)
 
             const current = activeConversationId
             const hasCurrentInServer = !!current && convs.some((c) => c.id === current)
             const hasCurrentInDraft = !!current && draftConversations.some((d) => d.id === current)
 
-            if (!current) {
-                if (convs.length > 0) setActiveConversationId(convs[0].id)
-                else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id)
-            } else if (!hasCurrentInServer && !hasCurrentInDraft) {
-                if (convs.length > 0) setActiveConversationId(convs[0].id)
-                else if (draftConversations.length > 0) setActiveConversationId(draftConversations[0].id)
-                else setActiveConversationId("")
+            if (current && !hasCurrentInServer && !hasCurrentInDraft) {
+                openedConversationIdsRef.current.delete(current)
+                setActiveConversationId("")
+                setMobileView("list")
             }
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to load counselor messages.")
+        } catch (err: any) {
+            if (err?.status === 401) {
+                toast.error("Unauthorized (401). Please log in again, then retry.")
+            } else {
+                toast.error(err instanceof Error ? err.message : "Failed to load counselor messages.")
+            }
         } finally {
             setBusy(false)
         }
@@ -1361,15 +1380,13 @@ const CounselorMessages: React.FC = () => {
             conversations.find((c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId) ?? null
 
         if (existing) {
-            setActiveConversationId(existing.id)
-            setMobileView("chat")
+            openConversation(existing.id)
         } else {
             const existingDraft =
                 draftConversations.find((d) => d.peerRole === targetRole && String(d.peerId ?? "") === targetId) ?? null
 
             if (existingDraft) {
-                setActiveConversationId(existingDraft.id)
-                setMobileView("chat")
+                openConversation(existingDraft.id)
             } else {
                 const nowIso = new Date().toISOString()
                 const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`
@@ -1389,8 +1406,7 @@ const CounselorMessages: React.FC = () => {
                 }
 
                 setDraftConversations((prev) => [convo, ...prev])
-                setActiveConversationId(conversationId)
-                setMobileView("chat")
+                openConversation(conversationId)
 
                 const k = peerKey(convo.peerRole, convo.peerId)
                 if (k) {
@@ -1405,7 +1421,7 @@ const CounselorMessages: React.FC = () => {
 
         autoStartRef.current = null
         navigate("/dashboard/counselor/messages", { replace: true, state: {} })
-    }, [conversations, draftConversations, isLoading, navigate])
+    }, [conversations, draftConversations, isLoading, navigate, openConversation])
 
     const filteredConversations = React.useMemo(() => {
         const q = search.trim().toLowerCase()
@@ -1436,14 +1452,11 @@ const CounselorMessages: React.FC = () => {
 
     React.useEffect(() => {
         let mounted = true
-
         const load = async () => {
             if (!mounted) return
             await loadMessages("initial")
         }
-
         load()
-
         return () => {
             mounted = false
         }
@@ -1490,46 +1503,57 @@ const CounselorMessages: React.FC = () => {
         }
     }, [recipientQuery, newRole, showNewMessage, token])
 
+    const markConversationReadById = React.useCallback(
+        async (conversationId: string, opts?: { silent?: boolean }) => {
+            if (!conversationId) return
+            if (markInflightRef.current.has(conversationId)) return
+
+            const unread = messages.filter((m) => m.conversationId === conversationId && m.isUnread)
+            if (unread.length === 0) return
+
+            markInflightRef.current.add(conversationId)
+            try {
+                const numericIds = unread
+                    .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
+                    .filter((n) => Number.isInteger(n)) as number[]
+
+                if (numericIds.length > 0) {
+                    await counselorInboxMarkRead(numericIds, token)
+                }
+
+                setMessages((prev) =>
+                    prev.map((m) => (m.conversationId === conversationId ? { ...m, isUnread: false } : m)),
+                )
+            } catch (err: any) {
+                if (!opts?.silent) {
+                    if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+                    else toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+                }
+            } finally {
+                markInflightRef.current.delete(conversationId)
+            }
+        },
+        [messages, token],
+    )
+
+    /**
+     * ✅ REQUIRED BEHAVIOR:
+     * - Do NOT mark read unless the user OPENED the thread (clicked it / auto-start) OR sent a reply.
+     * - Once opened, auto-mark as read (no "NEW" pill inside the thread).
+     */
+    React.useEffect(() => {
+        if (!activeConversationId) return
+        if (!openedConversationIdsRef.current.has(activeConversationId)) return
+        void markConversationReadById(activeConversationId, { silent: true })
+    }, [activeConversationId, activeMessages.length, markConversationReadById])
+
     const markConversationRead = async () => {
         if (!activeConversationId) return
-
-        const unread = activeMessages.filter((m) => m.isUnread)
-        if (unread.length === 0) return
-
         setIsMarking(true)
-
         try {
-            const numericIds = unread
-                .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
-                .filter((n) => Number.isInteger(n)) as number[]
-
-            if (numericIds.length > 0) {
-                await markCounselorMessagesAsRead(numericIds)
-            }
-
-            setMessages((prev) =>
-                prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)),
-            )
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+            await markConversationReadById(activeConversationId, { silent: false })
         } finally {
             setIsMarking(false)
-        }
-    }
-
-    const markSingleRead = async (msg: UiMessage) => {
-        if (!msg.isUnread) return
-
-        if (typeof msg.id !== "number") {
-            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isUnread: false } : m)))
-            return
-        }
-
-        try {
-            await markCounselorMessageReadByIdApi(msg.id)
-            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isUnread: false } : m)))
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to mark message as read.")
         }
     }
 
@@ -1559,8 +1583,7 @@ const CounselorMessages: React.FC = () => {
         }
 
         setDraftConversations((prev) => [convo, ...prev])
-        setActiveConversationId(conversationId)
-        setMobileView("chat")
+        openConversation(conversationId)
         setShowNewMessage(false)
 
         const k = peerKey(convo.peerRole, convo.peerId)
@@ -1585,6 +1608,9 @@ const CounselorMessages: React.FC = () => {
             toast.error("Select a conversation first.")
             return
         }
+
+        // ✅ sending a reply counts as "opened" for auto-mark-read behavior
+        openedConversationIdsRef.current.add(activeConversation.id)
 
         const text = draft.trim()
         if (!text) return
@@ -1623,17 +1649,18 @@ const CounselorMessages: React.FC = () => {
                 recipient_id: activeConversation.peerId,
             }
 
-            const res = await sendCounselorMessage(payload)
-            const dto = res.messageRecord
+            const res = await counselorInboxSend(payload, token)
+            const dto = res?.messageRecord ?? res?.message ?? null
             const serverMsg = dto ? mapDtoToUi(dto) : null
 
             if (serverMsg) {
                 setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)))
+
                 if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
+                    openedConversationIdsRef.current.add(serverMsg.conversationId)
                     setActiveConversationId(serverMsg.conversationId)
                 }
 
-                // ✅ Seed profile immediately from send response (recipient_name)
                 if (serverMsg.recipientRole && serverMsg.recipientId != null) {
                     const k = peerKey(serverMsg.recipientRole, serverMsg.recipientId)
                     const nm = String(serverMsg.recipientName ?? serverMsg.userName ?? "").trim()
@@ -1650,9 +1677,13 @@ const CounselorMessages: React.FC = () => {
             }
 
             setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id))
-        } catch (err) {
+
+            // auto-mark-read after sending (silent)
+            void markConversationReadById(activeConversation.id, { silent: true })
+        } catch (err: any) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId))
-            toast.error(err instanceof Error ? err.message : "Failed to send message.")
+            if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+            else toast.error(err instanceof Error ? err.message : "Failed to send message.")
         } finally {
             setIsSending(false)
         }
@@ -1751,8 +1782,6 @@ const CounselorMessages: React.FC = () => {
         const convoId = activeConversation.id
         const toDelete = activeMessages
 
-        const nextCandidate = conversations.filter((c) => c.id !== convoId)[0]?.id ?? ""
-
         setIsDeletingConvo(true)
 
         const removedPayload = {
@@ -1767,8 +1796,11 @@ const CounselorMessages: React.FC = () => {
             await tryDeleteConversationApi(convoId, token)
             toast.success("Conversation deleted.")
             setDeleteConvoOpen(false)
-            setActiveConversationId(nextCandidate)
-            if (!nextCandidate) setMobileView("list")
+
+            // ✅ Do NOT auto-activate another thread after delete
+            openedConversationIdsRef.current.delete(convoId)
+            setActiveConversationId("")
+            setMobileView("list")
         } catch (err) {
             setMessages((prev) => [...prev, ...removedPayload.messages])
             if (removedPayload.draft) setDraftConversations((prev) => [removedPayload.draft!, ...prev])
@@ -1783,7 +1815,7 @@ const CounselorMessages: React.FC = () => {
     return (
         <DashboardLayout title="Messages" description="Manage and respond to conversations.">
             <div className="mx-auto w-full px-4">
-                <Card className="overflow-hidden border bg-white/70 shadow-sm backdrop-blur">
+                <Card className="overflow-hidden border bg-card/70 shadow-sm backdrop-blur">
                     <CardHeader className="space-y-2 p-4 sm:p-6">
                         <CardTitle className="text-base">
                             <span className="sm:hidden">Inbox</span>
@@ -1799,13 +1831,15 @@ const CounselorMessages: React.FC = () => {
                         <div className="grid min-h-[640px] grid-cols-1 md:min-h-[700px] md:grid-cols-[360px_1fr]">
                             {/* LEFT: conversations */}
                             <div
-                                className={`border-b md:border-b-0 md:border-r ${mobileView === "chat" ? "hidden md:block" : "block"
-                                    }`}
+                                className={cn(
+                                    "border-b md:border-b-0 md:border-r",
+                                    mobileView === "chat" ? "hidden md:block" : "block",
+                                )}
                             >
                                 <div className="p-3 sm:p-4">
                                     <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-3">
                                         <div className="min-w-0">
-                                            <div className="truncate text-sm font-semibold text-slate-900">Inbox</div>
+                                            <div className="truncate text-sm font-semibold text-foreground">Inbox</div>
                                             <div className="truncate text-xs text-muted-foreground">{counselorName}</div>
                                         </div>
 
@@ -1824,10 +1858,10 @@ const CounselorMessages: React.FC = () => {
                                     </Button>
 
                                     {showNewMessage ? (
-                                        <div className="mt-3 rounded-xl border bg-white/60 p-3">
+                                        <div className="mt-3 rounded-xl border bg-card/70 p-3">
                                             <div className="grid grid-cols-1 gap-2">
                                                 <div className="space-y-1">
-                                                    <Label className="text-[0.70rem] font-medium text-slate-700">
+                                                    <Label className="text-[0.70rem] font-medium text-foreground">
                                                         Recipient role
                                                     </Label>
                                                     <Select
@@ -1848,14 +1882,13 @@ const CounselorMessages: React.FC = () => {
                                                             <SelectItem value="guest">Guest</SelectItem>
                                                             <SelectItem value="counselor">Counselor</SelectItem>
                                                             <SelectItem value="admin">Admin</SelectItem>
-                                                            {/* ✅ NEW */}
                                                             <SelectItem value="referral_user">Referral User</SelectItem>
                                                         </SelectContent>
                                                     </Select>
                                                 </div>
 
                                                 <div className="mt-2 space-y-1">
-                                                    <Label className="text-[0.70rem] font-medium text-slate-700">
+                                                    <Label className="text-[0.70rem] font-medium text-foreground">
                                                         Recipient (required)
                                                     </Label>
 
@@ -1895,23 +1928,25 @@ const CounselorMessages: React.FC = () => {
                                             <TabsTrigger value="all" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 All
                                             </TabsTrigger>
-                                            <TabsTrigger value="student" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
+                                            <TabsTrigger
+                                                value="student"
+                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
+                                            >
                                                 Student
                                             </TabsTrigger>
                                             <TabsTrigger value="guest" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Guest
                                             </TabsTrigger>
-                                            <TabsTrigger value="counselor" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
+                                            <TabsTrigger
+                                                value="counselor"
+                                                className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs"
+                                            >
                                                 Counselor
                                             </TabsTrigger>
                                             <TabsTrigger value="admin" className="min-w-[72px] text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Admin
                                             </TabsTrigger>
-                                            {/* ✅ NEW */}
-                                            <TabsTrigger
-                                                value="referral_user"
-                                                className="min-w-24 text-[0.70rem] sm:min-w-0 sm:text-xs"
-                                            >
+                                            <TabsTrigger value="referral_user" className="min-w-24 text-[0.70rem] sm:min-w-0 sm:text-xs">
                                                 Referral
                                             </TabsTrigger>
                                         </TabsList>
@@ -1934,7 +1969,7 @@ const CounselorMessages: React.FC = () => {
                                         {isLoading ? (
                                             <div className="text-sm text-muted-foreground">Loading conversations…</div>
                                         ) : filteredConversations.length === 0 ? (
-                                            <div className="rounded-lg border bg-white/60 p-4 text-sm text-muted-foreground">
+                                            <div className="rounded-lg border bg-card/70 p-4 text-sm text-muted-foreground">
                                                 No conversations found.
                                             </div>
                                         ) : (
@@ -1948,13 +1983,13 @@ const CounselorMessages: React.FC = () => {
                                                         key={c.id}
                                                         type="button"
                                                         variant="ghost"
-                                                        onClick={() => {
-                                                            setActiveConversationId(c.id)
-                                                            setMobileView("chat")
-                                                        }}
+                                                        onClick={() => openConversation(c.id)}
                                                         className={cn(
-                                                            "h-auto w-full justify-start rounded-xl border p-0 text-left",
-                                                            active ? "bg-white shadow-sm hover:bg-white" : "bg-white/60 hover:bg-white",
+                                                            "h-auto w-full justify-start rounded-xl border p-0 text-left transition-colors",
+                                                            // ✅ Active thread color uses theme tokens from index.css
+                                                            active
+                                                                ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-ring/20 shadow-sm hover:bg-sidebar-accent"
+                                                                : "border-border bg-card/60 hover:bg-card",
                                                         )}
                                                     >
                                                         <div className="w-full p-2.5 sm:p-3">
@@ -1973,7 +2008,7 @@ const CounselorMessages: React.FC = () => {
                                                                     </Avatar>
 
                                                                     <div className="min-w-0">
-                                                                        <div className="truncate text-[0.92rem] font-semibold text-slate-900 sm:text-sm">
+                                                                        <div className="truncate text-[0.92rem] font-semibold text-foreground sm:text-sm">
                                                                             {displayName}
                                                                         </div>
                                                                         <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
@@ -2009,8 +2044,8 @@ const CounselorMessages: React.FC = () => {
                             </div>
 
                             {/* RIGHT: chat */}
-                            <div className={`flex flex-col ${mobileView === "list" ? "hidden md:flex" : "flex"}`}>
-                                <div className="flex flex-col gap-3 border-b bg-white/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4">
+                            <div className={cn("flex flex-col", mobileView === "list" ? "hidden md:flex" : "flex")}>
+                                <div className="flex flex-col gap-3 border-b bg-card/70 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:p-4">
                                     <div className="flex items-center gap-2 sm:gap-3">
                                         <Button
                                             type="button"
@@ -2020,7 +2055,7 @@ const CounselorMessages: React.FC = () => {
                                             onClick={() => setMobileView("list")}
                                             aria-label="Back"
                                         >
-                                            ←
+                                            <ChevronLeft className="h-4 w-4" />
                                         </Button>
 
                                         {activeConversation ? (
@@ -2038,7 +2073,7 @@ const CounselorMessages: React.FC = () => {
                                                 </Avatar>
 
                                                 <div className="min-w-0">
-                                                    <div className="truncate text-sm font-semibold text-slate-900">{activePeerName}</div>
+                                                    <div className="truncate text-sm font-semibold text-foreground">{activePeerName}</div>
                                                     <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
                                                         {roleLabel(activeConversation.peerRole)} • {activeConversation.subtitle}
                                                     </div>
@@ -2102,7 +2137,7 @@ const CounselorMessages: React.FC = () => {
                                     </div>
                                 </div>
 
-                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/30 to-white sm:h-[520px]">
+                                <ScrollArea className="h-[480px] bg-linear-to-b from-muted/40 to-background sm:h-[520px]">
                                     <div className="space-y-3 p-3 sm:p-4">
                                         {!activeConversation ? (
                                             <div className="py-10 text-center text-sm text-muted-foreground">
@@ -2119,13 +2154,13 @@ const CounselorMessages: React.FC = () => {
                                                 const align = system ? "justify-center" : mine ? "justify-end" : "justify-start"
 
                                                 const bubble = system
-                                                    ? "border bg-white/90"
+                                                    ? "border-border bg-muted text-muted-foreground"
                                                     : mine
-                                                        ? "border-indigo-200 bg-indigo-50/90"
-                                                        : "border-slate-200 bg-white/90"
+                                                        ? "border-primary/20 bg-primary/10 text-foreground"
+                                                        : "border-border bg-card text-foreground"
 
                                                 return (
-                                                    <div key={m.id} className={`flex ${align}`}>
+                                                    <div key={m.id} className={cn("flex", align)}>
                                                         <div className="max-w-[94%] sm:max-w-[86%]">
                                                             {system ? (
                                                                 <div className="mb-1 text-center text-[0.70rem] text-muted-foreground">
@@ -2134,10 +2169,12 @@ const CounselorMessages: React.FC = () => {
                                                                 </div>
                                                             ) : (
                                                                 <div
-                                                                    className={`mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground ${mine ? "justify-end" : "justify-start"
-                                                                        }`}
+                                                                    className={cn(
+                                                                        "mb-1 flex flex-wrap items-center gap-2 text-[0.70rem] text-muted-foreground",
+                                                                        mine ? "justify-end" : "justify-start",
+                                                                    )}
                                                                 >
-                                                                    <span className="font-medium text-slate-700">
+                                                                    <span className="font-medium text-foreground">
                                                                         {mine ? "You" : resolveMessageSenderName(m)}
                                                                     </span>
                                                                     <span aria-hidden="true">•</span>
@@ -2145,16 +2182,7 @@ const CounselorMessages: React.FC = () => {
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
                                                                     <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
 
-                                                                    {m.isUnread ? (
-                                                                        <Button
-                                                                            type="button"
-                                                                            variant="secondary"
-                                                                            onClick={() => markSingleRead(m)}
-                                                                            className="h-5 rounded-full px-2 py-0 text-[0.65rem] font-semibold"
-                                                                        >
-                                                                            NEW
-                                                                        </Button>
-                                                                    ) : null}
+                                                                    {/* ✅ Removed the in-thread "NEW" pill (your requirement) */}
 
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>
@@ -2200,7 +2228,10 @@ const CounselorMessages: React.FC = () => {
                                                             )}
 
                                                             <div
-                                                                className={`rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm ${bubble}`}
+                                                                className={cn(
+                                                                    "rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm",
+                                                                    bubble,
+                                                                )}
                                                             >
                                                                 {m.content}
                                                             </div>
@@ -2214,7 +2245,7 @@ const CounselorMessages: React.FC = () => {
                                     </div>
                                 </ScrollArea>
 
-                                <form onSubmit={handleSend} className="border-t bg-white/80 p-3 sm:p-4">
+                                <form onSubmit={handleSend} className="border-t bg-card/70 p-3 sm:p-4">
                                     <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-2">
                                         <div className="flex-1">
                                             <Textarea
