@@ -38,6 +38,7 @@ import CounselorAssessmentReport from "./pages/dashboard/counselor/assessment-re
 import ReferralUserOverview from "./pages/dashboard/referral-user/overview";
 import ReferralUserMessages from "./pages/dashboard/referral-user/messages";
 import ReferralUserReferrals from "./pages/dashboard/referral-user/referrals";
+import ReferralUserSettings from "./pages/dashboard/referral-user/settings";
 
 import StudentOverview from "./pages/dashboard/student/overview";
 import StudentIntake from "./pages/dashboard/student/intake";
@@ -58,6 +59,25 @@ function isEmailVerified(u: any): boolean {
   if (typeof u?.email_verified === "boolean") return u.email_verified;
   if (typeof u?.verified === "boolean") return u.verified;
   return false;
+}
+
+function isReferralUserRole(normalizedRole: string): boolean {
+  if (
+    normalizedRole.includes("referral") ||
+    normalizedRole.includes("referral-user") ||
+    normalizedRole.includes("referral_user") ||
+    normalizedRole.includes("referraluser")
+  ) {
+    return true;
+  }
+
+  return (
+    normalizedRole.includes("dean") ||
+    normalizedRole.includes("registrar") ||
+    normalizedRole.includes("program chair") ||
+    normalizedRole.includes("program_chair") ||
+    normalizedRole.includes("chair")
+  );
 }
 
 /**
@@ -143,6 +163,11 @@ function SettingsIndexRoute() {
   // Counselor
   if (role.includes("counselor") || role.includes("counsellor")) {
     return <Navigate to="/dashboard/counselor/settings" replace />;
+  }
+
+  // ✅ Referral user
+  if (isReferralUserRole(role)) {
+    return <Navigate to="/dashboard/referral-user/settings" replace />;
   }
 
   // Otherwise go to their dashboard home
@@ -367,6 +392,14 @@ function App() {
             element={
               <RequireRole allowedRoles={referralUserAllowedRoles}>
                 <ReferralUserMessages />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/dashboard/referral-user/settings"
+            element={
+              <RequireRole allowedRoles={referralUserAllowedRoles}>
+                <ReferralUserSettings />
               </RequireRole>
             }
           />

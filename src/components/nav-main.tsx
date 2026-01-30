@@ -148,6 +148,7 @@ const referralUserNavItems: NavItem[] = [
     { title: "Overview", to: "/dashboard/referral-user/overview", icon: LayoutDashboard, exact: true },
     { title: "Referrals", to: "/dashboard/referral-user/referrals", icon: Share2, badgeKey: "referrals" },
     { title: "Messages", to: "/dashboard/referral-user/messages", icon: MessageCircle, badgeKey: "messages" },
+    { title: "Settings", to: "/dashboard/referral-user/settings", icon: Settings },
 ];
 
 /**

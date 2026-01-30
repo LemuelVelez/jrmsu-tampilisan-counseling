@@ -26,6 +26,26 @@ import {
     AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { toast } from "sonner";
+import { normalizeRole } from "@/lib/role";
+
+function isReferralUserRole(normalizedRole: string): boolean {
+    if (
+        normalizedRole.includes("referral") ||
+        normalizedRole.includes("referral-user") ||
+        normalizedRole.includes("referral_user") ||
+        normalizedRole.includes("referraluser")
+    ) {
+        return true;
+    }
+
+    return (
+        normalizedRole.includes("dean") ||
+        normalizedRole.includes("registrar") ||
+        normalizedRole.includes("program chair") ||
+        normalizedRole.includes("program_chair") ||
+        normalizedRole.includes("chair")
+    );
+}
 
 export const NavUser: React.FC = () => {
     const { session, signOut } = useSession();
@@ -35,6 +55,7 @@ export const NavUser: React.FC = () => {
     const name = (user?.name || user?.email || "Student").toString();
     const email = user?.email?.toString() ?? "";
     const role = user?.role != null ? String(user.role) : "student";
+    const roleNorm = normalizeRole(user?.role ?? "");
 
     const initials = React.useMemo(() => {
         const parts = name.trim().split(/\s+/);
@@ -68,12 +89,21 @@ export const NavUser: React.FC = () => {
     }, [signOut, navigate]);
 
     const handleOpenSettings = React.useCallback(() => {
-        // ✅ Redirect to centralized settings route (auto-resolves per role):
-        // - admin -> /dashboard/admin/settings
-        // - counselor -> /dashboard/counselor/settings
-        // - student/guest -> /dashboard/student/settings
-        navigate("/dashboard/settings");
-    }, [navigate]);
+        // ✅ Go directly to the correct settings page per role (includes referral-user)
+        let to = "/dashboard/settings";
+
+        if (roleNorm.includes("admin")) {
+            to = "/dashboard/admin/settings";
+        } else if (roleNorm.includes("counselor") || roleNorm.includes("counsellor")) {
+            to = "/dashboard/counselor/settings";
+        } else if (isReferralUserRole(roleNorm)) {
+            to = "/dashboard/referral-user/settings";
+        } else if (roleNorm.includes("student") || roleNorm.includes("guest")) {
+            to = "/dashboard/student/settings";
+        }
+
+        navigate(to);
+    }, [navigate, roleNorm]);
 
     return (
         <AlertDialog>
@@ -143,7 +173,7 @@ export const NavUser: React.FC = () => {
                 </DropdownMenuContent>
             </DropdownMenu>
 
-            <AlertDialogContent className="sm:max-w-[400px]">
+            <AlertDialogContent className="sm:max-w-sm">
                 <AlertDialogHeader>
                     <AlertDialogTitle>Sign out</AlertDialogTitle>
                     <AlertDialogDescription>
