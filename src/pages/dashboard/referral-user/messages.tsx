@@ -60,6 +60,7 @@ type UiMessage = {
     senderId?: number | string | null
     recipientId?: number | string | null
     recipientRole?: "counselor" | "student" | "guest" | "admin" | "referral_user" | null
+    recipientName?: string | null
 
     userId?: number | string | null
 
@@ -197,7 +198,7 @@ function pickAvatarUrl(obj: any): string | null {
         if (typeof c === "string" && c.trim()) return c.trim()
     }
 
-    const nested = [obj?.user, obj?.sender, obj?.sender_user, obj?.recipient, obj?.recipient_user]
+    const nested = [obj?.user, obj?.sender, obj?.sender_user, obj?.senderUser, obj?.recipient, obj?.recipient_user, obj?.recipientUser]
     for (const n of nested) {
         if (!n) continue
         const v =
@@ -266,7 +267,6 @@ function normalizeSender(raw: any): SenderKind {
 }
 
 function isUnreadFlag(dto: any): boolean {
-    // for non-counselor users, most implementations use "is_read"
     return dto?.is_read === false || dto?.is_read === 0
 }
 
@@ -274,12 +274,8 @@ function safeConversationId(dto: any): string {
     const raw = dto?.conversation_id ?? dto?.conversationId
     if (raw != null && String(raw).trim()) return String(raw)
 
-    // fallback: counselor conversations
     const userId = dto?.user_id ?? dto?.userId ?? null
-    if (userId != null) return `user-${userId}`
-
-    const recipientId = dto?.recipient_id ?? null
-    if (recipientId != null) return `counselor-${recipientId}`
+    if (userId != null) return `referral_user-${userId}`
 
     return `general-${Date.now()}`
 }
@@ -297,8 +293,14 @@ function mapDtoToUi(dto: any): UiMessage {
 
     const createdAt = dto?.created_at ?? new Date(0).toISOString()
 
-    const senderAvatarUrl = pickAvatarUrl(dto) ?? pickAvatarUrl(dto?.sender_user) ?? null
-    const recipientAvatarUrl = pickAvatarUrl(dto?.recipient_user) ?? null
+    const senderAvatarUrl = pickAvatarUrl(dto) ?? pickAvatarUrl(dto?.sender_user) ?? pickAvatarUrl(dto?.senderUser) ?? null
+    const recipientAvatarUrl = pickAvatarUrl(dto?.recipient_user) ?? pickAvatarUrl(dto?.recipientUser) ?? null
+
+    const recipientName =
+        (dto?.recipient_name && String(dto.recipient_name).trim()) ||
+        (dto?.recipientUser?.name && String(dto.recipientUser.name).trim()) ||
+        (dto?.recipient_user?.name && String(dto.recipient_user.name).trim()) ||
+        null
 
     return {
         id: dto?.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`,
@@ -314,6 +316,7 @@ function mapDtoToUi(dto: any): UiMessage {
         senderId: dto?.sender_id ?? null,
         recipientId: dto?.recipient_id ?? null,
         recipientRole: dto?.recipient_role ?? null,
+        recipientName,
 
         userId: dto?.user_id ?? null,
 
@@ -322,7 +325,6 @@ function mapDtoToUi(dto: any): UiMessage {
     }
 }
 
-/** ✅ FIX: removed unused myUserId parameter */
 function buildConversations(messages: UiMessage[]): Conversation[] {
     const grouped = new Map<string, UiMessage[]>()
     for (const m of messages) {
@@ -338,19 +340,22 @@ function buildConversations(messages: UiMessage[]): Conversation[] {
         const last = ordered[ordered.length - 1]
         const unreadCount = ordered.filter((m) => m.isUnread).length
 
-        // peer = counselor in this module
-        const counselorMsg = ordered.find((m) => m.sender === "counselor") ?? last
+        // Prefer counselor-authored messages to resolve peer name/avatar,
+        // otherwise fall back to the outgoing recipient details.
+        const counselorMsg = ordered.find((m) => m.sender === "counselor") ?? null
+        const outbound = ordered.find((m) => m.sender === "referral_user" && m.recipientRole === "counselor") ?? last
 
-        const peerName = counselorMsg.sender === "counselor" ? counselorMsg.senderName || "Counselor" : "Counselor"
-        const peerId =
-            counselorMsg.sender === "counselor"
-                ? (counselorMsg.senderId ?? counselorMsg.recipientId ?? null)
-                : (counselorMsg.recipientId ?? null)
+        const peerName = counselorMsg
+            ? (counselorMsg.senderName || "Counselor")
+            : (outbound.recipientName || "Counselor")
 
-        const peerAvatarUrl =
-            counselorMsg.sender === "counselor"
-                ? (counselorMsg.senderAvatarUrl ?? null)
-                : (counselorMsg.recipientAvatarUrl ?? null)
+        const peerId = counselorMsg
+            ? (counselorMsg.senderId ?? counselorMsg.recipientId ?? null)
+            : (outbound.recipientId ?? null)
+
+        const peerAvatarUrl = counselorMsg
+            ? (counselorMsg.senderAvatarUrl ?? null)
+            : (outbound.recipientAvatarUrl ?? null)
 
         convs.push({
             id: conversationId,
@@ -387,78 +392,22 @@ function normalizeIdToNumberOrNull(id: unknown): number | null {
     return Number.isFinite(n) ? n : null
 }
 
+/**
+ * ✅ Referral user should ONLY use referral-user endpoints.
+ * (Removing fallback endpoints prevents accidentally loading another role's inbox.)
+ */
 async function tryFetchReferralUserMessages(token?: string | null): Promise<any[]> {
-    const candidates = [
-        "/referral-user/messages",
-        "/student/messages",
-        "/messages",
-    ]
-
-    let lastErr: any = null
-
-    for (const p of candidates) {
-        try {
-            const data = await apiFetch(p, { method: "GET" }, token)
-            const arr = extractMessagesArray(data)
-            if (Array.isArray(arr)) return arr
-        } catch (e) {
-            lastErr = e
-        }
-    }
-
-    throw lastErr ?? new Error("Failed to load messages.")
+    const data = await apiFetch("/referral-user/messages", { method: "GET" }, token)
+    return extractMessagesArray(data)
 }
 
 async function trySendReferralUserMessage(payload: any, token?: string | null): Promise<any> {
-    const candidates = [
-        "/referral-user/messages",
-        "/student/messages",
-        "/messages",
-    ]
-
-    let lastErr: any = null
-
-    for (const p of candidates) {
-        try {
-            // attempt full payload
-            const data = await apiFetch(p, { method: "POST", body: JSON.stringify(payload) }, token)
-            return data
-        } catch (e) {
-            lastErr = e
-
-            // fallback attempt: minimal payload
-            try {
-                const minimal = { content: payload?.content }
-                const data2 = await apiFetch(p, { method: "POST", body: JSON.stringify(minimal) }, token)
-                return data2
-            } catch (e2) {
-                lastErr = e2
-            }
-        }
-    }
-
-    throw lastErr ?? new Error("Failed to send message.")
+    // Referral user can only send to a counselor => recipient_id required
+    return apiFetch("/referral-user/messages", { method: "POST", body: JSON.stringify(payload) }, token)
 }
 
 async function tryMarkMessagesAsRead(ids: number[], token?: string | null) {
-    const candidates = [
-        "/referral-user/messages/mark-as-read",
-        "/student/messages/mark-as-read",
-        "/messages/mark-as-read",
-    ]
-
-    let lastErr: any = null
-
-    for (const p of candidates) {
-        try {
-            await apiFetch(p, { method: "POST", body: JSON.stringify({ ids }) }, token)
-            return
-        } catch (e) {
-            lastErr = e
-        }
-    }
-
-    throw lastErr ?? new Error("Failed to mark messages as read.")
+    await apiFetch("/referral-user/messages/mark-as-read", { method: "POST", body: JSON.stringify({ message_ids: ids }) }, token)
 }
 
 /**
@@ -485,31 +434,19 @@ async function tryDeleteConversationApi(conversationId: string, token?: string |
 }
 
 /**
- * ✅ NEW: Update a single message (edit)
+ * ✅ Update a single message (edit)
  */
 async function tryUpdateMessageApi(messageId: number, content: string, token?: string | null): Promise<any> {
     const id = encodeURIComponent(String(messageId))
-    const candidates = [
-        `/referral-user/messages/${id}`,
-        `/messages/${id}`,
-        `/student/messages/${id}`,
-    ]
-
     const methods: Array<"PATCH" | "PUT"> = ["PATCH", "PUT"]
-    let lastErr: any = null
 
-    for (const p of candidates) {
-        for (const method of methods) {
-            try {
-                const data = await apiFetch(
-                    p,
-                    { method, body: JSON.stringify({ content }) },
-                    token,
-                )
-                return data
-            } catch (e) {
-                lastErr = e
-            }
+    let lastErr: any = null
+    for (const method of methods) {
+        try {
+            const data = await apiFetch(`/messages/${id}`, { method, body: JSON.stringify({ content }) }, token)
+            return data
+        } catch (e) {
+            lastErr = e
         }
     }
 
@@ -517,27 +454,11 @@ async function tryUpdateMessageApi(messageId: number, content: string, token?: s
 }
 
 /**
- * ✅ NEW: Delete a single message
+ * ✅ Delete a single message
  */
 async function tryDeleteMessageApi(messageId: number, token?: string | null): Promise<any> {
     const id = encodeURIComponent(String(messageId))
-    const candidates = [
-        `/referral-user/messages/${id}`,
-        `/messages/${id}`,
-        `/student/messages/${id}`,
-    ]
-
-    let lastErr: any = null
-    for (const p of candidates) {
-        try {
-            const data = await apiFetch(p, { method: "DELETE" }, token)
-            return data
-        } catch (e) {
-            lastErr = e
-        }
-    }
-
-    throw lastErr ?? new Error("Failed to delete message.")
+    return apiFetch(`/messages/${id}`, { method: "DELETE" }, token)
 }
 
 async function trySearchCounselorsFromDb(query: string, token?: string | null): Promise<DirectoryUser[]> {
@@ -573,7 +494,6 @@ async function trySearchCounselorsFromDb(query: string, token?: string | null): 
 
                     const email = typeof u?.email === "string" ? u.email : null
 
-                    // must be counselor-like
                     const role = String(u?.role ?? "").toLowerCase()
                     const isCounselor =
                         role.includes("counselor") || role.includes("counsellor") || role.includes("guidance")
@@ -589,7 +509,6 @@ async function trySearchCounselorsFromDb(query: string, token?: string | null): 
                 })
                 .filter(Boolean) as DirectoryUser[]
 
-            // de-dupe
             const seen = new Set<string>()
             return mapped.filter((u) => {
                 const k = String(u.id)
@@ -690,7 +609,6 @@ const ReferralUserMessages: React.FC = () => {
     const [messages, setMessages] = React.useState<UiMessage[]>([])
     const [activeConversationId, setActiveConversationId] = React.useState<string>("")
 
-    // new conversation to counselor
     const [showNewMessage, setShowNewMessage] = React.useState(false)
     const [recipientQuery, setRecipientQuery] = React.useState("")
     const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([])
@@ -699,11 +617,9 @@ const ReferralUserMessages: React.FC = () => {
 
     const bottomRef = React.useRef<HTMLDivElement | null>(null)
 
-    // delete conversation confirm
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false)
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false)
 
-    // ✅ NEW: edit/delete single message
     const [editingMessageId, setEditingMessageId] = React.useState<string>("")
     const [editDraft, setEditDraft] = React.useState("")
     const [isUpdatingMessage, setIsUpdatingMessage] = React.useState(false)
@@ -712,13 +628,32 @@ const ReferralUserMessages: React.FC = () => {
     const [deleteTarget, setDeleteTarget] = React.useState<UiMessage | null>(null)
     const [isDeletingMessage, setIsDeletingMessage] = React.useState(false)
 
+    const isVisibleForMe = React.useCallback(
+        (m: UiMessage): boolean => {
+            // Referral user module must ONLY show counselor conversations:
+            // - outgoing: me(referral_user) -> counselor
+            // - incoming: counselor -> me(referral_user)
+            if (m.sender === "referral_user") {
+                return String(m.senderId ?? "") === myUserId && m.recipientRole === "counselor"
+            }
+            if (m.sender === "counselor") {
+                return m.recipientRole === "referral_user" && String(m.recipientId ?? "") === myUserId
+            }
+            // system messages (client-only seed) are allowed
+            return m.sender === "system"
+        },
+        [myUserId],
+    )
+
     const loadMessages = async (mode: "initial" | "refresh" = "refresh") => {
         const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing
         setBusy(true)
 
         try {
             const raw = await tryFetchReferralUserMessages(token)
-            const ui = (Array.isArray(raw) ? raw : []).map(mapDtoToUi)
+            const uiAll = (Array.isArray(raw) ? raw : []).map(mapDtoToUi)
+            const ui = uiAll.filter(isVisibleForMe)
+
             setMessages(ui)
 
             const convs = buildConversations(ui)
@@ -768,7 +703,6 @@ const ReferralUserMessages: React.FC = () => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [activeConversationId, activeMessages.length])
 
-    // counselor directory search (debounced)
     React.useEffect(() => {
         if (!showNewMessage) return
 
@@ -816,7 +750,6 @@ const ReferralUserMessages: React.FC = () => {
         const conversationId = `new-counselor-${String(peerId)}-${Date.now()}`
         const nowIso = new Date().toISOString()
 
-        // Add a draft conversation by inserting a system seed message (so it shows up)
         const seed: UiMessage = {
             id: `seed-${conversationId}`,
             conversationId,
@@ -825,6 +758,11 @@ const ReferralUserMessages: React.FC = () => {
             content: `Conversation started with ${peerName}.`,
             createdAt: nowIso,
             isUnread: false,
+
+            recipientRole: "counselor",
+            recipientId: peerId,
+            recipientName: peerName,
+            recipientAvatarUrl: newRecipient.avatar_url ?? null,
         }
 
         setMessages((prev) => [...prev, seed])
@@ -847,7 +785,6 @@ const ReferralUserMessages: React.FC = () => {
             .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
             .filter((n) => Number.isInteger(n)) as number[]
 
-        // optimistic UI always works
         setIsMarking(true)
         setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)))
 
@@ -918,12 +855,10 @@ const ReferralUserMessages: React.FC = () => {
         const msgIdNum = normalizeIdToNumberOrNull(m.id)
         const prevContent = m.content
 
-        // optimistic UI
         setIsUpdatingMessage(true)
         setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...x, content: next } : x)))
 
         try {
-            // If it's a local-only message (seed/local id), just keep client-side update
             if (msgIdNum == null) {
                 toast.success("Message updated.")
                 cancelEditMessage()
@@ -941,13 +876,14 @@ const ReferralUserMessages: React.FC = () => {
 
             if (dto) {
                 const serverMsg = mapDtoToUi(dto)
-                setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...serverMsg, isUnread: false } : x)))
+                setMessages((prev) =>
+                    prev.map((x) => (String(x.id) === String(m.id) ? { ...serverMsg, isUnread: false } : x)),
+                )
             }
 
             toast.success("Message updated.")
             cancelEditMessage()
         } catch (err) {
-            // rollback
             setMessages((prev) => prev.map((x) => (String(x.id) === String(m.id) ? { ...x, content: prevContent } : x)))
             toast.error(err instanceof Error ? err.message : "Failed to update message.")
             setIsUpdatingMessage(false)
@@ -967,11 +903,9 @@ const ReferralUserMessages: React.FC = () => {
 
         setIsDeletingMessage(true)
 
-        // optimistic remove
         setMessages((prev) => prev.filter((x) => String(x.id) !== String(target.id)))
 
         try {
-            // local-only delete
             if (msgIdNum == null) {
                 toast.success("Message deleted.")
                 setDeleteMessageOpen(false)
@@ -984,7 +918,6 @@ const ReferralUserMessages: React.FC = () => {
             setDeleteMessageOpen(false)
             setDeleteTarget(null)
         } catch (err) {
-            // rollback: reinsert (best-effort)
             setMessages((prev) => [...prev, target])
             toast.error(err instanceof Error ? err.message : "Failed to delete message.")
         } finally {
@@ -1003,12 +936,17 @@ const ReferralUserMessages: React.FC = () => {
         const text = draft.trim()
         if (!text) return
 
+        const counselorId = activeConversation.peerId ?? null
+        if (!counselorId) {
+            toast.error("Counselor is required.")
+            return
+        }
+
         setIsSending(true)
 
         const tempId = `local-${Date.now()}`
         const nowIso = new Date().toISOString()
 
-        // optimistic
         const optimistic: UiMessage = {
             id: tempId,
             conversationId: activeConversation.id,
@@ -1019,7 +957,9 @@ const ReferralUserMessages: React.FC = () => {
             isUnread: false,
             senderId: myUserId || null,
             recipientRole: "counselor",
-            recipientId: activeConversation.peerId ?? null,
+            recipientId: counselorId,
+            recipientName: activeConversation.peerName,
+            recipientAvatarUrl: activeConversation.peerAvatarUrl ?? null,
         }
 
         setMessages((prev) => [...prev, optimistic])
@@ -1028,14 +968,11 @@ const ReferralUserMessages: React.FC = () => {
         try {
             const payload: any = {
                 content: text,
-                conversation_id: activeConversation.id,
-                recipient_role: "counselor",
-                recipient_id: activeConversation.peerId,
+                recipient_id: counselorId,
             }
 
             const res = await trySendReferralUserMessage(payload, token)
 
-            // handle common response shapes
             const dto =
                 (res as any)?.messageRecord ||
                 (res as any)?.message ||
@@ -1044,10 +981,15 @@ const ReferralUserMessages: React.FC = () => {
 
             if (dto) {
                 const serverMsg = mapDtoToUi(dto)
+
                 setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)))
 
+                // If server returns a different conversation id, migrate local thread ids (seed + optimistic)
                 if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
-                    setActiveConversationId(serverMsg.conversationId)
+                    const from = activeConversation.id
+                    const to = serverMsg.conversationId
+                    setMessages((prev) => prev.map((m) => (m.conversationId === from ? { ...m, conversationId: to } : m)))
+                    setActiveConversationId(to)
                 }
             }
         } catch (err) {
@@ -1376,7 +1318,6 @@ const ReferralUserMessages: React.FC = () => {
                                                                 <span aria-hidden="true">•</span>
                                                                 <span>{formatTimestamp(m.createdAt)}</span>
 
-                                                                {/* ✅ NEW: per-message actions (edit/delete) */}
                                                                 {!system && mine ? (
                                                                     <DropdownMenu>
                                                                         <DropdownMenuTrigger asChild>
@@ -1487,7 +1428,6 @@ const ReferralUserMessages: React.FC = () => {
                     </CardContent>
                 </Card>
 
-                {/* Delete conversation confirm */}
                 <AlertDialog open={deleteConvoOpen} onOpenChange={(v) => (!isDeletingConvo ? setDeleteConvoOpen(v) : null)}>
                     <AlertDialogContent>
                         <AlertDialogHeader>
@@ -1509,7 +1449,6 @@ const ReferralUserMessages: React.FC = () => {
                     </AlertDialogContent>
                 </AlertDialog>
 
-                {/* ✅ NEW: Delete message confirm */}
                 <AlertDialog
                     open={deleteMessageOpen}
                     onOpenChange={(v) => (!isDeletingMessage ? setDeleteMessageOpen(v) : null)}

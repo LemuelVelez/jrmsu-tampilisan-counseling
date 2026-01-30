@@ -1876,14 +1876,6 @@ const CounselorMessages: React.FC = () => {
                                                                 : `No ${roleLabel(newRole).toLowerCase()} found.`
                                                         }
                                                     />
-
-                                                    <div className="text-[0.70rem] text-muted-foreground">
-                                                        <span className="sm:hidden">Searches your database (not history).</span>
-                                                        <span className="hidden sm:inline">
-                                                            Tip: This searches your database (not message history). If nothing appears,
-                                                            confirm your backend endpoint.
-                                                        </span>
-                                                    </div>
                                                 </div>
 
                                                 <Button

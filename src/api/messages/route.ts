@@ -17,10 +17,6 @@ export type MessageSenderApi =
     | "program_chair"
     | string;
 
-/**
- * A generic message DTO used by multiple message endpoints.
- * The backend may include more fields; we keep this flexible.
- */
 export interface MessageDto {
     id: number | string;
 
@@ -29,31 +25,14 @@ export interface MessageDto {
 
     sender: MessageSenderApi;
 
-    /**
-     * ✅ Now guaranteed (backend resolves it) for counselor inbox:
-     * - system => "Guidance & Counseling Office"
-     * - else => messages.sender_name OR users.name fallbacks
-     */
     sender_name?: string | null;
 
-    /**
-     * ✅ NEW (backend provides it for counselor inbox + send response):
-     * Lets counselor-initiated conversations show the real recipient name
-     * (instead of "Student #7") even if the student hasn't replied yet.
-     */
     recipient_name?: string | null;
 
-    /**
-     * ✅ Optional convenience (backend provides for counselor inbox):
-     * Thread owner name for legacy messages where sender_id may be null.
-     */
     user_name?: string | null;
 
     content: string;
 
-    /**
-     * Some backends store as boolean, others as 0/1.
-     */
     is_read: boolean | number;
 
     created_at: string;
@@ -67,10 +46,6 @@ export interface MessageDto {
 
     [key: string]: unknown;
 }
-
-/** -----------------------------
- * Shared DTOs
- * ------------------------------*/
 
 export interface MarkMessagesReadPayload {
     message_ids?: Array<number | string>;
@@ -159,18 +134,12 @@ export interface CreateStudentMessageResponseDto {
     messageRecord: MessageDto;
 }
 
-/**
- * GET /student/messages
- */
 export async function getStudentMessagesApi(): Promise<GetStudentMessagesResponseDto> {
     return messagesApiFetch<GetStudentMessagesResponseDto>("/student/messages", {
         method: "GET",
     });
 }
 
-/**
- * POST /student/messages
- */
 export async function createStudentMessageApi(
     payload: CreateStudentMessagePayload,
 ): Promise<CreateStudentMessageResponseDto> {
@@ -180,9 +149,6 @@ export async function createStudentMessageApi(
     });
 }
 
-/**
- * POST /student/messages/mark-as-read
- */
 export async function markStudentMessagesReadApi(
     payload?: MarkMessagesReadPayload,
 ): Promise<MarkMessagesReadResponseDto> {
@@ -214,18 +180,12 @@ export interface CreateCounselorMessageResponseDto {
     messageRecord: MessageDto;
 }
 
-/**
- * GET /counselor/messages
- */
 export async function getCounselorMessagesApi(): Promise<GetCounselorMessagesResponseDto> {
     return messagesApiFetch<GetCounselorMessagesResponseDto>("/counselor/messages", {
         method: "GET",
     });
 }
 
-/**
- * POST /counselor/messages
- */
 export async function createCounselorMessageApi(
     payload: CreateCounselorMessagePayload,
 ): Promise<CreateCounselorMessageResponseDto> {
@@ -235,9 +195,6 @@ export async function createCounselorMessageApi(
     });
 }
 
-/**
- * POST /counselor/messages/mark-as-read
- */
 export async function markCounselorMessagesReadApi(
     payload?: MarkMessagesReadPayload,
 ): Promise<MarkMessagesReadResponseDto> {
@@ -258,10 +215,14 @@ export interface GetReferralUserMessagesResponseDto {
     messages: MessageDto[];
 }
 
+/**
+ * ✅ Referral users can ONLY message counselors.
+ * recipient_id is required.
+ */
 export interface CreateReferralUserMessagePayload {
     content: string;
-    recipient_role?: "student" | "counselor";
-    recipient_id?: number | string;
+    recipient_id: number | string;
+    recipient_role?: "counselor";
     conversation_id?: number | string;
 }
 
@@ -270,18 +231,12 @@ export interface CreateReferralUserMessageResponseDto {
     messageRecord: MessageDto;
 }
 
-/**
- * GET /referral-user/messages
- */
 export async function getReferralUserMessagesApi(): Promise<GetReferralUserMessagesResponseDto> {
     return messagesApiFetch<GetReferralUserMessagesResponseDto>("/referral-user/messages", {
         method: "GET",
     });
 }
 
-/**
- * POST /referral-user/messages
- */
 export async function createReferralUserMessageApi(
     payload: CreateReferralUserMessagePayload,
 ): Promise<CreateReferralUserMessageResponseDto> {
@@ -291,9 +246,6 @@ export async function createReferralUserMessageApi(
     });
 }
 
-/**
- * POST /referral-user/messages/mark-as-read
- */
 export async function markReferralUserMessagesReadApi(
     payload?: MarkMessagesReadPayload,
 ): Promise<MarkMessagesReadResponseDto> {

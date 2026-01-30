@@ -36,7 +36,6 @@ import {
     deleteAdminConversationApi,
     updateAdminMessageApi,
     deleteAdminMessageApi,
-    // ✅ NEW (send)
     createAdminMessageApi,
     type CreateAdminMessagePayload,
     type CreateAdminMessageResponseDto,
@@ -48,9 +47,6 @@ import {
     type UpdateAdminMessageResponseDto,
 } from "@/api/admin/messages/route";
 
-/**
- * Convenience type aliases for use in React components.
- */
 export type StudentMessage = MessageDto;
 export type CounselorMessage = MessageDto;
 export type ReferralUserMessage = MessageDto;
@@ -63,16 +59,10 @@ export type SendStudentMessagePayload = CreateStudentMessagePayload;
 export type SendCounselorMessagePayload = CreateCounselorMessagePayload;
 export type SendReferralUserMessagePayload = CreateReferralUserMessagePayload;
 
-/**
- * Fetch all messages for the current student/guest.
- */
 export async function fetchStudentMessages(): Promise<GetStudentMessagesResponseDto> {
     return getStudentMessagesApi();
 }
 
-/**
- * Send a message from student/guest.
- */
 export async function sendStudentMessage(
     input: string | SendStudentMessagePayload,
 ): Promise<CreateStudentMessageResponseDto> {
@@ -80,9 +70,6 @@ export async function sendStudentMessage(
     return createStudentMessageApi(payload);
 }
 
-/**
- * Mark messages as read (student/guest).
- */
 export async function markStudentMessagesAsRead(
     messageIds?: Array<number | string>,
 ): Promise<MarkMessagesReadResponseDto> {
@@ -92,16 +79,10 @@ export async function markStudentMessagesAsRead(
     return markStudentMessagesReadApi(payload);
 }
 
-/**
- * Fetch counselor inbox messages.
- */
 export async function fetchCounselorMessages(): Promise<GetCounselorMessagesResponseDto> {
     return getCounselorMessagesApi();
 }
 
-/**
- * Send counselor message.
- */
 export async function sendCounselorMessage(
     input: string | SendCounselorMessagePayload,
 ): Promise<CreateCounselorMessageResponseDto> {
@@ -109,9 +90,6 @@ export async function sendCounselorMessage(
     return createCounselorMessageApi(payload);
 }
 
-/**
- * Mark counselor messages as read.
- */
 export async function markCounselorMessagesAsRead(
     messageIds?: Array<number | string>,
 ): Promise<MarkMessagesReadResponseDto> {
@@ -122,25 +100,22 @@ export async function markCounselorMessagesAsRead(
 }
 
 /**
- * ✅ NEW: Fetch referral user inbox messages.
+ * ✅ Fetch referral user inbox messages.
  */
 export async function fetchReferralUserMessages(): Promise<GetReferralUserMessagesResponseDto> {
     return getReferralUserMessagesApi();
 }
 
 /**
- * ✅ NEW: Send message as referral user (Dean/Registrar/Program Chair).
+ * ✅ Send message as referral user (ONLY to counselors).
+ * recipient_id is required by type + backend.
  */
 export async function sendReferralUserMessage(
-    input: string | SendReferralUserMessagePayload,
+    payload: SendReferralUserMessagePayload,
 ): Promise<CreateReferralUserMessageResponseDto> {
-    const payload: CreateReferralUserMessagePayload = typeof input === "string" ? { content: input } : input;
     return createReferralUserMessageApi(payload);
 }
 
-/**
- * ✅ NEW: Mark referral user messages as read.
- */
 export async function markReferralUserMessagesAsRead(
     messageIds?: Array<number | string>,
 ): Promise<MarkMessagesReadResponseDto> {
@@ -192,10 +167,6 @@ export async function deleteAdminMessage(
     return deleteAdminMessageApi(id);
 }
 
-/**
- * ✅ NEW: Send message as admin (admin can message any user).
- * Backend endpoint: POST /admin/messages
- */
 export type SendAdminMessagePayload = CreateAdminMessagePayload;
 
 export async function sendAdminMessage(
