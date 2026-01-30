@@ -237,7 +237,10 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
 
     if (!res.ok) {
         const msg = data?.message || data?.error || res.statusText || "Server request failed."
-        throw new Error(msg)
+        const err: any = new Error(msg)
+        err.status = res.status
+        err.data = data ?? text
+        throw err
     }
 
     return data
@@ -340,8 +343,6 @@ function buildConversations(messages: UiMessage[]): Conversation[] {
         const last = ordered[ordered.length - 1]
         const unreadCount = ordered.filter((m) => m.isUnread).length
 
-        // Prefer counselor-authored messages to resolve peer name/avatar,
-        // otherwise fall back to the outgoing recipient details.
         const counselorMsg = ordered.find((m) => m.sender === "counselor") ?? null
         const outbound = ordered.find((m) => m.sender === "referral_user" && m.recipientRole === "counselor") ?? last
 
@@ -394,7 +395,6 @@ function normalizeIdToNumberOrNull(id: unknown): number | null {
 
 /**
  * ✅ Referral user should ONLY use referral-user endpoints.
- * (Removing fallback endpoints prevents accidentally loading another role's inbox.)
  */
 async function tryFetchReferralUserMessages(token?: string | null): Promise<any[]> {
     const data = await apiFetch("/referral-user/messages", { method: "GET" }, token)
@@ -402,7 +402,6 @@ async function tryFetchReferralUserMessages(token?: string | null): Promise<any[
 }
 
 async function trySendReferralUserMessage(payload: any, token?: string | null): Promise<any> {
-    // Referral user can only send to a counselor => recipient_id required
     return apiFetch("/referral-user/messages", { method: "POST", body: JSON.stringify(payload) }, token)
 }
 
@@ -411,7 +410,7 @@ async function tryMarkMessagesAsRead(ids: number[], token?: string | null) {
 }
 
 /**
- * Delete (hide) a conversation for the current user (persist across refresh)
+ * Delete (hide) a conversation for the current user
  */
 async function tryDeleteConversationApi(conversationId: string, token?: string | null) {
     const candidates = [
@@ -628,6 +627,20 @@ const ReferralUserMessages: React.FC = () => {
     const [deleteTarget, setDeleteTarget] = React.useState<UiMessage | null>(null)
     const [isDeletingMessage, setIsDeletingMessage] = React.useState(false)
 
+    // ✅ Track threads the user ACTUALLY opened on this page
+    // (So we only auto-mark-read after open OR after sending a reply.)
+    const openedConversationIdsRef = React.useRef(new Set<string>())
+
+    // ✅ Avoid duplicate mark-read calls per thread
+    const markInflightRef = React.useRef(new Set<string>())
+
+    const openConversation = React.useCallback((conversationId: string) => {
+        if (!conversationId) return
+        openedConversationIdsRef.current.add(conversationId)
+        setActiveConversationId(conversationId)
+        setMobileView("chat")
+    }, [])
+
     const isVisibleForMe = React.useCallback(
         (m: UiMessage): boolean => {
             // Referral user module must ONLY show counselor conversations:
@@ -657,13 +670,21 @@ const ReferralUserMessages: React.FC = () => {
             setMessages(ui)
 
             const convs = buildConversations(ui)
-            if (!activeConversationId) {
-                setActiveConversationId(convs[0]?.id ?? "")
-            } else if (activeConversationId && !convs.some((c) => c.id === activeConversationId)) {
-                setActiveConversationId(convs[0]?.id ?? "")
+
+            // ✅ IMPORTANT (same behavior as counselor/messages.tsx):
+            // Do NOT auto-open / auto-select the first thread on page load.
+            // Only clear the active thread if it no longer exists.
+            const current = activeConversationId
+            const hasCurrent = !!current && convs.some((c) => c.id === current)
+
+            if (current && !hasCurrent) {
+                openedConversationIdsRef.current.delete(current)
+                setActiveConversationId("")
+                setMobileView("list")
             }
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to load messages.")
+        } catch (err: any) {
+            if (err?.status === 401) toast.error("Unauthorized (401). Please log in again, then retry.")
+            else toast.error(err instanceof Error ? err.message : "Failed to load messages.")
         } finally {
             setBusy(false)
         }
@@ -766,8 +787,9 @@ const ReferralUserMessages: React.FC = () => {
         }
 
         setMessages((prev) => [...prev, seed])
-        setActiveConversationId(conversationId)
-        setMobileView("chat")
+
+        // ✅ Starting a conversation counts as "opened"
+        openConversation(conversationId)
 
         setShowNewMessage(false)
         setNewRecipient(null)
@@ -775,25 +797,74 @@ const ReferralUserMessages: React.FC = () => {
         setRecipientResults([])
     }
 
+    const markConversationReadById = React.useCallback(
+        async (conversationId: string, opts?: { silent?: boolean }) => {
+            if (!conversationId) return
+            if (markInflightRef.current.has(conversationId)) return
+
+            const unread = messages.filter((m) => m.conversationId === conversationId && m.isUnread)
+            if (unread.length === 0) return
+
+            const unreadIdSet = new Set(unread.map((m) => String(m.id)))
+
+            const numericIdsRaw = unread
+                .map((m) => normalizeIdToNumberOrNull(m.id))
+                .filter((n): n is number => typeof n === "number" && Number.isFinite(n))
+
+            const numericIds = Array.from(new Set(numericIdsRaw))
+
+            markInflightRef.current.add(conversationId)
+
+            // optimistic UI: clear unread locally
+            setMessages((prev) =>
+                prev.map((m) =>
+                    m.conversationId === conversationId && unreadIdSet.has(String(m.id))
+                        ? { ...m, isUnread: false }
+                        : m,
+                ),
+            )
+
+            try {
+                if (numericIds.length > 0) {
+                    await tryMarkMessagesAsRead(numericIds, token)
+                }
+            } catch (err: any) {
+                // rollback optimistic update if server fails
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        m.conversationId === conversationId && unreadIdSet.has(String(m.id))
+                            ? { ...m, isUnread: true }
+                            : m,
+                    ),
+                )
+
+                if (!opts?.silent) {
+                    if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+                    else toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+                }
+            } finally {
+                markInflightRef.current.delete(conversationId)
+            }
+        },
+        [messages, token],
+    )
+
+    /**
+     * ✅ REQUIRED BEHAVIOR:
+     * - Do NOT mark read unless the user OPENED the thread OR sent a reply.
+     * - Once opened, auto-mark as read (no manual action needed).
+     */
+    React.useEffect(() => {
+        if (!activeConversationId) return
+        if (!openedConversationIdsRef.current.has(activeConversationId)) return
+        void markConversationReadById(activeConversationId, { silent: true })
+    }, [activeConversationId, activeMessages.length, markConversationReadById])
+
     const markConversationRead = async () => {
         if (!activeConversationId) return
-
-        const unread = activeMessages.filter((m) => m.isUnread)
-        if (unread.length === 0) return
-
-        const numericIds = unread
-            .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
-            .filter((n) => Number.isInteger(n)) as number[]
-
         setIsMarking(true)
-        setMessages((prev) => prev.map((m) => (m.conversationId === activeConversationId ? { ...m, isUnread: false } : m)))
-
         try {
-            if (numericIds.length > 0) {
-                await tryMarkMessagesAsRead(numericIds, token)
-            }
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+            await markConversationReadById(activeConversationId, { silent: false })
         } finally {
             setIsMarking(false)
         }
@@ -808,11 +879,9 @@ const ReferralUserMessages: React.FC = () => {
         if (!activeConversation) return
 
         const convoId = activeConversation.id
-        const nextCandidate = conversations.filter((c) => c.id !== convoId)[0]?.id ?? ""
+        const removedMessages = activeMessages
 
         setIsDeletingConvo(true)
-
-        const removedMessages = activeMessages
 
         setMessages((prev) => prev.filter((m) => m.conversationId !== convoId))
 
@@ -820,8 +889,11 @@ const ReferralUserMessages: React.FC = () => {
             await tryDeleteConversationApi(convoId, token)
             toast.success("Conversation deleted.")
             setDeleteConvoOpen(false)
-            setActiveConversationId(nextCandidate)
-            if (!nextCandidate) setMobileView("list")
+
+            // ✅ Do NOT auto-open another thread after delete
+            openedConversationIdsRef.current.delete(convoId)
+            setActiveConversationId("")
+            setMobileView("list")
         } catch (err) {
             setMessages((prev) => [...prev, ...removedMessages])
             toast.error(err instanceof Error ? err.message : "Failed to delete conversation.")
@@ -877,7 +949,9 @@ const ReferralUserMessages: React.FC = () => {
             if (dto) {
                 const serverMsg = mapDtoToUi(dto)
                 setMessages((prev) =>
-                    prev.map((x) => (String(x.id) === String(m.id) ? { ...serverMsg, isUnread: false } : x)),
+                    prev.map((x) =>
+                        String(x.id) === String(m.id) ? { ...serverMsg, isUnread: false } : x,
+                    ),
                 )
             }
 
@@ -932,6 +1006,9 @@ const ReferralUserMessages: React.FC = () => {
             toast.error("Select a conversation first.")
             return
         }
+
+        // ✅ sending a reply counts as "opened"
+        openedConversationIdsRef.current.add(activeConversation.id)
 
         const text = draft.trim()
         if (!text) return
@@ -988,13 +1065,20 @@ const ReferralUserMessages: React.FC = () => {
                 if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
                     const from = activeConversation.id
                     const to = serverMsg.conversationId
+
+                    openedConversationIdsRef.current.add(to)
+
                     setMessages((prev) => prev.map((m) => (m.conversationId === from ? { ...m, conversationId: to } : m)))
                     setActiveConversationId(to)
                 }
             }
-        } catch (err) {
+
+            // ✅ Auto-mark-read after sending (silent)
+            void markConversationReadById(activeConversation.id, { silent: true })
+        } catch (err: any) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId))
-            toast.error(err instanceof Error ? err.message : "Failed to send message.")
+            if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
+            else toast.error(err instanceof Error ? err.message : "Failed to send message.")
         } finally {
             setIsSending(false)
         }
@@ -1115,10 +1199,7 @@ const ReferralUserMessages: React.FC = () => {
                                                         key={c.id}
                                                         type="button"
                                                         variant="ghost"
-                                                        onClick={() => {
-                                                            setActiveConversationId(c.id)
-                                                            setMobileView("chat")
-                                                        }}
+                                                        onClick={() => openConversation(c.id)}
                                                         className={cn(
                                                             "h-auto w-full justify-start rounded-xl border p-0 text-left",
                                                             active ? "bg-white shadow-sm hover:bg-white" : "bg-white/60 hover:bg-white",

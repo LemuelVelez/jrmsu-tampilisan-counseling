@@ -11,7 +11,6 @@ import {
     markStudentMessagesAsRead,
     type StudentMessage,
 } from "@/lib/messages"
-import { markStudentMessageReadByIdApi } from "@/api/messages/[id]/route"
 
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -29,7 +28,6 @@ import {
     DropdownMenu,
     DropdownMenuContent,
     DropdownMenuItem,
-    DropdownMenuSeparator,
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import {
@@ -584,6 +582,13 @@ const StudentMessages: React.FC = () => {
     const activeConversationIdRef = React.useRef<string>("")
     const draftConversationsRef = React.useRef<Conversation[]>([])
 
+    // ✅ Track which conversations the user actually opened on this page
+    // (So we only auto-mark-read AFTER they open the thread or send a reply.)
+    const openedConversationIdsRef = React.useRef(new Set<string>())
+
+    // ✅ Avoid duplicate mark-read calls for the same conversation
+    const markInflightRef = React.useRef(new Set<string>())
+
     React.useEffect(() => {
         counselorByIdRef.current = counselorById
     }, [counselorById])
@@ -597,8 +602,17 @@ const StudentMessages: React.FC = () => {
     }, [draftConversations])
 
     React.useEffect(() => {
+        if (!activeConversationId) return
         bottomRef.current?.scrollIntoView({ behavior: "smooth" })
     }, [activeConversationId, messages.length])
+
+    const openConversation = React.useCallback((conversationId: string) => {
+        if (!conversationId) return
+        openedConversationIdsRef.current.add(conversationId)
+        setActiveConversationId(conversationId)
+        setMobileView("chat")
+        requestAnimationFrame(() => textareaRef.current?.focus())
+    }, [])
 
     const refreshMessages = React.useCallback(
         async (isMounted?: () => boolean) => {
@@ -620,14 +634,13 @@ const StudentMessages: React.FC = () => {
                 const existsInMessages = !!currentActive && convs.some((c) => c.id === currentActive)
                 const existsInDrafts = !!currentActive && currentDrafts.some((d) => d.id === currentActive)
 
-                const nextActive =
-                    currentActive && (existsInMessages || existsInDrafts)
-                        ? currentActive
-                        : convs[0]?.id ?? currentDrafts[0]?.id ?? ""
-
-                if (nextActive !== currentActive) {
-                    setActiveConversationId(nextActive)
-                    if (!nextActive) setMobileView("list")
+                // ✅ IMPORTANT (matches counselor behavior):
+                // Do NOT auto-select a thread on load.
+                // Only clear the active thread if it no longer exists.
+                if (currentActive && !(existsInMessages || existsInDrafts)) {
+                    openedConversationIdsRef.current.delete(currentActive)
+                    setActiveConversationId("")
+                    setMobileView("list")
                 }
             } catch (err) {
                 toast.error(err instanceof Error ? err.message : "Failed to load your messages.")
@@ -702,30 +715,30 @@ const StudentMessages: React.FC = () => {
         const missing = ids.filter((id) => counselorByIdRef.current[id] == null)
         if (missing.length === 0) return
 
-        ;(async () => {
-            try {
-                const found: Record<string, DirectoryCounselor> = {}
+            ; (async () => {
+                try {
+                    const found: Record<string, DirectoryCounselor> = {}
 
-                for (const id of missing) {
-                    if (cancelled) return
+                    for (const id of missing) {
+                        if (cancelled) return
 
-                    try {
-                        const res = await trySearchCounselorsFromDb(id, token)
-                        const exact = res.find((c) => String(c.id) === id) ?? res[0] ?? null
-                        if (exact) found[id] = exact
-                    } catch {
-                        // ignore
+                        try {
+                            const res = await trySearchCounselorsFromDb(id, token)
+                            const exact = res.find((c) => String(c.id) === id) ?? res[0] ?? null
+                            if (exact) found[id] = exact
+                        } catch {
+                            // ignore
+                        }
                     }
-                }
 
-                if (cancelled) return
-                if (Object.keys(found).length > 0) {
-                    setCounselorById((prev) => ({ ...prev, ...found }))
+                    if (cancelled) return
+                    if (Object.keys(found).length > 0) {
+                        setCounselorById((prev) => ({ ...prev, ...found }))
+                    }
+                } catch {
+                    // ignore
                 }
-            } catch {
-                // ignore
-            }
-        })()
+            })()
 
         return () => {
             cancelled = true
@@ -786,67 +799,68 @@ const StudentMessages: React.FC = () => {
     const canEdit = React.useCallback((m: UiMessage) => isMineMessage(m), [isMineMessage])
     const canDelete = React.useCallback((m: UiMessage) => isMineMessage(m), [isMineMessage])
 
+    const markConversationReadById = React.useCallback(
+        async (conversationId: string, opts?: { silent?: boolean }) => {
+            if (!conversationId) return
+            if (markInflightRef.current.has(conversationId)) return
+
+            const unread = messages.filter((m) => m.conversationId === conversationId && m.isUnread)
+            if (unread.length === 0) return
+
+            markInflightRef.current.add(conversationId)
+            try {
+                const numericIds = unread
+                    .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
+                    .filter((n) => Number.isInteger(n)) as number[]
+
+                try {
+                    if (numericIds.length > 0) {
+                        await (markStudentMessagesAsRead as any)(numericIds)
+                    } else {
+                        await markStudentMessagesAsRead()
+                    }
+                } catch {
+                    await markStudentMessagesAsRead()
+                }
+
+                setMessages((prev) =>
+                    prev.map((m) => (m.conversationId === conversationId ? { ...m, isUnread: false } : m)),
+                )
+
+                notifyCountersRefresh()
+            } catch (err) {
+                if (!opts?.silent) {
+                    toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+                }
+            } finally {
+                markInflightRef.current.delete(conversationId)
+            }
+        },
+        [messages],
+    )
+
+    /**
+     * ✅ REQUIRED BEHAVIOR (matches counselor/messages.tsx):
+     * - Do NOT mark read unless the user OPENED the thread (clicked it) OR sent a reply.
+     * - Once opened, auto-mark as read (so nothing shows as "NEW" in-thread).
+     */
+    React.useEffect(() => {
+        if (!activeConversationId) return
+        if (!openedConversationIdsRef.current.has(activeConversationId)) return
+        void markConversationReadById(activeConversationId, { silent: true })
+    }, [activeConversationId, activeMessages.length, markConversationReadById])
+
     const markConversationRead = React.useCallback(async () => {
         if (!activeConversationId) return
-        const unread = activeMessages.filter((m) => m.isUnread)
-        if (unread.length === 0) return
-        if (isMarking) return
+        openedConversationIdsRef.current.add(activeConversationId)
 
         setIsMarking(true)
         try {
-            const numericIds = unread
-                .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
-                .filter((n) => Number.isInteger(n)) as number[]
-
-            try {
-                if (numericIds.length > 0) {
-                    await (markStudentMessagesAsRead as any)(numericIds)
-                } else {
-                    await markStudentMessagesAsRead()
-                }
-            } catch {
-                await markStudentMessagesAsRead()
-            }
-
-            setMessages((prev) =>
-                prev.map((m) =>
-                    m.conversationId === activeConversationId ? { ...m, isUnread: false } : m,
-                ),
-            )
-
-            notifyCountersRefresh()
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
+            await markConversationReadById(activeConversationId, { silent: false })
         } finally {
             setIsMarking(false)
         }
-    }, [activeConversationId, activeMessages, isMarking])
-
-    React.useEffect(() => {
-        // ✅ Auto mark as read when the thread is opened (unread stays highlighted until opened)
-        if (!activeConversationId) return
-        if (!hasUnreadActive) return
-        void markConversationRead()
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [activeConversationId])
-
-    const markSingleAsRead = React.useCallback(async (msg: UiMessage) => {
-        if (!msg.isUnread) return
-
-        if (typeof msg.id !== "number") {
-            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isUnread: false } : m)))
-            notifyCountersRefresh()
-            return
-        }
-
-        try {
-            await markStudentMessageReadByIdApi(msg.id)
-            setMessages((prev) => prev.map((m) => (m.id === msg.id ? { ...m, isUnread: false } : m)))
-            notifyCountersRefresh()
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to mark message as read.")
-        }
-    }, [])
+    }, [activeConversationId, markConversationReadById])
 
     const startNewConversation = () => {
         if (!newCounselor) {
@@ -870,8 +884,6 @@ const StudentMessages: React.FC = () => {
         }
 
         setDraftConversations((prev) => [convo, ...prev])
-        setActiveConversationId(conversationId)
-        setMobileView("chat")
         setShowNewMessage(false)
 
         setCounselorById((prev) => ({ ...prev, [String(newCounselor.id)]: newCounselor }))
@@ -880,7 +892,8 @@ const StudentMessages: React.FC = () => {
         setCounselorQuery("")
         setCounselorResults([])
 
-        requestAnimationFrame(() => textareaRef.current?.focus())
+        // ✅ opening a draft conversation counts as opening the thread
+        openConversation(conversationId)
     }
 
     const handleSend = async (e: React.FormEvent) => {
@@ -890,6 +903,9 @@ const StudentMessages: React.FC = () => {
             toast.error("Select a counselor conversation first.")
             return
         }
+
+        // ✅ sending a reply counts as "opened"
+        openedConversationIdsRef.current.add(activeConversation.id)
 
         const text = draft.trim()
         if (!text) return
@@ -938,11 +954,15 @@ const StudentMessages: React.FC = () => {
                 setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)))
 
                 if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
+                    openedConversationIdsRef.current.add(serverMsg.conversationId)
                     setActiveConversationId(serverMsg.conversationId)
                 }
             }
 
             setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id))
+
+            // ✅ auto-mark-read after sending (silent)
+            void markConversationReadById(activeConversation.id, { silent: true })
         } catch (err) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId))
             toast.error(err instanceof Error ? err.message : "Failed to send your message.")
@@ -1041,8 +1061,6 @@ const StudentMessages: React.FC = () => {
             .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
             .filter((n) => Number.isInteger(n)) as number[]
 
-        const nextCandidate = conversations.filter((c) => c.id !== convoId)[0]?.id ?? ""
-
         setIsDeletingConvo(true)
 
         const removedPayload = {
@@ -1057,8 +1075,11 @@ const StudentMessages: React.FC = () => {
             await tryDeleteConversationApi(convoId, numericIds, token)
             toast.success("Conversation deleted.")
             setDeleteConvoOpen(false)
-            setActiveConversationId(nextCandidate)
-            if (!nextCandidate) setMobileView("list")
+
+            // ✅ Do NOT auto-activate another thread after delete
+            openedConversationIdsRef.current.delete(convoId)
+            setActiveConversationId("")
+            setMobileView("list")
         } catch (err) {
             setMessages((prev) => [...prev, ...removedPayload.messages])
             if (removedPayload.draft) setDraftConversations((prev) => [removedPayload.draft!, ...prev])
@@ -1232,11 +1253,7 @@ const StudentMessages: React.FC = () => {
                                                         key={c.id}
                                                         type="button"
                                                         variant="ghost"
-                                                        onClick={() => {
-                                                            setActiveConversationId(c.id)
-                                                            setMobileView("chat")
-                                                            requestAnimationFrame(() => textareaRef.current?.focus())
-                                                        }}
+                                                        onClick={() => openConversation(c.id)}
                                                         className={cn(
                                                             "h-auto w-full justify-start rounded-xl border p-0 text-left",
                                                             active ? "bg-white shadow-sm" : "bg-white/60 hover:bg-white",
@@ -1248,7 +1265,11 @@ const StudentMessages: React.FC = () => {
                                                                 <div className="flex min-w-0 items-center gap-2 sm:gap-3">
                                                                     <Avatar className="h-8 w-8 border sm:h-9 sm:w-9">
                                                                         {ui.avatarUrl ? (
-                                                                            <AvatarImage src={ui.avatarUrl} alt={ui.name} loading="lazy" />
+                                                                            <AvatarImage
+                                                                                src={ui.avatarUrl}
+                                                                                alt={ui.name}
+                                                                                loading="lazy"
+                                                                            />
                                                                         ) : null}
                                                                         <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
                                                                             {initials(ui.name)}
@@ -1287,7 +1308,9 @@ const StudentMessages: React.FC = () => {
                                                             <div
                                                                 className={cn(
                                                                     "mt-2 line-clamp-2 text-[0.72rem] sm:truncate sm:text-xs",
-                                                                    isUnreadThread ? "font-semibold text-slate-800" : "text-muted-foreground",
+                                                                    isUnreadThread
+                                                                        ? "font-semibold text-slate-800"
+                                                                        : "text-muted-foreground",
                                                                 )}
                                                             >
                                                                 {c.lastMessage || "No messages yet."}
@@ -1324,7 +1347,11 @@ const StudentMessages: React.FC = () => {
                                                         <>
                                                             <Avatar className="h-9 w-9 border sm:h-10 sm:w-10">
                                                                 {ui.avatarUrl ? (
-                                                                    <AvatarImage src={ui.avatarUrl} alt={ui.name} loading="lazy" />
+                                                                    <AvatarImage
+                                                                        src={ui.avatarUrl}
+                                                                        alt={ui.name}
+                                                                        loading="lazy"
+                                                                    />
                                                                 ) : null}
                                                                 <AvatarFallback className="text-[0.70rem] font-semibold sm:text-xs">
                                                                     {initials(ui.name)}
@@ -1332,7 +1359,9 @@ const StudentMessages: React.FC = () => {
                                                             </Avatar>
 
                                                             <div className="min-w-0">
-                                                                <div className="truncate text-sm font-semibold text-slate-900">{ui.name}</div>
+                                                                <div className="truncate text-sm font-semibold text-slate-900">
+                                                                    {ui.name}
+                                                                </div>
                                                                 <div className="truncate text-[0.72rem] text-muted-foreground sm:text-xs">
                                                                     Private thread
                                                                 </div>
@@ -1429,10 +1458,8 @@ const StudentMessages: React.FC = () => {
                                                 const bubble = system
                                                     ? "border bg-white/90"
                                                     : mine
-                                                      ? "border-emerald-200 bg-emerald-50/90"
-                                                      : `border-slate-200 bg-white/90`
-
-                                                const unreadStyle = m.isUnread ? "font-semibold" : "font-normal"
+                                                        ? "border-emerald-200 bg-emerald-50/90"
+                                                        : `border-slate-200 bg-white/90`
 
                                                 return (
                                                     <div key={m.id} className={cn("flex", align)}>
@@ -1457,17 +1484,7 @@ const StudentMessages: React.FC = () => {
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
                                                                     <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
 
-                                                                    {m.isUnread ? (
-                                                                        <Button
-                                                                            type="button"
-                                                                            variant="secondary"
-                                                                            size="sm"
-                                                                            className="h-6 rounded-full px-2 text-[0.65rem] font-semibold"
-                                                                            onClick={() => markSingleAsRead(m)}
-                                                                        >
-                                                                            NEW
-                                                                        </Button>
-                                                                    ) : null}
+                                                                    {/* ✅ Removed in-thread NEW pill (matches counselor behavior) */}
 
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>
@@ -1492,7 +1509,7 @@ const StudentMessages: React.FC = () => {
                                                                                         Edit
                                                                                     </DropdownMenuItem>
                                                                                 )}
-                                                                                {canEdit(m) && canDelete(m) ? <DropdownMenuSeparator /> : null}
+                                                                                {canEdit(m) && canDelete(m) ? null : null}
                                                                                 {canDelete(m) && (
                                                                                     <DropdownMenuItem
                                                                                         className="text-destructive focus:text-destructive"
@@ -1515,7 +1532,6 @@ const StudentMessages: React.FC = () => {
                                                                 className={cn(
                                                                     "rounded-2xl border px-3 py-2 text-[0.90rem] leading-relaxed shadow-sm sm:text-sm",
                                                                     bubble,
-                                                                    unreadStyle,
                                                                 )}
                                                             >
                                                                 {m.content}
