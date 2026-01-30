@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { AUTH_API_BASE_URL, buildJsonHeaders } from "@/api/auth/route";
+import { getCurrentSession } from "@/lib/authentication";
 
 export type ReferralStatusApi = "pending" | "handled" | "closed" | string;
 export type ReferralUrgencyApi = "low" | "medium" | "high" | string;
@@ -43,12 +44,13 @@ export interface ReferralDto {
     [key: string]: unknown;
 }
 
-/**
- * Referral-user creates a referral
- * POST /referral-user/referrals
- */
 export interface CreateReferralPayload {
-    student_id: number | string;
+    /**
+     * ✅ MUST be string (backend validator requires string)
+     * - manual: users.student_id
+     * - search: users.student_id (preferred) OR users.id fallback as string
+     */
+    student_id: string;
     concern_type: string;
     urgency: "low" | "medium" | "high";
     details: string;
@@ -59,10 +61,6 @@ export interface CreateReferralResponseDto {
     referral: ReferralDto;
 }
 
-/**
- * Counselor lists referrals
- * GET /counselor/referrals
- */
 export interface GetCounselorReferralsResponseDto {
     message?: string;
     referrals: ReferralDto[];
@@ -87,9 +85,6 @@ export interface GetReferralUserReferralsResponseDto {
     };
 }
 
-/**
- * GET /counselor/referrals/{id} OR /referral-user/referrals/{id}
- */
 export interface GetReferralByIdResponseDto {
     referral: ReferralDto;
 }
@@ -122,12 +117,28 @@ function resolveReferralsApiUrl(path: string): string {
     return `${trimSlash(AUTH_API_BASE_URL)}/${trimmedPath}`;
 }
 
-async function referralsApiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+function getSessionToken(): string | null {
+    try {
+        const session = getCurrentSession() as any;
+        return session?.token ?? session?.access_token ?? null;
+    } catch {
+        return null;
+    }
+}
+
+async function referralsApiFetch<T>(path: string, init: RequestInit = {}, token?: string | null): Promise<T> {
     const url = resolveReferralsApiUrl(path);
+
+    const finalToken = token ?? getSessionToken();
+
+    const headers = new Headers(buildJsonHeaders(init.headers));
+    if (finalToken && !headers.has("Authorization")) {
+        headers.set("Authorization", `Bearer ${finalToken}`);
+    }
 
     const response = await fetch(url, {
         ...init,
-        headers: buildJsonHeaders(init.headers),
+        headers,
         credentials: "include",
     });
 
@@ -161,53 +172,81 @@ async function referralsApiFetch<T>(path: string, init: RequestInit = {}): Promi
     return data as T;
 }
 
-export async function createReferralApi(payload: CreateReferralPayload): Promise<CreateReferralResponseDto> {
-    return referralsApiFetch<CreateReferralResponseDto>("/referral-user/referrals", {
-        method: "POST",
-        body: JSON.stringify(payload),
-    });
+export async function createReferralApi(
+    payload: CreateReferralPayload,
+    token?: string | null,
+): Promise<CreateReferralResponseDto> {
+    return referralsApiFetch<CreateReferralResponseDto>(
+        "/referral-user/referrals",
+        {
+            method: "POST",
+            body: JSON.stringify(payload),
+        },
+        token,
+    );
 }
 
-export async function getCounselorReferralsApi(params?: {
-    per_page?: number;
-    status?: string;
-}): Promise<GetCounselorReferralsResponseDto> {
+export async function getCounselorReferralsApi(
+    params?: { per_page?: number; status?: string },
+    token?: string | null,
+): Promise<GetCounselorReferralsResponseDto> {
     const qs = new URLSearchParams();
     if (params?.per_page) qs.set("per_page", String(params.per_page));
     if (params?.status && params.status !== "all") qs.set("status", String(params.status));
 
     const path = qs.toString() ? `/counselor/referrals?${qs.toString()}` : "/counselor/referrals";
 
-    return referralsApiFetch<GetCounselorReferralsResponseDto>(path, {
-        method: "GET",
-    });
+    return referralsApiFetch<GetCounselorReferralsResponseDto>(
+        path,
+        {
+            method: "GET",
+        },
+        token,
+    );
 }
 
-export async function getReferralUserReferralsApi(params?: {
-    per_page?: number;
-}): Promise<GetReferralUserReferralsResponseDto> {
+export async function getReferralUserReferralsApi(
+    params?: { per_page?: number },
+    token?: string | null,
+): Promise<GetReferralUserReferralsResponseDto> {
     const qs = new URLSearchParams();
     if (params?.per_page) qs.set("per_page", String(params.per_page));
 
     const path = qs.toString() ? `/referral-user/referrals?${qs.toString()}` : "/referral-user/referrals";
 
-    return referralsApiFetch<GetReferralUserReferralsResponseDto>(path, {
-        method: "GET",
-    });
+    return referralsApiFetch<GetReferralUserReferralsResponseDto>(
+        path,
+        {
+            method: "GET",
+        },
+        token,
+    );
 }
 
-export async function getCounselorReferralByIdApi(id: number | string): Promise<GetReferralByIdResponseDto> {
-    return referralsApiFetch<GetReferralByIdResponseDto>(`/counselor/referrals/${encodeURIComponent(String(id))}`, {
-        method: "GET",
-    });
+export async function getCounselorReferralByIdApi(
+    id: number | string,
+    token?: string | null,
+): Promise<GetReferralByIdResponseDto> {
+    return referralsApiFetch<GetReferralByIdResponseDto>(
+        `/counselor/referrals/${encodeURIComponent(String(id))}`,
+        {
+            method: "GET",
+        },
+        token,
+    );
 }
 
 export async function patchCounselorReferralApi(
     id: number | string,
     payload: PatchReferralPayload,
+    token?: string | null,
 ): Promise<PatchReferralResponseDto> {
-    return referralsApiFetch<PatchReferralResponseDto>(`/counselor/referrals/${encodeURIComponent(String(id))}`, {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-    });
+    return referralsApiFetch<PatchReferralResponseDto>(
+        `/counselor/referrals/${encodeURIComponent(String(id))}`,
+        {
+            method: "PATCH",
+            body: JSON.stringify(payload),
+        },
+        token,
+    );
 }

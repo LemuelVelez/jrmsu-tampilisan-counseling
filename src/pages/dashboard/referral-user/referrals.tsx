@@ -33,6 +33,26 @@ import {
 } from "@/components/ui/dialog"
 
 import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter as AlertDialogFooterUi,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
+
+import {
+    DropdownMenu,
+    DropdownMenuContent,
+    DropdownMenuItem,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu"
+
+import {
     Table,
     TableBody,
     TableCell,
@@ -41,13 +61,16 @@ import {
     TableRow,
 } from "@/components/ui/table"
 
-import { Check, ChevronsUpDown, Plus, RefreshCw, Search } from "lucide-react"
+import { Check, ChevronsUpDown, Eye, Loader2, MoreVertical, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
 
 type ReferralStatus = "pending" | "handled" | "closed" | string
 type Urgency = "low" | "medium" | "high"
 
 type DirectoryStudent = {
+    /** internal users.id (primary key) */
     id: number | string
+    /** actual student number from users.student_id */
+    studentId?: string | null
     name: string
     email?: string | null
     role?: string | null
@@ -56,7 +79,8 @@ type DirectoryStudent = {
 type UiReferral = {
     id: number | string
 
-    studentId: number | string
+    /** Display Student ID (users.student_id), NOT users.id */
+    studentId: string
     studentName: string
     studentEmail?: string | null
 
@@ -65,6 +89,13 @@ type UiReferral = {
     details: string
 
     status: ReferralStatus
+
+    remarks?: string | null
+    handledAt?: string | null
+    closedAt?: string | null
+
+    counselorName?: string | null
+    counselorEmail?: string | null
 
     requestedByName: string
     requestedByRole: string
@@ -83,28 +114,43 @@ function resolveApiUrl(path: string): string {
 }
 
 function safeText(v: any, fallback = ""): string {
-    const s = typeof v === "string" ? v.trim() : ""
+    if (v === null || v === undefined) return fallback
+    const s = String(v).trim()
     return s || fallback
 }
 
-/** ✅ FIX: removed unused safeDate() */
+function safeLower(v: any): string {
+    return safeText(v).toLowerCase()
+}
 
-function safeDateShort(iso?: string) {
+function safeDateShort(iso?: string | null) {
     if (!iso) return ""
     const d = new Date(iso)
     if (Number.isNaN(d.getTime())) return ""
     return format(d, "MMM d, yyyy")
 }
 
+function safeDateTime(iso?: string | null) {
+    if (!iso) return ""
+    const d = new Date(iso)
+    if (Number.isNaN(d.getTime())) return ""
+    return format(d, "MMM d, yyyy • h:mm a")
+}
+
 function toUiReferral(dto: ReferralDto): UiReferral {
     const anyDto = dto as any
 
-    const studentId = (anyDto?.student_id ?? anyDto?.studentId ?? "") as any
+    const displayStudentId =
+        safeText(anyDto?.student?.student_id) ||
+        safeText(anyDto?.student?.studentId) ||
+        safeText(anyDto?.student_id) ||
+        safeText(anyDto?.studentId) ||
+        ""
 
     const studentName =
         safeText(anyDto?.student_name) ||
         safeText(anyDto?.student?.name) ||
-        (studentId ? `Student #${studentId}` : "Student")
+        (displayStudentId ? `Student • ${displayStudentId}` : "Student")
 
     const studentEmail =
         safeText(anyDto?.student_email) ||
@@ -132,17 +178,33 @@ function toUiReferral(dto: ReferralDto): UiReferral {
     const requestedByName =
         safeText(anyDto?.requested_by_name) ||
         safeText(anyDto?.requestedBy?.name) ||
+        safeText(anyDto?.requested_by?.name) ||
         "You"
 
     const requestedByRole =
         safeText(anyDto?.requested_by_role) ||
         safeText(anyDto?.requestedBy?.role) ||
+        safeText(anyDto?.requested_by?.role) ||
         "Referral User"
+
+    const counselorName =
+        safeText(anyDto?.counselor?.name) ||
+        safeText(anyDto?.counselor_name) ||
+        null
+
+    const counselorEmail =
+        safeText(anyDto?.counselor?.email) ||
+        safeText(anyDto?.counselor_email) ||
+        null
+
+    const remarks = safeText(anyDto?.remarks) || null
+    const handledAt = safeText(anyDto?.handled_at) || null
+    const closedAt = safeText(anyDto?.closed_at) || null
 
     return {
         id: dto.id,
 
-        studentId,
+        studentId: displayStudentId,
         studentName,
         studentEmail,
 
@@ -151,6 +213,12 @@ function toUiReferral(dto: ReferralDto): UiReferral {
         details,
 
         status,
+
+        remarks,
+        handledAt,
+        closedAt,
+        counselorName,
+        counselorEmail,
 
         requestedByName,
         requestedByRole,
@@ -161,7 +229,7 @@ function toUiReferral(dto: ReferralDto): UiReferral {
 }
 
 function statusBadgeVariant(status: string): "secondary" | "default" | "destructive" | "outline" {
-    const s = String(status || "").toLowerCase()
+    const s = safeLower(status)
     if (s === "pending") return "secondary"
     if (s === "handled") return "default"
     if (s === "closed") return "outline"
@@ -169,7 +237,7 @@ function statusBadgeVariant(status: string): "secondary" | "default" | "destruct
 }
 
 function urgencyBadgeVariant(urgency: string): "secondary" | "default" | "destructive" | "outline" {
-    const u = String(urgency || "").toLowerCase()
+    const u = safeLower(urgency)
     if (u === "high") return "destructive"
     if (u === "medium") return "default"
     if (u === "low") return "secondary"
@@ -203,7 +271,10 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
 
     if (!res.ok) {
         const msg = data?.message || data?.error || res.statusText || "Server request failed."
-        throw new Error(msg)
+        const err: any = new Error(msg)
+        err.status = res.status
+        err.data = data
+        throw err
     }
 
     return data
@@ -221,28 +292,17 @@ function extractUsersArray(payload: any): any[] {
 }
 
 /**
- * ✅ Add Users (Student Search)
- * We try multiple possible backend endpoints.
- * If forbidden (403) or missing, UI still supports manual Student ID entry.
+ * ✅ Student Search
  */
 async function trySearchStudents(query: string, token?: string | null): Promise<DirectoryStudent[]> {
     const q = query.trim()
     const qq = encodeURIComponent(q)
 
     const candidates = [
-        // most ideal (if you add later)
-        `/referral-user/students?search=${qq}`,
-        `/referral-user/users?role=student&search=${qq}`,
-
-        // generic directory style
-        `/users?role=student&search=${qq}`,
-        `/users/search?role=student&q=${qq}`,
-        `/search/users?role=student&q=${qq}`,
-
-        // legacy names
-        `/students?search=${qq}`,
-        `/students?q=${qq}`,
-        `/students/search?q=${qq}`,
+        `/referral-user/students?search=${qq}&limit=50`,
+        `/referral-user/users?role=student&search=${qq}&limit=50`,
+        `/students?search=${qq}&limit=50`,
+        `/users?role=student&search=${qq}&limit=50`,
     ]
 
     let lastErr: any = null
@@ -255,8 +315,8 @@ async function trySearchStudents(query: string, token?: string | null): Promise<
             const mapped: DirectoryStudent[] = arr
                 .map((raw: any) => raw?.user ?? raw)
                 .map((u: any) => {
-                    const id = u?.id ?? u?.user_id ?? u?.student_id
-                    if (id == null || String(id).trim() === "") return null
+                    const userId = u?.id ?? u?.user_id
+                    if (userId == null || String(userId).trim() === "") return null
 
                     const name =
                         safeText(u?.name) ||
@@ -266,9 +326,11 @@ async function trySearchStudents(query: string, token?: string | null): Promise<
 
                     const email = safeText(u?.email) || null
                     const role = safeText(u?.role) || null
+                    const studentId = safeText(u?.student_id) || safeText(u?.studentId) || null
 
                     return {
-                        id,
+                        id: userId,
+                        studentId,
                         name,
                         email,
                         role,
@@ -276,13 +338,11 @@ async function trySearchStudents(query: string, token?: string | null): Promise<
                 })
                 .filter(Boolean) as DirectoryStudent[]
 
-            // keep only "student-like" if role is present
             const filtered = mapped.filter((u) => {
                 if (!u.role) return true
-                return String(u.role).toLowerCase().includes("student")
+                return safeLower(u.role).includes("student")
             })
 
-            // de-dupe
             const seen = new Set<string>()
             return filtered.filter((u) => {
                 const k = String(u.id)
@@ -290,8 +350,9 @@ async function trySearchStudents(query: string, token?: string | null): Promise<
                 seen.add(k)
                 return true
             })
-        } catch (e) {
+        } catch (e: any) {
             lastErr = e
+            if (e?.status === 403) throw e
         }
     }
 
@@ -305,16 +366,28 @@ function StudentCombobox(props: {
     searchValue: string
     onSearchValueChange: (v: string) => void
     isLoading?: boolean
+    disabled?: boolean
 }) {
-    const { students, value, onChange, searchValue, onSearchValueChange, isLoading } = props
+    const { students, value, onChange, searchValue, onSearchValueChange, isLoading, disabled } = props
     const [open, setOpen] = React.useState(false)
 
+    const labelFor = (u: DirectoryStudent) => {
+        const sid = safeText(u.studentId) || safeText(u.id)
+        return `${u.name} • Student ID: ${sid}`
+    }
+
     return (
-        <Popover open={open} onOpenChange={setOpen}>
+        <Popover open={open} onOpenChange={(v) => (!disabled ? setOpen(v) : null)}>
             <PopoverTrigger asChild>
-                <Button variant="outline" role="combobox" aria-expanded={open} className="h-10 w-full justify-between">
+                <Button
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={open}
+                    className="h-10 w-full justify-between"
+                    disabled={disabled}
+                >
                     <span className={cn("min-w-0 truncate text-left", !value ? "text-muted-foreground" : "")}>
-                        {value ? `${value.name} • ID: ${value.id}` : "Search student…"}
+                        {value ? labelFor(value) : "Search student…"}
                     </span>
                     <ChevronsUpDown className="ml-4 h-4 w-4 shrink-0 opacity-50" />
                 </Button>
@@ -323,23 +396,28 @@ function StudentCombobox(props: {
             <PopoverContent className="w-full p-0" align="start">
                 <Command>
                     <CommandInput
-                        placeholder="Type name / email / ID…"
+                        placeholder="Type name / email / Student ID…"
                         value={searchValue}
                         onValueChange={(v) => onSearchValueChange(v)}
                     />
                     <CommandList>
                         <CommandEmpty>
-                            {isLoading ? "Searching…" : searchValue.trim().length < 2 ? "Type at least 2 characters." : "No students found."}
+                            {isLoading
+                                ? "Searching…"
+                                : searchValue.trim().length < 2
+                                    ? "Type at least 2 characters."
+                                    : "No students found."}
                         </CommandEmpty>
 
                         <CommandGroup>
                             {students.map((u) => {
                                 const selected = !!value && String(value.id) === String(u.id)
+                                const sid = safeText(u.studentId) || safeText(u.id)
 
                                 return (
                                     <CommandItem
                                         key={String(u.id)}
-                                        value={`${u.name} ${u.email ?? ""} ${u.id}`}
+                                        value={`${u.name} ${u.email ?? ""} ${sid}`}
                                         onSelect={() => {
                                             onChange(u)
                                             setOpen(false)
@@ -350,7 +428,7 @@ function StudentCombobox(props: {
                                         <div className="min-w-0 flex-1">
                                             <div className="truncate text-sm">{u.name}</div>
                                             <div className="truncate text-xs text-muted-foreground">
-                                                ID: {u.id}
+                                                Student ID: {sid}
                                                 {u.email ? ` • ${u.email}` : ""}
                                             </div>
                                         </div>
@@ -380,11 +458,13 @@ const ReferralUserReferrals: React.FC = () => {
     const [statusFilter, setStatusFilter] = React.useState<"all" | "pending" | "handled" | "closed">("all")
     const [search, setSearch] = React.useState("")
 
-    // create dialog
-    const [createOpen, setCreateOpen] = React.useState(false)
-    const [createBusy, setCreateBusy] = React.useState(false)
+    // ✅ Upsert (Create / Edit)
+    const [upsertOpen, setUpsertOpen] = React.useState(false)
+    const [upsertMode, setUpsertMode] = React.useState<"create" | "edit">("create")
+    const [upsertBusy, setUpsertBusy] = React.useState(false)
+    const [editingId, setEditingId] = React.useState<number | string | null>(null)
 
-    // student selection
+    // student selection (used by create/edit)
     const [studentMode, setStudentMode] = React.useState<"search" | "manual">("search")
     const [studentQuery, setStudentQuery] = React.useState("")
     const [studentLoading, setStudentLoading] = React.useState(false)
@@ -392,28 +472,51 @@ const ReferralUserReferrals: React.FC = () => {
     const [selectedStudent, setSelectedStudent] = React.useState<DirectoryStudent | null>(null)
     const [manualStudentId, setManualStudentId] = React.useState("")
 
-    // form
+    const [studentSearchBlocked, setStudentSearchBlocked] = React.useState(false)
+    const studentSearchWarnedRef = React.useRef(false)
+
+    // form fields
     const [concernType, setConcernType] = React.useState("")
     const [urgency, setUrgency] = React.useState<Urgency>("medium")
     const [details, setDetails] = React.useState("")
+
+    // ✅ View (Read)
+    const [viewOpen, setViewOpen] = React.useState(false)
+    const [viewBusy, setViewBusy] = React.useState(false)
+    const [viewReferral, setViewReferral] = React.useState<UiReferral | null>(null)
+
+    // ✅ Delete
+    const [deleteOpen, setDeleteOpen] = React.useState(false)
+    const [deleteBusy, setDeleteBusy] = React.useState(false)
+    const [deleteTarget, setDeleteTarget] = React.useState<UiReferral | null>(null)
 
     const load = async (mode: "initial" | "refresh" = "refresh") => {
         const setBusy = mode === "initial" ? setIsLoading : setIsRefreshing
         setBusy(true)
 
         try {
-            const list = await fetchReferralUserReferrals()
+            const list = await fetchReferralUserReferrals({ per_page: 100 }, token)
             const mapped = (Array.isArray(list) ? list : []).map(toUiReferral)
             setRows(mapped)
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to load referrals.")
+        } catch (err: any) {
+            const status = err?.status
+            const msg =
+                status === 401
+                    ? "Unauthenticated (401). Please login again."
+                    : status === 403
+                        ? "Forbidden (403). Your role is not allowed to access referrals."
+                        : err instanceof Error
+                            ? err.message
+                            : "Failed to load referrals."
+            toast.error(msg)
         } finally {
             setBusy(false)
         }
     }
 
     React.useEffect(() => {
-        load("initial")
+        void load("initial")
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [])
 
     const refresh = async () => {
@@ -421,9 +524,9 @@ const ReferralUserReferrals: React.FC = () => {
         await load("refresh")
     }
 
-    // student search debounce
+    // student search debounce (works for create/edit)
     React.useEffect(() => {
-        if (!createOpen) return
+        if (!upsertOpen) return
         if (studentMode !== "search") return
 
         const q = studentQuery.trim()
@@ -443,10 +546,21 @@ const ReferralUserReferrals: React.FC = () => {
                 const res = await trySearchStudents(q, token)
                 if (cancelled) return
                 setStudentResults(res)
-            } catch (e) {
+                setStudentSearchBlocked(false)
+            } catch (e: any) {
                 if (cancelled) return
                 setStudentResults([])
-                // we allow manual fallback even if forbidden
+
+                const status = e?.status
+                if (status === 403) {
+                    setStudentSearchBlocked(true)
+                    if (!studentSearchWarnedRef.current) {
+                        toast.error("Student search is not permitted for your role. Use Manual student ID.")
+                        studentSearchWarnedRef.current = true
+                    }
+                    return
+                }
+
                 toast.error(e instanceof Error ? e.message : "Failed to search students.")
             } finally {
                 if (!cancelled) setStudentLoading(false)
@@ -457,12 +571,12 @@ const ReferralUserReferrals: React.FC = () => {
             cancelled = true
             window.clearTimeout(t)
         }
-    }, [studentQuery, token, createOpen, studentMode])
+    }, [studentQuery, token, upsertOpen, studentMode])
 
     const filteredRows = React.useMemo(() => {
         const q = search.trim().toLowerCase()
         return rows
-            .filter((r) => (statusFilter === "all" ? true : String(r.status).toLowerCase() === statusFilter))
+            .filter((r) => (statusFilter === "all" ? true : safeLower(r.status) === statusFilter))
             .filter((r) => {
                 if (!q) return true
                 return (
@@ -480,13 +594,15 @@ const ReferralUserReferrals: React.FC = () => {
 
     const counts = React.useMemo(() => {
         const all = rows.length
-        const pending = rows.filter((r) => String(r.status).toLowerCase() === "pending").length
-        const handled = rows.filter((r) => String(r.status).toLowerCase() === "handled").length
-        const closed = rows.filter((r) => String(r.status).toLowerCase() === "closed").length
+        const pending = rows.filter((r) => safeLower(r.status) === "pending").length
+        const handled = rows.filter((r) => safeLower(r.status) === "handled").length
+        const closed = rows.filter((r) => safeLower(r.status) === "closed").length
         return { all, pending, handled, closed }
     }, [rows])
 
-    const resetCreateForm = () => {
+    const canModify = (r: UiReferral) => safeLower(r.status) === "pending"
+
+    const resetForm = () => {
         setStudentMode("search")
         setStudentQuery("")
         setStudentResults([])
@@ -495,23 +611,105 @@ const ReferralUserReferrals: React.FC = () => {
         setConcernType("")
         setUrgency("medium")
         setDetails("")
+        setStudentSearchBlocked(false)
+        studentSearchWarnedRef.current = false
     }
 
     const openCreate = () => {
-        resetCreateForm()
-        setCreateOpen(true)
+        setUpsertMode("create")
+        setEditingId(null)
+        resetForm()
+        setUpsertOpen(true)
     }
 
-    const closeCreate = () => {
-        if (createBusy) return
-        setCreateOpen(false)
+    const openEdit = (r: UiReferral) => {
+        if (!canModify(r)) {
+            toast.error("You can only edit a referral while it is still Pending.")
+            return
+        }
+
+        setUpsertMode("edit")
+        setEditingId(r.id)
+
+        // Prefill (manual by default)
+        setStudentMode("manual")
+        setStudentQuery("")
+        setStudentResults([])
+        setSelectedStudent(null)
+        setManualStudentId(String(r.studentId ?? "").trim())
+
+        setConcernType(String(r.concernType ?? ""))
+        setUrgency((safeLower(r.urgency) as Urgency) || "medium")
+        setDetails(String(r.details ?? ""))
+
+        setStudentSearchBlocked(false)
+        studentSearchWarnedRef.current = false
+
+        setUpsertOpen(true)
     }
 
-    const submitCreateReferral = async () => {
-        const studentId =
-            studentMode === "manual" ? manualStudentId.trim() : selectedStudent?.id != null ? String(selectedStudent.id) : ""
+    const closeUpsert = () => {
+        if (upsertBusy) return
+        setUpsertOpen(false)
+    }
 
-        if (!studentId) {
+    const openDelete = (r: UiReferral) => {
+        if (!canModify(r)) {
+            toast.error("You can only delete a referral while it is still Pending.")
+            return
+        }
+        setDeleteTarget(r)
+        setDeleteOpen(true)
+    }
+
+    const closeDelete = () => {
+        if (deleteBusy) return
+        setDeleteOpen(false)
+    }
+
+    const openView = async (r: UiReferral) => {
+        setViewReferral(r)
+        setViewOpen(true)
+
+        // Fetch latest details (READ) using existing show endpoint
+        setViewBusy(true)
+        try {
+            const res = await apiFetch(`/referral-user/referrals/${encodeURIComponent(String(r.id))}`, { method: "GET" }, token)
+            const dto = (res as any)?.referral as ReferralDto | undefined
+            if (dto) setViewReferral(toUiReferral(dto))
+        } catch (err: any) {
+            // If show endpoint is not available for some reason, keep local data.
+            const status = err?.status
+            if (status && status !== 404) {
+                toast.error(err instanceof Error ? err.message : "Failed to load referral details.")
+            }
+        } finally {
+            setViewBusy(false)
+        }
+    }
+
+    const closeView = () => {
+        if (viewBusy) return
+        setViewOpen(false)
+    }
+
+    const getStudentIdentifier = () => {
+        const searchIdentifier = selectedStudent
+            ? (safeText(selectedStudent.studentId) || safeText(selectedStudent.id))
+            : ""
+
+        const studentIdentifier =
+            studentMode === "manual"
+                ? manualStudentId.trim()
+                : searchIdentifier.trim()
+
+        return studentIdentifier
+    }
+
+    const submitUpsert = async () => {
+        const studentIdentifier = getStudentIdentifier()
+
+        if (!studentIdentifier) {
             toast.error("Student ID is required.")
             return
         }
@@ -528,46 +726,119 @@ const ReferralUserReferrals: React.FC = () => {
             return
         }
 
-        // ✅ Domain restriction removed
-
-        setCreateBusy(true)
+        setUpsertBusy(true)
 
         try {
-            // ✅ Backend expects:
-            // student_id, concern_type, urgency, details
+            if (upsertMode === "create") {
+                const payload = {
+                    student_id: String(studentIdentifier),
+                    concern_type: concern,
+                    urgency,
+                    details: desc,
+                }
+
+                const res = await createReferralApi(payload as any, token)
+                const dto = (res as any)?.referral as ReferralDto | undefined
+
+                if (dto) {
+                    const ui = toUiReferral(dto)
+                    setRows((prev) => [ui, ...prev])
+                } else {
+                    await refresh()
+                }
+
+                toast.success("Referral submitted successfully.")
+                closeUpsert()
+                return
+            }
+
+            // ✅ UPDATE (Edit)
+            if (!editingId) {
+                toast.error("Missing referral id for update.")
+                return
+            }
+
             const payload = {
-                student_id: Number.isFinite(Number(studentId)) ? Number(studentId) : studentId,
+                student_id: String(studentIdentifier),
                 concern_type: concern,
                 urgency,
                 details: desc,
             }
 
-            // createReferralApi typing in your frontend may be older -> safe cast
-            const res = await createReferralApi(payload as any)
-            const dto = (res as any)?.referral as ReferralDto | undefined
+            // NOTE:
+            // This expects backend support:
+            // PATCH /referral-user/referrals/{id}
+            const res = await apiFetch(
+                `/referral-user/referrals/${encodeURIComponent(String(editingId))}`,
+                { method: "PATCH", body: JSON.stringify(payload) },
+                token,
+            )
 
-            if (!dto) {
-                toast.success("Referral submitted.")
-                closeCreate()
+            const dto = (res as any)?.referral as ReferralDto | undefined
+            if (dto) {
+                const ui = toUiReferral(dto)
+                setRows((prev) => prev.map((x) => (String(x.id) === String(ui.id) ? ui : x)))
+            } else {
                 await refresh()
-                return
             }
 
-            const ui = toUiReferral(dto)
-            setRows((prev) => [ui, ...prev])
-            toast.success("Referral submitted successfully.")
-            closeCreate()
-        } catch (err) {
-            toast.error(err instanceof Error ? err.message : "Failed to submit referral.")
+            toast.success("Referral updated successfully.")
+            closeUpsert()
+        } catch (err: any) {
+            const status = err?.status
+            const msg =
+                status === 404
+                    ? "Update endpoint not found (404). Please add PATCH /referral-user/referrals/{id} in Laravel."
+                    : status === 403
+                        ? "Forbidden (403). You are not allowed to update this referral."
+                        : status === 422
+                            ? "Validation failed (422). Please check inputs."
+                            : err instanceof Error
+                                ? err.message
+                                : "Failed to save referral."
+            toast.error(msg)
         } finally {
-            setCreateBusy(false)
+            setUpsertBusy(false)
+        }
+    }
+
+    const confirmDelete = async () => {
+        if (!deleteTarget) return
+
+        setDeleteBusy(true)
+        try {
+            // ✅ DELETE
+            // This expects backend support:
+            // DELETE /referral-user/referrals/{id}
+            await apiFetch(
+                `/referral-user/referrals/${encodeURIComponent(String(deleteTarget.id))}`,
+                { method: "DELETE" },
+                token,
+            )
+
+            setRows((prev) => prev.filter((x) => String(x.id) !== String(deleteTarget.id)))
+            toast.success("Referral deleted.")
+            setDeleteOpen(false)
+        } catch (err: any) {
+            const status = err?.status
+            const msg =
+                status === 404
+                    ? "Delete endpoint not found (404). Please add DELETE /referral-user/referrals/{id} in Laravel."
+                    : status === 403
+                        ? "Forbidden (403). You are not allowed to delete this referral."
+                        : err instanceof Error
+                            ? err.message
+                            : "Failed to delete referral."
+            toast.error(msg)
+        } finally {
+            setDeleteBusy(false)
         }
     }
 
     return (
         <DashboardLayout
             title="Referrals"
-            description="Create referrals for students and track your submitted requests."
+            description="Create, view, edit, and delete your submitted referrals."
         >
             <div className="mx-auto w-full max-w-7xl space-y-4">
                 <Card className="border bg-white/70 shadow-sm backdrop-blur">
@@ -600,7 +871,7 @@ const ReferralUserReferrals: React.FC = () => {
                         </div>
 
                         <div className="grid grid-cols-1 gap-2 pt-2 sm:grid-cols-4">
-                            <div className="flex items-center gap-2">
+                            <div className="flex flex-wrap items-center gap-2">
                                 <Badge variant="secondary" className="h-6 px-2 text-[0.70rem]">
                                     All: {counts.all}
                                 </Badge>
@@ -672,18 +943,16 @@ const ReferralUserReferrals: React.FC = () => {
                                                     <TableHead className="w-32">Urgency</TableHead>
                                                     <TableHead className="hidden lg:table-cell">Requested By</TableHead>
                                                     <TableHead className="hidden md:table-cell w-48">Created</TableHead>
+                                                    <TableHead className="w-16 text-right">Actions</TableHead>
                                                 </TableRow>
                                             </TableHeader>
+
                                             <TableBody>
                                                 {filteredRows.map((r) => (
                                                     <TableRow
                                                         key={String(r.id)}
                                                         className="cursor-pointer hover:bg-white"
-                                                        onClick={() => {
-                                                            // optional details route (if you add later)
-                                                            // navigate(`/dashboard/referral-user/referrals/${r.id}`)
-                                                            toast.message(`Referral #${r.id}`)
-                                                        }}
+                                                        onClick={() => void openView(r)}
                                                     >
                                                         <TableCell>
                                                             <Badge variant={statusBadgeVariant(r.status)} className="capitalize">
@@ -697,7 +966,7 @@ const ReferralUserReferrals: React.FC = () => {
                                                                     {r.studentName}
                                                                 </div>
                                                                 <div className="truncate text-xs text-muted-foreground">
-                                                                    ID: {r.studentId}
+                                                                    Student ID: {r.studentId}
                                                                     {r.studentEmail ? ` • ${r.studentEmail}` : ""}
                                                                 </div>
                                                             </div>
@@ -715,7 +984,7 @@ const ReferralUserReferrals: React.FC = () => {
                                                         </TableCell>
 
                                                         <TableCell>
-                                                            <Badge variant={urgencyBadgeVariant(r.urgency)} className="capitalize">
+                                                            <Badge variant={urgencyBadgeVariant(String(r.urgency))} className="capitalize">
                                                                 {String(r.urgency)}
                                                             </Badge>
                                                         </TableCell>
@@ -734,6 +1003,44 @@ const ReferralUserReferrals: React.FC = () => {
                                                         <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
                                                             {safeDateShort(r.createdAt)}
                                                         </TableCell>
+
+                                                        <TableCell className="text-right">
+                                                            <div onClick={(e) => e.stopPropagation()}>
+                                                                <DropdownMenu>
+                                                                    <DropdownMenuTrigger asChild>
+                                                                        <Button variant="ghost" size="icon" className="h-9 w-9">
+                                                                            <MoreVertical className="h-4 w-4" />
+                                                                        </Button>
+                                                                    </DropdownMenuTrigger>
+
+                                                                    <DropdownMenuContent align="end" className="w-44">
+                                                                        <DropdownMenuLabel>Referral</DropdownMenuLabel>
+                                                                        <DropdownMenuSeparator />
+
+                                                                        <DropdownMenuItem onSelect={() => void openView(r)}>
+                                                                            <Eye className="mr-2 h-4 w-4" />
+                                                                            View
+                                                                        </DropdownMenuItem>
+
+                                                                        <DropdownMenuItem
+                                                                            disabled={!canModify(r)}
+                                                                            onSelect={() => openEdit(r)}
+                                                                        >
+                                                                            <Pencil className="mr-2 h-4 w-4" />
+                                                                            Edit
+                                                                        </DropdownMenuItem>
+
+                                                                        <DropdownMenuItem
+                                                                            disabled={!canModify(r)}
+                                                                            onSelect={() => openDelete(r)}
+                                                                        >
+                                                                            <Trash2 className="mr-2 h-4 w-4" />
+                                                                            Delete
+                                                                        </DropdownMenuItem>
+                                                                    </DropdownMenuContent>
+                                                                </DropdownMenu>
+                                                            </div>
+                                                        </TableCell>
                                                     </TableRow>
                                                 ))}
                                             </TableBody>
@@ -745,13 +1052,124 @@ const ReferralUserReferrals: React.FC = () => {
                     </CardContent>
                 </Card>
 
-                {/* Create referral dialog */}
-                <Dialog open={createOpen} onOpenChange={(v) => (!createBusy ? setCreateOpen(v) : null)}>
+                {/* ✅ View (Read) */}
+                <Dialog open={viewOpen} onOpenChange={(v) => (!viewBusy ? setViewOpen(v) : null)}>
+                    <DialogContent className="sm:max-w-2xl">
+                        <DialogHeader>
+                            <DialogTitle>Referral details</DialogTitle>
+                            <DialogDescription>
+                                {viewReferral ? `Referral #${viewReferral.id}` : "Referral"}
+                            </DialogDescription>
+                        </DialogHeader>
+
+                        {!viewReferral ? (
+                            <div className="rounded-xl border bg-muted/30 p-4 text-sm text-muted-foreground">
+                                No referral selected.
+                            </div>
+                        ) : (
+                            <div className="space-y-4">
+                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant={statusBadgeVariant(viewReferral.status)} className="capitalize">
+                                            {String(viewReferral.status)}
+                                        </Badge>
+                                        <Badge variant={urgencyBadgeVariant(String(viewReferral.urgency))} className="capitalize">
+                                            {String(viewReferral.urgency)}
+                                        </Badge>
+                                        {viewBusy ? (
+                                            <Badge variant="secondary" className="gap-2">
+                                                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                Updating…
+                                            </Badge>
+                                        ) : null}
+                                    </div>
+
+                                    <div className="text-xs text-muted-foreground">
+                                        Created: {safeDateTime(viewReferral.createdAt || null) || "—"}
+                                    </div>
+                                </div>
+
+                                <Separator />
+
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="rounded-xl border bg-white/60 p-3">
+                                        <div className="text-xs text-muted-foreground">Student</div>
+                                        <div className="truncate text-sm font-semibold text-slate-900">{viewReferral.studentName}</div>
+                                        <div className="truncate text-xs text-muted-foreground">
+                                            Student ID: {viewReferral.studentId || "—"}
+                                            {viewReferral.studentEmail ? ` • ${viewReferral.studentEmail}` : ""}
+                                        </div>
+                                    </div>
+
+                                    <div className="rounded-xl border bg-white/60 p-3">
+                                        <div className="text-xs text-muted-foreground">Assigned counselor</div>
+                                        <div className="truncate text-sm font-semibold text-slate-900">
+                                            {viewReferral.counselorName || "—"}
+                                        </div>
+                                        <div className="truncate text-xs text-muted-foreground">
+                                            {viewReferral.counselorEmail || "Not assigned"}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="rounded-xl border bg-white/60 p-3">
+                                    <div className="text-xs text-muted-foreground">Concern type</div>
+                                    <div className="text-sm font-semibold text-slate-900">{viewReferral.concernType || "—"}</div>
+                                </div>
+
+                                <div className="rounded-xl border bg-white/60 p-3">
+                                    <div className="text-xs text-muted-foreground">Details</div>
+                                    <div className="whitespace-pre-wrap text-sm text-slate-900">{viewReferral.details || "—"}</div>
+                                </div>
+
+                                <div className="rounded-xl border bg-white/60 p-3">
+                                    <div className="text-xs text-muted-foreground">Remarks</div>
+                                    <div className="whitespace-pre-wrap text-sm text-slate-900">{viewReferral.remarks || "—"}</div>
+                                </div>
+
+                                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                                    <div className="rounded-xl border bg-white/60 p-3">
+                                        <div className="text-xs text-muted-foreground">Handled at</div>
+                                        <div className="text-sm text-slate-900">{safeDateTime(viewReferral.handledAt || null) || "—"}</div>
+                                    </div>
+                                    <div className="rounded-xl border bg-white/60 p-3">
+                                        <div className="text-xs text-muted-foreground">Closed at</div>
+                                        <div className="text-sm text-slate-900">{safeDateTime(viewReferral.closedAt || null) || "—"}</div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+
+                        <DialogFooter>
+                            <Button type="button" variant="outline" onClick={closeView} disabled={viewBusy}>
+                                Close
+                            </Button>
+                            {viewReferral && canModify(viewReferral) ? (
+                                <Button
+                                    type="button"
+                                    onClick={() => {
+                                        closeView()
+                                        openEdit(viewReferral)
+                                    }}
+                                    disabled={viewBusy}
+                                >
+                                    <Pencil className="mr-2 h-4 w-4" />
+                                    Edit
+                                </Button>
+                            ) : null}
+                        </DialogFooter>
+                    </DialogContent>
+                </Dialog>
+
+                {/* ✅ Create / Edit (CRUD) */}
+                <Dialog open={upsertOpen} onOpenChange={(v) => (!upsertBusy ? setUpsertOpen(v) : null)}>
                     <DialogContent className="sm:max-w-xl">
                         <DialogHeader>
-                            <DialogTitle>Create referral</DialogTitle>
+                            <DialogTitle>{upsertMode === "create" ? "Create referral" : "Edit referral"}</DialogTitle>
                             <DialogDescription>
-                                Select a student and submit a referral request to the counselor.
+                                {upsertMode === "create"
+                                    ? "Select a student and submit a referral request."
+                                    : "Update the details of your pending referral."}
                             </DialogDescription>
                         </DialogHeader>
 
@@ -774,15 +1192,27 @@ const ReferralUserReferrals: React.FC = () => {
                                             setSelectedStudent(null)
                                         }}
                                         isLoading={studentLoading}
+                                        disabled={upsertBusy}
                                     />
 
                                     <div className="text-[0.70rem] text-muted-foreground">
-                                        If you can’t search students (403), switch to <span className="font-semibold">Manual student ID</span>.
+                                        {studentSearchBlocked ? (
+                                            <>
+                                                Student search is blocked for your role (403). Please switch to{" "}
+                                                <span className="font-semibold">Manual student ID</span>.
+                                            </>
+                                        ) : (
+                                            <>
+                                                If you can’t search students (403), switch to{" "}
+                                                <span className="font-semibold">Manual student ID</span>.
+                                            </>
+                                        )}
                                     </div>
 
                                     {selectedStudent?.email ? (
                                         <div className="text-[0.70rem] text-muted-foreground">
-                                            Selected email: <span className="font-semibold text-slate-700">{selectedStudent.email}</span>
+                                            Selected email:{" "}
+                                            <span className="font-semibold text-slate-700">{selectedStudent.email}</span>
                                         </div>
                                     ) : null}
                                 </TabsContent>
@@ -792,11 +1222,13 @@ const ReferralUserReferrals: React.FC = () => {
                                     <Input
                                         value={manualStudentId}
                                         onChange={(e) => setManualStudentId(e.target.value)}
-                                        placeholder="Enter student user ID…"
+                                        placeholder="Enter the student ID (users.student_id)…"
                                         className="h-10"
+                                        disabled={upsertBusy}
                                     />
                                     <div className="text-[0.70rem] text-muted-foreground">
-                                        Make sure this is the correct student <span className="font-semibold">User ID</span> in your system.
+                                        Enter the student’s <span className="font-semibold">Student ID</span> from{" "}
+                                        <span className="font-semibold">users.student_id</span> (not the internal user ID).
                                     </div>
                                 </TabsContent>
                             </Tabs>
@@ -809,12 +1241,13 @@ const ReferralUserReferrals: React.FC = () => {
                                         onChange={(e) => setConcernType(e.target.value)}
                                         placeholder="e.g., Academic, Behavior, Mental Health…"
                                         className="h-10"
+                                        disabled={upsertBusy}
                                     />
                                 </div>
 
                                 <div className="space-y-1">
                                     <Label className="text-xs">Urgency (required)</Label>
-                                    <Select value={urgency} onValueChange={(v) => setUrgency(v as Urgency)}>
+                                    <Select value={urgency} onValueChange={(v) => setUrgency(v as Urgency)} disabled={upsertBusy}>
                                         <SelectTrigger className="h-10">
                                             <SelectValue placeholder="Select urgency" />
                                         </SelectTrigger>
@@ -834,6 +1267,7 @@ const ReferralUserReferrals: React.FC = () => {
                                     onChange={(e) => setDetails(e.target.value)}
                                     placeholder="Write complete referral details…"
                                     className="min-h-28"
+                                    disabled={upsertBusy}
                                 />
                             </div>
 
@@ -848,15 +1282,75 @@ const ReferralUserReferrals: React.FC = () => {
                         </div>
 
                         <DialogFooter>
-                            <Button type="button" variant="outline" onClick={closeCreate} disabled={createBusy}>
+                            <Button type="button" variant="outline" onClick={closeUpsert} disabled={upsertBusy}>
                                 Cancel
                             </Button>
-                            <Button type="button" onClick={submitCreateReferral} disabled={createBusy}>
-                                {createBusy ? "Submitting…" : "Submit referral"}
+                            <Button type="button" onClick={submitUpsert} disabled={upsertBusy}>
+                                {upsertBusy ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Saving…
+                                    </>
+                                ) : (
+                                    <>
+                                        {upsertMode === "create" ? (
+                                            <>
+                                                <Plus className="mr-2 h-4 w-4" />
+                                                Submit referral
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Pencil className="mr-2 h-4 w-4" />
+                                                Save changes
+                                            </>
+                                        )}
+                                    </>
+                                )}
                             </Button>
                         </DialogFooter>
                     </DialogContent>
                 </Dialog>
+
+                {/* ✅ Delete confirmation */}
+                <AlertDialog open={deleteOpen} onOpenChange={(v) => (!deleteBusy ? setDeleteOpen(v) : null)}>
+                    <AlertDialogContent>
+                        <AlertDialogHeader>
+                            <AlertDialogTitle>Delete referral?</AlertDialogTitle>
+                            <AlertDialogDescription>
+                                This action cannot be undone. Only pending referrals should be deleted.
+                            </AlertDialogDescription>
+                        </AlertDialogHeader>
+
+                        <div className="rounded-xl border bg-muted/30 p-3 text-sm text-muted-foreground">
+                            <div className="font-semibold text-slate-900">
+                                {deleteTarget ? `Referral #${deleteTarget.id}` : "Referral"}
+                            </div>
+                            <div className="truncate">
+                                {deleteTarget?.studentName ? `${deleteTarget.studentName} • Student ID: ${deleteTarget.studentId}` : "—"}
+                            </div>
+                            <div className="truncate">{deleteTarget?.concernType || "—"}</div>
+                        </div>
+
+                        <AlertDialogFooterUi>
+                            <AlertDialogCancel onClick={closeDelete} disabled={deleteBusy}>
+                                Cancel
+                            </AlertDialogCancel>
+                            <AlertDialogAction onClick={confirmDelete} disabled={deleteBusy}>
+                                {deleteBusy ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Deleting…
+                                    </>
+                                ) : (
+                                    <>
+                                        <Trash2 className="mr-2 h-4 w-4" />
+                                        Delete
+                                    </>
+                                )}
+                            </AlertDialogAction>
+                        </AlertDialogFooterUi>
+                    </AlertDialogContent>
+                </AlertDialog>
             </div>
         </DashboardLayout>
     )

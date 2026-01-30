@@ -11,39 +11,59 @@ import {
 
 export type Referral = ReferralDto;
 
-export async function submitReferral(payload: CreateReferralPayload): Promise<ReferralDto> {
-    const res = await createReferralApi(payload);
+export async function submitReferral(payload: CreateReferralPayload, token?: string | null): Promise<ReferralDto> {
+    const res = await createReferralApi(payload, token);
     return res.referral;
 }
 
-export async function fetchCounselorReferrals(params?: { status?: string; per_page?: number }): Promise<ReferralDto[]> {
-    const res = await getCounselorReferralsApi({
-        status: params?.status,
-        per_page: params?.per_page ?? 100,
-    });
+export async function fetchCounselorReferrals(
+    params?: { status?: string; per_page?: number },
+    token?: string | null,
+): Promise<ReferralDto[]> {
+    const res = await getCounselorReferralsApi(
+        {
+            status: params?.status,
+            per_page: params?.per_page ?? 100,
+        },
+        token,
+    );
 
     return Array.isArray(res?.referrals) ? res.referrals : [];
 }
 
-export async function fetchReferralUserReferrals(params?: { per_page?: number }): Promise<ReferralDto[]> {
-    const res = await getReferralUserReferralsApi({
-        per_page: params?.per_page ?? 100,
-    });
+export async function fetchReferralUserReferrals(
+    params?: { per_page?: number },
+    token?: string | null,
+): Promise<ReferralDto[]> {
+    const res = await getReferralUserReferralsApi(
+        {
+            per_page: params?.per_page ?? 100,
+        },
+        token,
+    );
 
     return Array.isArray(res?.referrals) ? res.referrals : [];
 }
 
-export async function fetchCounselorReferralById(id: number | string): Promise<ReferralDto> {
-    const res = await getCounselorReferralByIdApi(id);
+export async function fetchCounselorReferralById(id: number | string, token?: string | null): Promise<ReferralDto> {
+    const res = await getCounselorReferralByIdApi(id, token);
     return res.referral;
 }
 
-export async function updateCounselorReferral(id: number | string, payload: PatchReferralPayload): Promise<ReferralDto> {
-    const res = await patchCounselorReferralApi(id, payload);
+export async function updateCounselorReferral(
+    id: number | string,
+    payload: PatchReferralPayload,
+    token?: string | null,
+): Promise<ReferralDto> {
+    const res = await patchCounselorReferralApi(id, payload, token);
     return res.referral;
 }
 
-export async function changeReferralStatus(id: number | string, status: string): Promise<ReferralDto> {
-    const updated = await updateCounselorReferral(id, { status });
+export async function changeReferralStatus(
+    id: number | string,
+    status: string,
+    token?: string | null,
+): Promise<ReferralDto> {
+    const updated = await updateCounselorReferral(id, { status }, token);
     return updated;
 }
