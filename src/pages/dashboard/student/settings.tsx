@@ -889,7 +889,7 @@ const StudentSettings: React.FC = () => {
                                 Change password
                             </CardTitle>
                             <CardDescription className="text-xs text-muted-foreground">
-                                Use a strong, unique password to protect your eCounseling account.
+                                Use a strong, unique password to protect your eGuidance account.
                             </CardDescription>
                         </CardHeader>
 

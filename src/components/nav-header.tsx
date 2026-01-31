@@ -16,7 +16,7 @@ export const NavHeader: React.FC = () => {
             />
             <div className="flex flex-col">
                 <span className="text-sm font-semibold leading-tight">
-                    eCounseling
+                    E-Guidance Appointment System
                 </span>
                 <span className="text-xs text-sidebar-foreground/70">
                     JRMSU – Tampilisan Campus

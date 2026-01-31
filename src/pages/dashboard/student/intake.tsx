@@ -379,7 +379,7 @@ const StudentIntake: React.FC = () => {
                                         Step 1 – Consent &amp; important notes
                                     </p>
                                     <p className="text-[0.7rem] text-muted-foreground">
-                                        eCounseling is intended for guidance and counseling support.
+                                        eGuidance is intended for guidance and counseling support.
                                         It is{" "}
                                         <span className="font-medium">
                                             not an emergency or crisis service

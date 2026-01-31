@@ -14,7 +14,7 @@ const NotFoundPage: React.FC = () => {
                 </h1>
                 <p className="mt-3 text-sm text-muted-foreground md:text-base">
                     The page you’re looking for doesn’t exist or has moved. You can return
-                    to the eCounseling landing page or sign in to your portal.
+                    to the eGuidance landing page or sign in to your portal.
                 </p>
 
                 <div className="mt-6 flex flex-wrap justify-center gap-3">

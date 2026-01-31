@@ -9,6 +9,7 @@ import {
     CircleDashed,
     CheckCircle2,
     XCircle,
+    CalendarClock,
 } from "lucide-react"
 import { toast } from "sonner"
 
@@ -19,35 +20,12 @@ import { fetchCounselorReferrals, updateCounselorReferral } from "@/lib/referral
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Separator } from "@/components/ui/separator"
-import {
-    Tabs,
-    TabsContent,
-    TabsList,
-    TabsTrigger,
-} from "@/components/ui/tabs"
-import {
-    Table,
-    TableBody,
-    TableCell,
-    TableHead,
-    TableHeader,
-    TableRow,
-} from "@/components/ui/table"
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { Skeleton } from "@/components/ui/skeleton"
 
 type ReferralStatus = "pending" | "handled" | "closed" | string
@@ -65,6 +43,10 @@ type ReferralView = {
     concern_type?: string | null
     urgency?: string | null
     details?: string | null
+
+    // ✅ Appointment (read-only here)
+    scheduled_date?: string | null // YYYY-MM-DD
+    scheduled_time?: string | null // e.g. "8:00 AM" or "14:30"
 
     created_at?: string | null
     updated_at?: string | null
@@ -93,6 +75,45 @@ function toDateTimeLabel(value?: string | null) {
     return d.toLocaleString()
 }
 
+function toDateOnlyLabel(value?: string | null) {
+    if (!value) return "—"
+    const d = new Date(value)
+    const t = d.getTime()
+    if (Number.isNaN(t)) return value
+    return d.toLocaleDateString()
+}
+
+// ✅ Time-only formatter -> always show AM/PM when possible (09:00 -> 9:00 AM, 14:30 -> 2:30 PM)
+function timeWithAmPm(value?: string | null) {
+    const raw = safeStr(value).trim()
+    if (!raw) return ""
+    const cleaned = raw.replace(/\s+/g, " ").trim()
+
+    const m = cleaned.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?$/)
+    if (!m) return cleaned
+
+    let hour = Number(m[1])
+    const minute = Number(m[2])
+    if (Number.isNaN(hour) || Number.isNaN(minute) || minute < 0 || minute > 59) return cleaned
+
+    const hasMeridiem = !!m[4]
+    const mer = (m[4] || "").toUpperCase()
+
+    if (hasMeridiem) {
+        if (hour < 1 || hour > 12) return cleaned
+        const isPm = mer === "PM"
+        if (hour === 12) hour = isPm ? 12 : 0
+        else hour = isPm ? hour + 12 : hour
+    } else {
+        if (hour < 0 || hour > 23) return cleaned
+    }
+
+    const period = hour >= 12 ? "PM" : "AM"
+    const hour12 = hour % 12 === 0 ? 12 : hour % 12
+    const mm = String(minute).padStart(2, "0")
+    return `${hour12}:${mm} ${period}`
+}
+
 function normalizeUserMini(raw: any): UserMini | null {
     if (!raw) return null
     return {
@@ -105,12 +126,22 @@ function normalizeUserMini(raw: any): UserMini | null {
 
 function normalizeReferral(raw: any): ReferralView {
     const student = normalizeUserMini(raw?.student) ?? null
-    const requestedBy =
-        normalizeUserMini(raw?.requested_by) ??
-        normalizeUserMini(raw?.requestedBy) ??
+    const requestedBy = normalizeUserMini(raw?.requested_by) ?? normalizeUserMini(raw?.requestedBy) ?? null
+    const counselor = normalizeUserMini(raw?.counselor) ?? null
+
+    const scheduledDate =
+        raw?.scheduled_date ??
+        raw?.appointment_date ??
+        raw?.schedule_date ??
+        raw?.counseling_date ??
         null
 
-    const counselor = normalizeUserMini(raw?.counselor) ?? null
+    const scheduledTime =
+        raw?.scheduled_time ??
+        raw?.appointment_time ??
+        raw?.schedule_time ??
+        raw?.counseling_time ??
+        null
 
     return {
         id: raw?.id ?? "",
@@ -118,6 +149,9 @@ function normalizeReferral(raw: any): ReferralView {
         concern_type: raw?.concern_type ?? raw?.concern ?? null,
         urgency: raw?.urgency ?? null,
         details: raw?.details ?? null,
+
+        scheduled_date: scheduledDate,
+        scheduled_time: scheduledTime,
 
         created_at: raw?.created_at ?? null,
         updated_at: raw?.updated_at ?? null,
@@ -165,6 +199,15 @@ function statusBadge(status: ReferralStatus) {
     }
 
     return <Badge variant="outline">{safeStr(status) || "Unknown"}</Badge>
+}
+
+function appointmentLabel(date?: string | null, time?: string | null) {
+    const d = date ? toDateOnlyLabel(date) : ""
+    const t = time ? timeWithAmPm(time) : ""
+    if (!d && !t) return "—"
+    if (d && t) return `${d} • ${t}`
+    if (d) return `${d} • (time missing)`
+    return `— • ${t}`
 }
 
 export default function CounselorReferralsPage() {
@@ -223,6 +266,10 @@ export default function CounselorReferralsPage() {
             const urgency = (r.urgency ?? "").toLowerCase()
             const status = safeStr(r.status).toLowerCase()
 
+            // ✅ include appointment in search
+            const apptDate = (r.scheduled_date ?? "").toLowerCase()
+            const apptTime = (r.scheduled_time ?? "").toLowerCase()
+
             return (
                 studentName.includes(q) ||
                 studentEmail.includes(q) ||
@@ -230,7 +277,9 @@ export default function CounselorReferralsPage() {
                 reqRole.includes(q) ||
                 concern.includes(q) ||
                 urgency.includes(q) ||
-                status.includes(q)
+                status.includes(q) ||
+                apptDate.includes(q) ||
+                apptTime.includes(q)
             )
         })
     }, [query, rows])
@@ -263,7 +312,7 @@ export default function CounselorReferralsPage() {
     return (
         <DashboardLayout
             title="Referrals"
-            description="Review referrals requested by Dean / Registrar / Program Chair. Track status, urgency, and who requested the referral."
+            description="Review referrals requested by Dean / Registrar / Program Chair. Appointment is set inside the referral details page."
         >
             <div className="flex flex-col gap-4">
                 <Card>
@@ -277,8 +326,9 @@ export default function CounselorReferralsPage() {
                                     </Badge>
                                 </CardTitle>
                                 <CardDescription>
-                                    Includes <span className="font-medium">Requested By</span> and{" "}
-                                    <span className="font-medium">Student</span> details.
+                                    Includes <span className="font-medium">Requested By</span>,{" "}
+                                    <span className="font-medium">Student</span>, and{" "}
+                                    <span className="font-medium">Appointment</span> (if set).
                                 </CardDescription>
                             </div>
 
@@ -309,12 +359,12 @@ export default function CounselorReferralsPage() {
                                 <TabsContent value={tab} className="hidden" />
                             </Tabs>
 
-                            <div className="relative w-full sm:w-[360px]">
+                            <div className="relative w-full sm:w-96">
                                 <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                 <Input
                                     value={query}
                                     onChange={(e) => setQuery(e.target.value)}
-                                    placeholder="Search student, requested by, concern, urgency..."
+                                    placeholder="Search student, requested by, concern, urgency, appointment..."
                                     className="pl-9"
                                 />
                             </div>
@@ -346,6 +396,7 @@ export default function CounselorReferralsPage() {
                                             <TableHead>Concern</TableHead>
                                             <TableHead>Urgency</TableHead>
                                             <TableHead>Status</TableHead>
+                                            <TableHead>Appointment</TableHead>
                                             <TableHead className="text-right">Actions</TableHead>
                                         </TableRow>
                                     </TableHeader>
@@ -358,6 +409,9 @@ export default function CounselorReferralsPage() {
                                             const reqName = r.requestedBy?.name ?? r.requested_by_name ?? "—"
                                             const reqRole = r.requestedBy?.role ?? r.requested_by_role ?? null
                                             const reqEmail = r.requestedBy?.email ?? r.requested_by_email ?? null
+
+                                            const apptText = appointmentLabel(r.scheduled_date ?? null, r.scheduled_time ?? null)
+                                            const hasAppt = apptText !== "—"
 
                                             return (
                                                 <TableRow key={String(r.id)} className="align-top">
@@ -401,6 +455,22 @@ export default function CounselorReferralsPage() {
 
                                                     <TableCell>{statusBadge(r.status)}</TableCell>
 
+                                                    <TableCell>
+                                                        <div className="flex items-start gap-2">
+                                                            <CalendarClock className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                                                            <div className="space-y-0.5">
+                                                                <div className="text-sm">{apptText}</div>
+                                                                {hasAppt ? (
+                                                                    <div className="text-xs text-muted-foreground">
+                                                                        Setting appointment auto-marks referral as handled.
+                                                                    </div>
+                                                                ) : (
+                                                                    <div className="text-xs text-muted-foreground">Not set</div>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    </TableCell>
+
                                                     <TableCell className="text-right">
                                                         <div className="flex items-center justify-end gap-2">
                                                             <Button
@@ -421,6 +491,7 @@ export default function CounselorReferralsPage() {
                                                                 <DropdownMenuTrigger asChild>
                                                                     <Button variant="outline" size="sm" className="px-2">
                                                                         <MoreHorizontal className="h-4 w-4" />
+                                                                        <span className="sr-only">Open actions</span>
                                                                     </Button>
                                                                 </DropdownMenuTrigger>
 
@@ -492,11 +563,10 @@ export default function CounselorReferralsPage() {
                     </CardContent>
                 </Card>
 
-                <div className="flex items-center justify-between text-sm text-muted-foreground">
-
-                    <Link to="/dashboard/counselor" className="underline underline-offset-4 hover:text-foreground">
-                        Back to Overview
-                    </Link>
+                <div className="flex items-center justify-between">
+                    <Button variant="link" asChild className="px-0 text-muted-foreground hover:text-foreground">
+                        <Link to="/dashboard/counselor">Back to Overview</Link>
+                    </Button>
                 </div>
             </div>
         </DashboardLayout>

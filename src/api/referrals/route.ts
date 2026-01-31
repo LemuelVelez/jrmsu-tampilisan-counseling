@@ -26,6 +26,10 @@ export interface ReferralDto {
     handled_at?: string | null
     closed_at?: string | null
 
+    // ✅ Appointment (counselor sets this)
+    scheduled_date?: string | null // YYYY-MM-DD
+    scheduled_time?: string | null // e.g. "08:00" or "8:00 AM"
+
     created_at?: string | null
     updated_at?: string | null
 
@@ -93,6 +97,10 @@ export interface PatchReferralPayload {
     status?: ReferralStatusApi
     remarks?: string | null
     counselor_id?: number | string | null
+
+    // ✅ Appointment (counselor sets / clears)
+    scheduled_date?: string | null // YYYY-MM-DD
+    scheduled_time?: string | null // HH:mm or label
 }
 
 export interface PatchReferralResponseDto {

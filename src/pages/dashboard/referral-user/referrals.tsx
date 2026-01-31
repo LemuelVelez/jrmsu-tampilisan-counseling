@@ -61,7 +61,19 @@ import {
     TableRow,
 } from "@/components/ui/table"
 
-import { Check, ChevronsUpDown, Eye, Loader2, MoreVertical, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react"
+import {
+    Check,
+    ChevronsUpDown,
+    Eye,
+    Loader2,
+    MoreVertical,
+    Pencil,
+    Plus,
+    RefreshCw,
+    Search,
+    Trash2,
+    CalendarClock,
+} from "lucide-react"
 
 type ReferralStatus = "pending" | "handled" | "closed" | string
 type Urgency = "low" | "medium" | "high"
@@ -96,6 +108,10 @@ type UiReferral = {
 
     counselorName?: string | null
     counselorEmail?: string | null
+
+    // ✅ Appointment (read-only for referral user)
+    scheduledDate?: string | null // e.g. "2026-02-06"
+    scheduledTime?: string | null // e.g. "09:00" or "9:00 AM"
 
     requestedByName: string
     requestedByRole: string
@@ -135,6 +151,71 @@ function safeDateTime(iso?: string | null) {
     const d = new Date(iso)
     if (Number.isNaN(d.getTime())) return ""
     return format(d, "MMM d, yyyy • h:mm a")
+}
+
+// ✅ Date-only safe formatter (handles YYYY-MM-DD without timezone shift)
+function safeDateOnly(value?: string | null) {
+    if (!value) return ""
+    const s = String(value).trim()
+    if (!s) return ""
+
+    const m = s.match(/^(\d{4})-(\d{2})-(\d{2})$/)
+    if (m) {
+        const y = Number(m[1])
+        const mo = Number(m[2]) - 1
+        const d = Number(m[3])
+        const local = new Date(y, mo, d)
+        if (!Number.isNaN(local.getTime())) return format(local, "MMM d, yyyy")
+        return s
+    }
+
+    const dt = new Date(s)
+    if (Number.isNaN(dt.getTime())) return s
+    return format(dt, "MMM d, yyyy")
+}
+
+// ✅ Time-only formatter -> always show AM/PM when possible (09:00 -> 9:00 AM, 14:30 -> 2:30 PM)
+function safeTimeWithAmPm(value?: string | null) {
+    const raw = safeText(value)
+    if (!raw) return ""
+    const cleaned = raw.replace(/\s+/g, " ").trim()
+
+    // Match: H:MM, HH:MM, with optional :SS and optional AM/PM
+    const m = cleaned.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s*([AaPp][Mm])?$/)
+    if (!m) return cleaned
+
+    let hour = Number(m[1])
+    const minute = Number(m[2])
+    if (Number.isNaN(hour) || Number.isNaN(minute) || minute < 0 || minute > 59) return cleaned
+
+    const hasMeridiem = !!m[4]
+    const mer = (m[4] || "").toUpperCase()
+
+    // Interpret hour based on whether AM/PM is present
+    if (hasMeridiem) {
+        // Treat as 12-hour input
+        if (hour < 1 || hour > 12) return cleaned
+        const isPm = mer === "PM"
+        if (hour === 12) hour = isPm ? 12 : 0
+        else hour = isPm ? hour + 12 : hour
+    } else {
+        // Treat as 24-hour input (commonly "09:00" or "14:30")
+        if (hour < 0 || hour > 23) return cleaned
+    }
+
+    const period = hour >= 12 ? "PM" : "AM"
+    const hour12 = hour % 12 === 0 ? 12 : hour % 12
+    const mm = String(minute).padStart(2, "0")
+    return `${hour12}:${mm} ${period}`
+}
+
+function appointmentLabel(date?: string | null, time?: string | null) {
+    const d = safeDateOnly(date) || ""
+    const t = safeTimeWithAmPm(time) || ""
+    if (!d && !t) return "—"
+    if (d && t) return `${d} • ${t}`
+    if (d) return `${d} • (time missing)`
+    return `— • ${t}`
 }
 
 function toUiReferral(dto: ReferralDto): UiReferral {
@@ -201,6 +282,21 @@ function toUiReferral(dto: ReferralDto): UiReferral {
     const handledAt = safeText(anyDto?.handled_at) || null
     const closedAt = safeText(anyDto?.closed_at) || null
 
+    // ✅ Appointment fallbacks (matches counselor files)
+    const scheduledDate =
+        safeText(anyDto?.scheduled_date) ||
+        safeText(anyDto?.appointment_date) ||
+        safeText(anyDto?.schedule_date) ||
+        safeText(anyDto?.counseling_date) ||
+        null
+
+    const scheduledTime =
+        safeText(anyDto?.scheduled_time) ||
+        safeText(anyDto?.appointment_time) ||
+        safeText(anyDto?.schedule_time) ||
+        safeText(anyDto?.counseling_time) ||
+        null
+
     return {
         id: dto.id,
 
@@ -219,6 +315,10 @@ function toUiReferral(dto: ReferralDto): UiReferral {
         closedAt,
         counselorName,
         counselorEmail,
+
+        // ✅ Appointment (read)
+        scheduledDate,
+        scheduledTime,
 
         requestedByName,
         requestedByRole,
@@ -587,7 +687,10 @@ const ReferralUserReferrals: React.FC = () => {
                     r.concernType.toLowerCase().includes(q) ||
                     String(r.urgency).toLowerCase().includes(q) ||
                     String(r.status).toLowerCase().includes(q) ||
-                    r.requestedByName.toLowerCase().includes(q)
+                    r.requestedByName.toLowerCase().includes(q) ||
+                    // ✅ appointment searchable
+                    String(r.scheduledDate ?? "").toLowerCase().includes(q) ||
+                    String(r.scheduledTime ?? "").toLowerCase().includes(q)
                 )
             })
     }, [rows, statusFilter, search])
@@ -674,7 +777,11 @@ const ReferralUserReferrals: React.FC = () => {
         // Fetch latest details (READ) using existing show endpoint
         setViewBusy(true)
         try {
-            const res = await apiFetch(`/referral-user/referrals/${encodeURIComponent(String(r.id))}`, { method: "GET" }, token)
+            const res = await apiFetch(
+                `/referral-user/referrals/${encodeURIComponent(String(r.id))}`,
+                { method: "GET" },
+                token,
+            )
             const dto = (res as any)?.referral as ReferralDto | undefined
             if (dto) setViewReferral(toUiReferral(dto))
         } catch (err: any) {
@@ -892,7 +999,7 @@ const ReferralUserReferrals: React.FC = () => {
                                     <Input
                                         value={search}
                                         onChange={(e) => setSearch(e.target.value)}
-                                        placeholder="Search by student, status, concern, requested by…"
+                                        placeholder="Search by student, status, concern, appointment…"
                                         className="h-10 pl-9"
                                     />
                                 </div>
@@ -941,6 +1048,10 @@ const ReferralUserReferrals: React.FC = () => {
                                                     <TableHead>Student</TableHead>
                                                     <TableHead>Concern</TableHead>
                                                     <TableHead className="w-32">Urgency</TableHead>
+
+                                                    {/* ✅ Appointment (read) */}
+                                                    <TableHead className="hidden lg:table-cell w-52">Appointment</TableHead>
+
                                                     <TableHead className="hidden lg:table-cell">Requested By</TableHead>
                                                     <TableHead className="hidden md:table-cell w-48">Created</TableHead>
                                                     <TableHead className="w-16 text-right">Actions</TableHead>
@@ -948,101 +1059,119 @@ const ReferralUserReferrals: React.FC = () => {
                                             </TableHeader>
 
                                             <TableBody>
-                                                {filteredRows.map((r) => (
-                                                    <TableRow
-                                                        key={String(r.id)}
-                                                        className="cursor-pointer hover:bg-white"
-                                                        onClick={() => void openView(r)}
-                                                    >
-                                                        <TableCell>
-                                                            <Badge variant={statusBadgeVariant(r.status)} className="capitalize">
-                                                                {String(r.status)}
-                                                            </Badge>
-                                                        </TableCell>
+                                                {filteredRows.map((r) => {
+                                                    const apptText = appointmentLabel(r.scheduledDate ?? null, r.scheduledTime ?? null)
+                                                    const hasAppt = apptText !== "—"
 
-                                                        <TableCell>
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-sm font-semibold text-slate-900">
-                                                                    {r.studentName}
+                                                    return (
+                                                        <TableRow
+                                                            key={String(r.id)}
+                                                            className="cursor-pointer hover:bg-white"
+                                                            onClick={() => void openView(r)}
+                                                        >
+                                                            <TableCell>
+                                                                <Badge variant={statusBadgeVariant(r.status)} className="capitalize">
+                                                                    {String(r.status)}
+                                                                </Badge>
+                                                            </TableCell>
+
+                                                            <TableCell>
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-semibold text-slate-900">
+                                                                        {r.studentName}
+                                                                    </div>
+                                                                    <div className="truncate text-xs text-muted-foreground">
+                                                                        Student ID: {r.studentId}
+                                                                        {r.studentEmail ? ` • ${r.studentEmail}` : ""}
+                                                                    </div>
                                                                 </div>
-                                                                <div className="truncate text-xs text-muted-foreground">
-                                                                    Student ID: {r.studentId}
-                                                                    {r.studentEmail ? ` • ${r.studentEmail}` : ""}
+                                                            </TableCell>
+
+                                                            <TableCell>
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-medium text-slate-900">
+                                                                        {r.concernType}
+                                                                    </div>
+                                                                    <div className="line-clamp-2 text-xs text-muted-foreground">
+                                                                        {r.details || "—"}
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                        </TableCell>
+                                                            </TableCell>
 
-                                                        <TableCell>
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-sm font-medium text-slate-900">
-                                                                    {r.concernType}
+                                                            <TableCell>
+                                                                <Badge variant={urgencyBadgeVariant(String(r.urgency))} className="capitalize">
+                                                                    {String(r.urgency)}
+                                                                </Badge>
+                                                            </TableCell>
+
+                                                            {/* ✅ Appointment (read) */}
+                                                            <TableCell className="hidden lg:table-cell">
+                                                                <div className="flex items-start gap-2">
+                                                                    <CalendarClock className="mt-0.5 h-4 w-4 text-muted-foreground" />
+                                                                    <div className="min-w-0">
+                                                                        <div className="truncate text-sm">{apptText}</div>
+                                                                        <div className="truncate text-xs text-muted-foreground">
+                                                                            {hasAppt ? "Set by counselor" : "Not set"}
+                                                                        </div>
+                                                                    </div>
                                                                 </div>
-                                                                <div className="line-clamp-2 text-xs text-muted-foreground">
-                                                                    {r.details || "—"}
+                                                            </TableCell>
+
+                                                            <TableCell className="hidden lg:table-cell">
+                                                                <div className="min-w-0">
+                                                                    <div className="truncate text-sm font-medium text-slate-900">
+                                                                        {r.requestedByName}
+                                                                    </div>
+                                                                    <div className="truncate text-xs text-muted-foreground">
+                                                                        {r.requestedByRole}
+                                                                    </div>
                                                                 </div>
-                                                            </div>
-                                                        </TableCell>
+                                                            </TableCell>
 
-                                                        <TableCell>
-                                                            <Badge variant={urgencyBadgeVariant(String(r.urgency))} className="capitalize">
-                                                                {String(r.urgency)}
-                                                            </Badge>
-                                                        </TableCell>
+                                                            <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
+                                                                {safeDateShort(r.createdAt)}
+                                                            </TableCell>
 
-                                                        <TableCell className="hidden lg:table-cell">
-                                                            <div className="min-w-0">
-                                                                <div className="truncate text-sm font-medium text-slate-900">
-                                                                    {r.requestedByName}
+                                                            <TableCell className="text-right">
+                                                                <div onClick={(e) => e.stopPropagation()}>
+                                                                    <DropdownMenu>
+                                                                        <DropdownMenuTrigger asChild>
+                                                                            <Button variant="ghost" size="icon" className="h-9 w-9">
+                                                                                <MoreVertical className="h-4 w-4" />
+                                                                            </Button>
+                                                                        </DropdownMenuTrigger>
+
+                                                                        <DropdownMenuContent align="end" className="w-44">
+                                                                            <DropdownMenuLabel>Referral</DropdownMenuLabel>
+                                                                            <DropdownMenuSeparator />
+
+                                                                            <DropdownMenuItem onSelect={() => void openView(r)}>
+                                                                                <Eye className="mr-2 h-4 w-4" />
+                                                                                View
+                                                                            </DropdownMenuItem>
+
+                                                                            <DropdownMenuItem
+                                                                                disabled={!canModify(r)}
+                                                                                onSelect={() => openEdit(r)}
+                                                                            >
+                                                                                <Pencil className="mr-2 h-4 w-4" />
+                                                                                Edit
+                                                                            </DropdownMenuItem>
+
+                                                                            <DropdownMenuItem
+                                                                                disabled={!canModify(r)}
+                                                                                onSelect={() => openDelete(r)}
+                                                                            >
+                                                                                <Trash2 className="mr-2 h-4 w-4" />
+                                                                                Delete
+                                                                            </DropdownMenuItem>
+                                                                        </DropdownMenuContent>
+                                                                    </DropdownMenu>
                                                                 </div>
-                                                                <div className="truncate text-xs text-muted-foreground">
-                                                                    {r.requestedByRole}
-                                                                </div>
-                                                            </div>
-                                                        </TableCell>
-
-                                                        <TableCell className="hidden md:table-cell text-xs text-muted-foreground">
-                                                            {safeDateShort(r.createdAt)}
-                                                        </TableCell>
-
-                                                        <TableCell className="text-right">
-                                                            <div onClick={(e) => e.stopPropagation()}>
-                                                                <DropdownMenu>
-                                                                    <DropdownMenuTrigger asChild>
-                                                                        <Button variant="ghost" size="icon" className="h-9 w-9">
-                                                                            <MoreVertical className="h-4 w-4" />
-                                                                        </Button>
-                                                                    </DropdownMenuTrigger>
-
-                                                                    <DropdownMenuContent align="end" className="w-44">
-                                                                        <DropdownMenuLabel>Referral</DropdownMenuLabel>
-                                                                        <DropdownMenuSeparator />
-
-                                                                        <DropdownMenuItem onSelect={() => void openView(r)}>
-                                                                            <Eye className="mr-2 h-4 w-4" />
-                                                                            View
-                                                                        </DropdownMenuItem>
-
-                                                                        <DropdownMenuItem
-                                                                            disabled={!canModify(r)}
-                                                                            onSelect={() => openEdit(r)}
-                                                                        >
-                                                                            <Pencil className="mr-2 h-4 w-4" />
-                                                                            Edit
-                                                                        </DropdownMenuItem>
-
-                                                                        <DropdownMenuItem
-                                                                            disabled={!canModify(r)}
-                                                                            onSelect={() => openDelete(r)}
-                                                                        >
-                                                                            <Trash2 className="mr-2 h-4 w-4" />
-                                                                            Delete
-                                                                        </DropdownMenuItem>
-                                                                    </DropdownMenuContent>
-                                                                </DropdownMenu>
-                                                            </div>
-                                                        </TableCell>
-                                                    </TableRow>
-                                                ))}
+                                                            </TableCell>
+                                                        </TableRow>
+                                                    )
+                                                })}
                                             </TableBody>
                                         </Table>
                                     </div>
@@ -1109,6 +1238,22 @@ const ReferralUserReferrals: React.FC = () => {
                                         <div className="truncate text-xs text-muted-foreground">
                                             {viewReferral.counselorEmail || "Not assigned"}
                                         </div>
+                                    </div>
+                                </div>
+
+                                {/* ✅ Appointment (read) */}
+                                <div className="rounded-xl border bg-white/60 p-3">
+                                    <div className="flex items-center gap-2">
+                                        <CalendarClock className="h-4 w-4 text-muted-foreground" />
+                                        <div className="text-xs text-muted-foreground">Appointment</div>
+                                    </div>
+                                    <div className="mt-1 text-sm font-semibold text-slate-900">
+                                        {appointmentLabel(viewReferral.scheduledDate ?? null, viewReferral.scheduledTime ?? null)}
+                                    </div>
+                                    <div className="text-xs text-muted-foreground">
+                                        {appointmentLabel(viewReferral.scheduledDate ?? null, viewReferral.scheduledTime ?? null) === "—"
+                                            ? "Not set yet."
+                                            : "Set by counselor (read-only)."}
                                     </div>
                                 </div>
 
