@@ -2,48 +2,25 @@
 import React from "react"
 import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { toast } from "sonner"
-import {
-    ArrowLeft,
-    Save,
-    RefreshCw,
-    UserCircle2,
-    BadgeInfo,
-} from "lucide-react"
+import { ArrowLeft, Save, RefreshCw, UserCircle2, BadgeInfo } from "lucide-react"
 
 import DashboardLayout from "@/components/DashboardLayout"
 import { cn } from "@/lib/utils"
 
 import { fetchCounselorReferralById, updateCounselorReferral } from "@/lib/referrals"
+import { getCurrentSession } from "@/lib/authentication"
+import { AUTH_API_BASE_URL } from "@/api/auth/route"
 
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import {
-    Card,
-    CardContent,
-    CardDescription,
-    CardHeader,
-    CardTitle,
-} from "@/components/ui/card"
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Skeleton } from "@/components/ui/skeleton"
 import { Textarea } from "@/components/ui/textarea"
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogHeader,
-    DialogTitle,
-    DialogTrigger,
-} from "@/components/ui/dialog"
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
 
 type ReferralStatus = "pending" | "handled" | "closed" | string
 
@@ -144,22 +121,83 @@ function normalizeReferral(raw: any): ReferralView {
     }
 }
 
+function trimSlash(s: string) {
+    return s.replace(/\/+$/, "")
+}
+
+function resolveLaravelBaseUrl(): string {
+    const env = (import.meta as any)?.env ?? {}
+
+    const fromEnv =
+        env?.VITE_API_LARAVEL_BASE_URL ||
+        env?.VITE_LARAVEL_API_BASE_URL ||
+        env?.VITE_API_BASE_URL ||
+        ""
+
+    const fromAuthConst = typeof AUTH_API_BASE_URL === "string" ? AUTH_API_BASE_URL : ""
+
+    const raw = String(fromEnv || fromAuthConst || "").trim()
+
+    if (raw) return trimSlash(raw)
+
+    // ✅ dev-friendly fallback (prevents the app from crashing if env isn't injected)
+    // Only applies on localhost to avoid breaking production accidentally.
+    const isDev = Boolean(env?.DEV)
+    const onLocalhost =
+        typeof window !== "undefined" &&
+        (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+
+    if (isDev && onLocalhost) return "http://localhost:8000"
+
+    return ""
+}
+
+function getSessionToken(): string | null {
+    try {
+        const session = getCurrentSession() as any
+        return session?.token ?? session?.access_token ?? null
+    } catch {
+        return null
+    }
+}
+
 async function fetchCounselorsDirectory(search?: string): Promise<DirectoryUser[]> {
     const qs = new URLSearchParams()
     qs.set("role", "counselor")
     qs.set("limit", "50")
     if (search && search.trim()) qs.set("search", search.trim())
 
-    const base =
-        (import.meta as any)?.env?.VITE_API_LARAVEL_BASE_URL ||
-        (import.meta as any)?.env?.VITE_LARAVEL_API_BASE_URL ||
-        ""
+    const base = resolveLaravelBaseUrl()
 
-    if (!base) throw new Error("VITE_API_LARAVEL_BASE_URL is not defined.")
+    if (!base) {
+        throw new Error(
+            [
+                "VITE_API_LARAVEL_BASE_URL is not defined.",
+                "Fix:",
+                "1) Put your frontend .env in the Vite project root (same level as package.json).",
+                "2) Ensure it is named exactly .env (or .env.development).",
+                "3) Restart the Vite dev server after editing env vars.",
+                "Expected: VITE_API_LARAVEL_BASE_URL=http://localhost:8000",
+            ].join("\n"),
+        )
+    }
 
-    const url = `${String(base).replace(/\/+$/, "")}/counselor/users?${qs.toString()}`
+    const url = `${base}/counselor/users?${qs.toString()}`
 
-    const res = await fetch(url, { method: "GET", credentials: "include" })
+    const headers = new Headers()
+    headers.set("Accept", "application/json")
+
+    const token = getSessionToken()
+    if (token) {
+        headers.set("Authorization", `Bearer ${token}`)
+    }
+
+    const res = await fetch(url, {
+        method: "GET",
+        headers,
+        credentials: "include",
+    })
+
     const text = await res.text()
     let data: any = null
     try {
@@ -169,7 +207,12 @@ async function fetchCounselorsDirectory(search?: string): Promise<DirectoryUser[
     }
 
     if (!res.ok) {
-        const msg = data?.message || data?.error || res.statusText || "Failed to fetch counselors."
+        const msg =
+            data?.message ||
+            data?.error ||
+            (typeof data === "string" && data ? data.slice(0, 220) : "") ||
+            res.statusText ||
+            "Failed to fetch counselors."
         throw new Error(msg)
     }
 
@@ -185,9 +228,24 @@ async function fetchCounselorsDirectory(search?: string): Promise<DirectoryUser[
 function statusBadge(status: ReferralStatus) {
     const s = safeStr(status).toLowerCase()
 
-    if (s === "pending") return <Badge variant="secondary" className="capitalize">pending</Badge>
-    if (s === "handled") return <Badge className="capitalize">handled</Badge>
-    if (s === "closed") return <Badge variant="destructive" className="capitalize">closed</Badge>
+    if (s === "pending")
+        return (
+            <Badge variant="secondary" className="capitalize">
+                pending
+            </Badge>
+        )
+    if (s === "handled")
+        return (
+            <Badge className="capitalize">
+                handled
+            </Badge>
+        )
+    if (s === "closed")
+        return (
+            <Badge variant="destructive" className="capitalize">
+                closed
+            </Badge>
+        )
 
     return <Badge variant="outline">{safeStr(status) || "unknown"}</Badge>
 }

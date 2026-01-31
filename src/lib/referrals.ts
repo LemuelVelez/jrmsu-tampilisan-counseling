@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import {
     createReferralApi,
     getCounselorReferralByIdApi,
@@ -7,13 +8,13 @@ import {
     type CreateReferralPayload,
     type PatchReferralPayload,
     type ReferralDto,
-} from "@/api/referrals/route";
+} from "@/api/referrals/route"
 
-export type Referral = ReferralDto;
+export type Referral = ReferralDto
 
 export async function submitReferral(payload: CreateReferralPayload, token?: string | null): Promise<ReferralDto> {
-    const res = await createReferralApi(payload, token);
-    return res.referral;
+    const res = await createReferralApi(payload, token)
+    return res.referral
 }
 
 export async function fetchCounselorReferrals(
@@ -26,9 +27,9 @@ export async function fetchCounselorReferrals(
             per_page: params?.per_page ?? 100,
         },
         token,
-    );
+    )
 
-    return Array.isArray(res?.referrals) ? res.referrals : [];
+    return Array.isArray(res?.referrals) ? res.referrals : []
 }
 
 export async function fetchReferralUserReferrals(
@@ -40,14 +41,34 @@ export async function fetchReferralUserReferrals(
             per_page: params?.per_page ?? 100,
         },
         token,
-    );
+    )
 
-    return Array.isArray(res?.referrals) ? res.referrals : [];
+    return Array.isArray(res?.referrals) ? res.referrals : []
 }
 
 export async function fetchCounselorReferralById(id: number | string, token?: string | null): Promise<ReferralDto> {
-    const res = await getCounselorReferralByIdApi(id, token);
-    return res.referral;
+    const res = await getCounselorReferralByIdApi(id, token)
+    return res.referral
+}
+
+function normalizeCounselorId(value: unknown): number | string | null {
+    if (value == null) return null
+
+    // allow empty string to behave like null (unassign)
+    if (typeof value === "string") {
+        const s = value.trim()
+        if (!s) return null
+        if (/^\d+$/.test(s)) return Number(s)
+        return s
+    }
+
+    if (typeof value === "number") return value
+
+    // fallback
+    const s = String(value).trim()
+    if (!s) return null
+    if (/^\d+$/.test(s)) return Number(s)
+    return s
 }
 
 export async function updateCounselorReferral(
@@ -55,8 +76,15 @@ export async function updateCounselorReferral(
     payload: PatchReferralPayload,
     token?: string | null,
 ): Promise<ReferralDto> {
-    const res = await patchCounselorReferralApi(id, payload, token);
-    return res.referral;
+    // ✅ Make backend validator happy (integer exists:users,id)
+    const normalized: PatchReferralPayload = { ...payload }
+
+    if (Object.prototype.hasOwnProperty.call(normalized, "counselor_id")) {
+        normalized.counselor_id = normalizeCounselorId((normalized as any).counselor_id)
+    }
+
+    const res = await patchCounselorReferralApi(id, normalized, token)
+    return res.referral
 }
 
 export async function changeReferralStatus(
@@ -64,6 +92,6 @@ export async function changeReferralStatus(
     status: string,
     token?: string | null,
 ): Promise<ReferralDto> {
-    const updated = await updateCounselorReferral(id, { status }, token);
-    return updated;
+    const updated = await updateCounselorReferral(id, { status }, token)
+    return updated
 }

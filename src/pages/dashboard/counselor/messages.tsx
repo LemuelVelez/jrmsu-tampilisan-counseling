@@ -57,9 +57,25 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 type PeerRole = "student" | "guest" | "counselor" | "admin" | "referral_user"
 type SenderRole = PeerRole | "system"
 
+/**
+ * ✅ IMPORTANT FIX (NO DUPLICATE THREADS):
+ * We now use a stable thread id ("threadId") for UI grouping & selection,
+ * based on the peer role + peer id (like Messenger).
+ *
+ * - For student/guest/admin/referral_user: threadId = "<role>-<peerId>"
+ * - For counselor↔counselor: threadId = "counselor-<a>__counselor-<b>" (sorted)
+ *
+ * The backend conversation_id (if provided) is stored separately as "conversationId"
+ * and is used for API operations and sending follow-ups to the SAME backend conversation.
+ */
 type UiMessage = {
     id: number | string
-    conversationId: string
+
+    // ✅ stable UI grouping key
+    threadId: string
+
+    // ✅ backend conversation id (may be null/empty depending on API)
+    conversationId: string | null
 
     sender: SenderRole
     senderName: string
@@ -72,7 +88,6 @@ type UiMessage = {
     recipientId?: number | string | null
 
     /**
-     * ✅ FIX:
      * Normalize recipientRole so it is always one of:
      * student|guest|counselor|admin|referral_user|null.
      */
@@ -81,8 +96,7 @@ type UiMessage = {
     userId?: number | string | null
 
     /**
-     * ✅ NEW:
-     * Use backend-provided names so counselor-initiated threads never show "Student #7".
+     * Use backend-provided names so counselor-initiated threads never show placeholders.
      */
     recipientName?: string | null
     userName?: string | null
@@ -93,7 +107,12 @@ type UiMessage = {
 }
 
 type Conversation = {
-    id: string
+    // ✅ stable UI key
+    threadId: string
+
+    // ✅ backend conversation id (best-effort)
+    conversationId: string | null
+
     peerRole: PeerRole
     peerName: string
     peerId?: number | string | null
@@ -113,7 +132,6 @@ type DirectoryUser = {
     role: PeerRole
 
     /**
-     * ✅ NEW:
      * For referral_user accounts, preserve the specific office role if backend provides it
      * (e.g., dean / registrar / program_chair).
      */
@@ -166,7 +184,6 @@ function looksLikeFilePath(s: string): boolean {
  * - "/storage/avatars/foo.jpg"        -> "/storage/avatars/foo.jpg"
  * - Absolute URLs stay untouched
  *
- * ✅ FIX:
  * If backend accidentally returns absolute URLs containing "/api/storage/...",
  * rewrite them to "/storage/..." because your public storage route is "/storage/*".
  */
@@ -184,7 +201,6 @@ function resolveAvatarSrc(raw?: string | null): string | null {
             const u = new URL(s)
             const p = (u.pathname || "").replace(/\\/g, "/")
 
-            // normalize common wrong absolute paths
             u.pathname = p
                 .replace(/^\/api\/storage\//i, "/storage/")
                 .replace(/^\/api\/public\/storage\//i, "/storage/")
@@ -211,7 +227,6 @@ function resolveAvatarSrc(raw?: string | null): string | null {
         path = `storage/${normalized}`
     }
 
-    // also normalize relative "api/storage/..." to "storage/..."
     path = path.replace(/^api\/storage\//i, "storage/")
 
     const finalPath = path.startsWith("/") ? path : `/${path}`
@@ -243,7 +258,6 @@ function pickAvatarUrl(obj: any): string | null {
         if (typeof c === "string" && c.trim()) return c.trim()
     }
 
-    // nested objects
     const nested = [
         obj?.user,
         obj?.sender_user,
@@ -307,7 +321,6 @@ async function apiFetch(path: string, init: RequestInit, token?: string | null):
 }
 
 /**
- * ✅ THOROUGH 401 FIX:
  * Force counselor inbox APIs to use the SAME fetch path as your other working calls,
  * AND always include Bearer token from the current session.
  */
@@ -489,49 +502,78 @@ function isUnreadFlag(dto: CounselorMessage): boolean {
     return dto.is_read === false || dto.is_read === 0
 }
 
-function safeConversationId(dto: CounselorMessage): string {
-    const raw = (dto as any).conversation_id ?? dto.conversation_id
-    if (raw != null && String(raw).trim()) return String(raw)
+function normalizeConversationIdFromDto(dto: CounselorMessage): string | null {
+    const raw = (dto as any).conversation_id ?? (dto as any).conversationId ?? null
+    const s = raw == null ? "" : String(raw).trim()
+    return s ? s : null
+}
 
+/**
+ * ✅ Stable thread key (Messenger-like)
+ */
+function computeThreadId(myCounselorId: string, peerRole: PeerRole, peerId: number | string | null | undefined): string {
+    const pid = peerId == null ? "" : String(peerId).trim()
+    if (!pid) return `general-${peerRole}`
+
+    if (peerRole === "counselor") {
+        const me = String(myCounselorId ?? "").trim()
+        const them = pid
+        if (me && them) {
+            const a = `counselor-${me}`
+            const b = `counselor-${them}`
+            const [x, y] = [a, b].sort()
+            return `${x}__${y}`
+        }
+        return `counselor-${them || me || "unknown"}`
+    }
+
+    return `${peerRole}-${pid}`
+}
+
+/**
+ * Determine the peer (role + id) for THIS counselor, then build the stable threadId.
+ */
+function deriveThreadIdFromDto(dto: CounselorMessage, myCounselorId: string): string {
     const sender = normalizeSender(dto.sender)
+
     const senderId = (dto as any).sender_id ?? null
+    const recipientId = (dto as any).recipient_id ?? null
+    const userId = (dto as any).user_id ?? dto.user_id ?? null
 
     const recipientRoleRaw = (dto as any).recipient_role ?? (dto as any).recipientRole ?? null
     const recipientRole = normalizeRecipientRole(recipientRoleRaw)
 
-    const recipientId = (dto as any).recipient_id ?? null
-    const userId = (dto as any).user_id ?? dto.user_id ?? null
+    // If sender is counselor:
+    // - if it's not ME, peer is that counselor
+    // - else peer is the recipient (role + id)
+    if (sender === "counselor") {
+        const sid = senderId == null ? "" : String(senderId).trim()
+        if (sid && sid !== String(myCounselorId)) {
+            return computeThreadId(myCounselorId, "counselor", senderId)
+        }
 
-    if ((sender === "student" || sender === "guest" || sender === "referral_user" || sender === "admin") && userId != null) {
-        return `${sender}-${userId}`
+        if (recipientRole && recipientId != null) {
+            return computeThreadId(myCounselorId, recipientRole, recipientId)
+        }
+
+        // fallback: sometimes APIs attach user_id for student/guest but omit recipient_role
+        if (userId != null) {
+            const possibleRole =
+                normalizeRecipientRole((dto as any).user_role ?? (dto as any).userRole ?? (dto as any)?.user?.role ?? null) ??
+                "student"
+            return computeThreadId(myCounselorId, possibleRole, userId)
+        }
+
+        return "general"
     }
 
-    if (
-        (recipientRole === "student" ||
-            recipientRole === "guest" ||
-            recipientRole === "admin" ||
-            recipientRole === "referral_user") &&
-        recipientId != null
-    ) {
-        return `${recipientRole}-${recipientId}`
-    }
-
-    if (userId != null) return `student-${userId}`
-
-    if (sender === "counselor" && recipientRole === "counselor" && senderId != null && recipientId != null) {
-        const a = `counselor-${String(senderId)}`
-        const b = `counselor-${String(recipientId)}`
-        const [x, y] = [a, b].sort()
-        return `${x}__${y}`
-    }
-
-    if (sender === "counselor" && senderId != null) return `counselor-${senderId}`
-    if (recipientRole === "counselor" && recipientId != null) return `counselor-${recipientId}`
-
-    return "general"
+    // If sender is student/guest/admin/referral_user: peer is the sender
+    const peerRole = sender as PeerRole
+    const peerId = senderId ?? userId ?? null
+    return computeThreadId(myCounselorId, peerRole, peerId)
 }
 
-function mapDtoToUi(dto: CounselorMessage): UiMessage {
+function mapDtoToUi(dto: CounselorMessage, myCounselorId: string, counselorName: string): UiMessage {
     const sender = normalizeSender(dto.sender)
 
     const senderName =
@@ -571,14 +613,20 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
                 ? null
                 : String(recipientNameRaw)
 
-    const userName =
-        typeof userNameRaw === "string" ? userNameRaw : userNameRaw == null ? null : String(userNameRaw)
+    const userName = typeof userNameRaw === "string" ? userNameRaw : userNameRaw == null ? null : String(userNameRaw)
+
+    const conversationId = normalizeConversationIdFromDto(dto)
+    const threadId = deriveThreadIdFromDto(dto, myCounselorId)
+
+    const id = dto.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`
 
     return {
-        id: dto.id ?? `${createdAt}-${sender}-${Math.random().toString(36).slice(2)}`,
-        conversationId: safeConversationId(dto),
+        id,
+        threadId,
+        conversationId,
+
         sender,
-        senderName,
+        senderName: sender === "counselor" && senderName === "Counselor" && counselorName ? counselorName : senderName,
         content: dto.content ?? "",
         createdAt,
         isUnread: isUnreadFlag(dto),
@@ -596,17 +644,51 @@ function mapDtoToUi(dto: CounselorMessage): UiMessage {
     }
 }
 
-function buildConversations(messages: UiMessage[], myUserId: string, counselorName: string): Conversation[] {
+/**
+ * From a UiMessage, determine the peer (role/id) for this counselor.
+ */
+function peerFromUiMessage(
+    m: UiMessage,
+    myCounselorId: string,
+): { role: PeerRole; id: number | string | null; dir: "incoming" | "outgoing" } | null {
+    if (m.sender === "system") return null
+
+    if (m.sender !== "counselor") {
+        const id = (m.senderId ?? m.userId) as any
+        if (id == null || String(id).trim() === "") return null
+        return { role: m.sender as PeerRole, id, dir: "incoming" }
+    }
+
+    const sid = m.senderId == null ? "" : String(m.senderId).trim()
+    if (sid && sid !== String(myCounselorId)) {
+        return { role: "counselor", id: m.senderId ?? null, dir: "incoming" }
+    }
+
+    const rr = m.recipientRole ?? null
+    const rid = m.recipientId ?? null
+    if (!rr || rid == null || String(rid).trim() === "") return null
+    return { role: rr, id: rid, dir: "outgoing" }
+}
+
+function isPlaceholderPeerName(peerName: string, role: PeerRole, id?: number | string | null): boolean {
+    if (id == null || String(id).trim() === "") return false
+    const cleaned = String(peerName ?? "").trim()
+    const label = roleLabel(role)
+    const placeholder = `${label} #${String(id).trim()}`
+    return cleaned === placeholder || cleaned === label
+}
+
+function buildConversations(messages: UiMessage[], myCounselorId: string, counselorName: string): Conversation[] {
     const grouped = new Map<string, UiMessage[]>()
     for (const m of messages) {
-        const arr = grouped.get(m.conversationId) ?? []
+        const arr = grouped.get(m.threadId) ?? []
         arr.push(m)
-        grouped.set(m.conversationId, arr)
+        grouped.set(m.threadId, arr)
     }
 
     const conversations: Conversation[] = []
 
-    for (const [conversationId, msgs] of grouped.entries()) {
+    for (const [threadId, msgs] of grouped.entries()) {
         const ordered = [...msgs].sort((a, b) => {
             const ta = new Date(a.createdAt).getTime()
             const tb = new Date(b.createdAt).getTime()
@@ -617,55 +699,54 @@ function buildConversations(messages: UiMessage[], myUserId: string, counselorNa
         const last = ordered[ordered.length - 1]
         const unreadCount = ordered.filter((m) => m.isUnread).length
 
-        const peerMsg =
+        // pick a message that best represents the peer
+        const pick =
             ordered.find((m) => {
-                if (m.sender === "system") return false
-                if (m.sender !== "counselor") return true
-                const sid = m.senderId != null ? String(m.senderId) : ""
-                return sid && sid !== myUserId
+                const p = peerFromUiMessage(m, myCounselorId)
+                return !!p
             }) ?? last
 
+        const peerInfo = peerFromUiMessage(pick, myCounselorId)
+
         let peerRole: PeerRole = "counselor"
-        let peerName = "Counselor Office"
         let peerId: number | string | null | undefined = null
+        let peerName = "Counselor Office"
+        let peerAvatarUrl: string | null = null
 
-        const mySentCounselor = peerMsg.sender === "counselor" && String(peerMsg.senderId ?? "") === myUserId
+        if (peerInfo) {
+            peerRole = peerInfo.role
+            peerId = peerInfo.id
 
-        if (!mySentCounselor && peerMsg.sender !== "system") {
-            peerRole = (peerMsg.sender as PeerRole) ?? "counselor"
-
-            peerName =
-                peerMsg.sender === "counselor" && peerMsg.senderName === counselorName
-                    ? "Counselor"
-                    : peerMsg.senderName || roleLabel(peerRole)
-
-            peerId = peerMsg.senderId ?? peerMsg.userId ?? null
-        } else {
-            const rr = peerMsg.recipientRole ?? "counselor"
-            peerRole = rr
-            peerId = peerMsg.recipientId ?? null
-
-            const nameCandidate = String(peerMsg.recipientName ?? peerMsg.userName ?? "").trim()
-            if (nameCandidate) {
-                peerName = nameCandidate
-            } else {
-                if (peerRole === "counselor") {
-                    peerName = peerId ? "Counselor" : "Counselor Office"
-                } else {
-                    peerName = roleLabel(peerRole)
+            if (peerInfo.dir === "incoming") {
+                // incoming peer
+                if (pick.sender !== "system" && pick.sender !== "counselor") {
+                    const nm = String(pick.senderName ?? "").trim()
+                    peerName = nm || roleLabel(peerRole)
+                    peerAvatarUrl = pick.senderAvatarUrl ?? null
+                } else if (pick.sender === "counselor") {
+                    const nm = String(pick.senderName ?? "").trim()
+                    peerName = nm && nm !== counselorName ? nm : "Counselor"
+                    peerAvatarUrl = pick.senderAvatarUrl ?? null
                 }
+            } else {
+                // outgoing to recipient
+                const nm = String(pick.recipientName ?? pick.userName ?? "").trim()
+                if (nm) peerName = nm
+                else peerName = peerRole === "counselor" ? "Counselor" : roleLabel(peerRole)
+
+                peerAvatarUrl = pick.recipientAvatarUrl ?? null
             }
         }
 
         const subtitle = roleThreadLabel(peerRole)
 
-        const peerAvatarUrl =
-            !mySentCounselor && peerMsg.sender !== "system"
-                ? (peerMsg.senderAvatarUrl ?? null)
-                : (peerMsg.recipientAvatarUrl ?? null)
+        // backend conversation id: prefer last non-null
+        const backendConversationId =
+            [...ordered].reverse().find((m) => m.conversationId && String(m.conversationId).trim())?.conversationId ?? null
 
         conversations.push({
-            id: conversationId,
+            threadId,
+            conversationId: backendConversationId,
             peerRole,
             peerName,
             peerId,
@@ -692,16 +773,8 @@ function peerKey(role: PeerRole, id?: number | string | null): string | null {
     return `${role}-${String(id)}`
 }
 
-function isPlaceholderPeerName(peerName: string, role: PeerRole, id?: number | string | null): boolean {
-    if (id == null || String(id).trim() === "") return false
-    const cleaned = String(peerName ?? "").trim()
-    const label = roleLabel(role)
-    const placeholder = `${label} #${String(id).trim()}`
-    return cleaned === placeholder || cleaned === label
-}
-
 /**
- * ✅ Persist peer profile cache so navigating away/back won't revert to placeholders.
+ * Persist peer profile cache so navigating away/back won't revert to placeholders.
  */
 const PEER_PROFILE_STORAGE_KEY = "counselor.messages.peerProfiles.v1"
 
@@ -828,7 +901,7 @@ function UserCombobox(props: {
 }
 
 /**
- * ✅ Fetch users from DB (NOT from message history).
+ * Fetch users from DB (NOT from message history).
  */
 async function trySearchUsersFromDb(role: PeerRole, query: string, token?: string | null): Promise<DirectoryUser[]> {
     const q = query.trim()
@@ -940,7 +1013,7 @@ async function trySearchUsersFromDb(role: PeerRole, query: string, token?: strin
 }
 
 /**
- * ✅ Fetch a single user's profile (name + avatar) for conversations coming from history.
+ * Fetch a single user's profile (name + avatar) for conversations coming from history.
  */
 async function tryFetchUserProfileById(
     role: PeerRole,
@@ -1075,7 +1148,7 @@ const CounselorMessages: React.FC = () => {
     const [draft, setDraft] = React.useState("")
 
     const [messages, setMessages] = React.useState<UiMessage[]>([])
-    const [activeConversationId, setActiveConversationId] = React.useState<string>("")
+    const [activeThreadId, setActiveThreadId] = React.useState<string>("")
 
     const [draftConversations, setDraftConversations] = React.useState<Conversation[]>([])
     const [showNewMessage, setShowNewMessage] = React.useState(false)
@@ -1087,7 +1160,7 @@ const CounselorMessages: React.FC = () => {
     const [recipientResults, setRecipientResults] = React.useState<DirectoryUser[]>([])
     const [recipientLoading, setRecipientLoading] = React.useState(false)
 
-    // ✅ profile cache (persisted) (name + avatar) for conversations built from message history
+    // profile cache (persisted) (name + avatar) for conversations built from message history
     const initialProfiles = React.useMemo(() => readPeerProfilesFromStorage(), [])
     const [profileByPeerKey, setProfileByPeerKey] = React.useState<Record<string, PeerProfile>>(initialProfiles)
     const profileCacheRef = React.useRef(new Map<string, PeerProfile>(Object.entries(initialProfiles)))
@@ -1118,17 +1191,16 @@ const CounselorMessages: React.FC = () => {
     const [deleteConvoOpen, setDeleteConvoOpen] = React.useState(false)
     const [isDeletingConvo, setIsDeletingConvo] = React.useState(false)
 
-    // ✅ Track which conversations the user actually opened on this page
-    // (So we only auto-mark-read AFTER they open the thread or send a reply.)
-    const openedConversationIdsRef = React.useRef(new Set<string>())
+    // Track which threads the user actually opened on this page
+    const openedThreadIdsRef = React.useRef(new Set<string>())
 
-    // ✅ Avoid duplicate mark-read calls for the same conversation
+    // Avoid duplicate mark-read calls for the same thread
     const markInflightRef = React.useRef(new Set<string>())
 
-    const openConversation = React.useCallback((conversationId: string) => {
-        if (!conversationId) return
-        openedConversationIdsRef.current.add(conversationId)
-        setActiveConversationId(conversationId)
+    const openConversation = React.useCallback((threadId: string) => {
+        if (!threadId) return
+        openedThreadIdsRef.current.add(threadId)
+        setActiveThreadId(threadId)
         setMobileView("chat")
     }, [])
 
@@ -1203,23 +1275,22 @@ const CounselorMessages: React.FC = () => {
         try {
             const res = await counselorInboxGet(token)
             const raw = Array.isArray(res?.messages) ? res.messages : []
-            const ui = raw.map(mapDtoToUi)
+            const ui = raw.map((dto: CounselorMessage) => mapDtoToUi(dto, myUserId, counselorName))
 
             setMessages(ui)
             seedProfilesFromMessages(ui)
 
-            // ✅ IMPORTANT:
             // Do NOT auto-select / auto-activate a thread on page open.
             // Only clear the active thread if it no longer exists.
             const convs = buildConversations(ui, myUserId, counselorName)
 
-            const current = activeConversationId
-            const hasCurrentInServer = !!current && convs.some((c) => c.id === current)
-            const hasCurrentInDraft = !!current && draftConversations.some((d) => d.id === current)
+            const current = activeThreadId
+            const hasCurrentInServer = !!current && convs.some((c) => c.threadId === current)
+            const hasCurrentInDraft = !!current && draftConversations.some((d) => d.threadId === current)
 
             if (current && !hasCurrentInServer && !hasCurrentInDraft) {
-                openedConversationIdsRef.current.delete(current)
-                setActiveConversationId("")
+                openedThreadIdsRef.current.delete(current)
+                setActiveThreadId("")
                 setMobileView("list")
             }
         } catch (err: any) {
@@ -1245,9 +1316,9 @@ const CounselorMessages: React.FC = () => {
 
     const conversations = React.useMemo(() => {
         const map = new Map<string, Conversation>()
-        for (const c of conversationsFromMessages) map.set(c.id, c)
+        for (const c of conversationsFromMessages) map.set(c.threadId, c)
         for (const d of draftConversations) {
-            if (!map.has(d.id)) map.set(d.id, d)
+            if (!map.has(d.threadId)) map.set(d.threadId, d)
         }
 
         const merged = Array.from(map.values())
@@ -1302,7 +1373,7 @@ const CounselorMessages: React.FC = () => {
         [getPeerProfile],
     )
 
-    // ✅ Backfill names + avatars for conversations that come from message history
+    // Backfill names + avatars for conversations that come from message history
     React.useEffect(() => {
         const controller = new AbortController()
 
@@ -1348,7 +1419,8 @@ const CounselorMessages: React.FC = () => {
                             const prev = profileCacheRef.current.get(item.key) ?? { name: null, avatar_url: null }
                             const merged: PeerProfile = {
                                 name: prof.name && prof.name.trim() ? prof.name.trim() : prev.name,
-                                avatar_url: prof.avatar_url && prof.avatar_url.trim() ? prof.avatar_url.trim() : prev.avatar_url,
+                                avatar_url:
+                                    prof.avatar_url && prof.avatar_url.trim() ? prof.avatar_url.trim() : prev.avatar_url,
                             }
 
                             profileCacheRef.current.set(item.key, merged)
@@ -1374,46 +1446,40 @@ const CounselorMessages: React.FC = () => {
         if (isLoading) return
 
         const targetRole = payload.role
-        const targetId = String(payload.id)
 
-        const existing =
-            conversations.find((c) => c.peerRole === targetRole && String(c.peerId ?? "") === targetId) ?? null
+        const targetThreadId = computeThreadId(myUserId, targetRole, payload.id)
 
+        const existing = conversations.find((c) => c.threadId === targetThreadId) ?? null
         if (existing) {
-            openConversation(existing.id)
+            openConversation(existing.threadId)
         } else {
-            const existingDraft =
-                draftConversations.find((d) => d.peerRole === targetRole && String(d.peerId ?? "") === targetId) ?? null
+            const nowIso = new Date().toISOString()
+            const subtitle = roleThreadLabel(targetRole)
 
-            if (existingDraft) {
-                openConversation(existingDraft.id)
-            } else {
-                const nowIso = new Date().toISOString()
-                const conversationId = `new-${targetRole}-${targetId}-${Date.now()}`
+            const convo: Conversation = {
+                threadId: targetThreadId,
+                conversationId: null,
+                peerRole: targetRole,
+                peerName: payload.name ?? roleLabel(targetRole),
+                peerId: payload.id,
+                subtitle,
+                unreadCount: 0,
+                lastMessage: "",
+                lastTimestamp: nowIso,
+                peerAvatarUrl: null,
+            }
 
-                const subtitle = roleThreadLabel(targetRole)
+            setDraftConversations((prev) => {
+                const already = prev.some((d) => d.threadId === targetThreadId)
+                return already ? prev : [convo, ...prev]
+            })
+            openConversation(targetThreadId)
 
-                const convo: Conversation = {
-                    id: conversationId,
-                    peerRole: targetRole,
-                    peerName: payload.name ?? roleLabel(targetRole),
-                    peerId: payload.id,
-                    subtitle,
-                    unreadCount: 0,
-                    lastMessage: "",
-                    lastTimestamp: nowIso,
-                    peerAvatarUrl: null,
-                }
-
-                setDraftConversations((prev) => [convo, ...prev])
-                openConversation(conversationId)
-
-                const k = peerKey(convo.peerRole, convo.peerId)
-                if (k) {
-                    const merged: PeerProfile = { name: convo.peerName, avatar_url: null }
-                    profileCacheRef.current.set(k, merged)
-                    setProfileByPeerKey((prev) => ({ ...prev, [k]: merged }))
-                }
+            const k = peerKey(convo.peerRole, convo.peerId)
+            if (k) {
+                const merged: PeerProfile = { name: convo.peerName, avatar_url: null }
+                profileCacheRef.current.set(k, merged)
+                setProfileByPeerKey((prev) => ({ ...prev, [k]: merged }))
             }
         }
 
@@ -1421,7 +1487,7 @@ const CounselorMessages: React.FC = () => {
 
         autoStartRef.current = null
         navigate("/dashboard/counselor/messages", { replace: true, state: {} })
-    }, [conversations, draftConversations, isLoading, navigate, openConversation])
+    }, [conversations, isLoading, navigate, openConversation, myUserId])
 
     const filteredConversations = React.useMemo(() => {
         const q = search.trim().toLowerCase()
@@ -1439,16 +1505,16 @@ const CounselorMessages: React.FC = () => {
     }, [conversations, roleFilter, search, getConversationDisplayName])
 
     const activeConversation = React.useMemo(
-        () => conversations.find((c) => c.id === activeConversationId) ?? null,
-        [conversations, activeConversationId],
+        () => conversations.find((c) => c.threadId === activeThreadId) ?? null,
+        [conversations, activeThreadId],
     )
 
     const activeMessages = React.useMemo(() => {
-        if (!activeConversationId) return []
+        if (!activeThreadId) return []
         return messages
-            .filter((m) => m.conversationId === activeConversationId)
+            .filter((m) => m.threadId === activeThreadId)
             .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
-    }, [messages, activeConversationId])
+    }, [messages, activeThreadId])
 
     React.useEffect(() => {
         let mounted = true
@@ -1465,7 +1531,7 @@ const CounselorMessages: React.FC = () => {
 
     React.useEffect(() => {
         bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-    }, [activeConversationId, activeMessages.length])
+    }, [activeThreadId, activeMessages.length])
 
     // Fetch recipients from DB (debounced)
     React.useEffect(() => {
@@ -1503,15 +1569,15 @@ const CounselorMessages: React.FC = () => {
         }
     }, [recipientQuery, newRole, showNewMessage, token])
 
-    const markConversationReadById = React.useCallback(
-        async (conversationId: string, opts?: { silent?: boolean }) => {
-            if (!conversationId) return
-            if (markInflightRef.current.has(conversationId)) return
+    const markThreadReadById = React.useCallback(
+        async (threadId: string, opts?: { silent?: boolean }) => {
+            if (!threadId) return
+            if (markInflightRef.current.has(threadId)) return
 
-            const unread = messages.filter((m) => m.conversationId === conversationId && m.isUnread)
+            const unread = messages.filter((m) => m.threadId === threadId && m.isUnread)
             if (unread.length === 0) return
 
-            markInflightRef.current.add(conversationId)
+            markInflightRef.current.add(threadId)
             try {
                 const numericIds = unread
                     .map((m) => (typeof m.id === "number" ? m.id : Number.NaN))
@@ -1521,37 +1587,35 @@ const CounselorMessages: React.FC = () => {
                     await counselorInboxMarkRead(numericIds, token)
                 }
 
-                setMessages((prev) =>
-                    prev.map((m) => (m.conversationId === conversationId ? { ...m, isUnread: false } : m)),
-                )
+                setMessages((prev) => prev.map((m) => (m.threadId === threadId ? { ...m, isUnread: false } : m)))
             } catch (err: any) {
                 if (!opts?.silent) {
                     if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
                     else toast.error(err instanceof Error ? err.message : "Failed to mark messages as read.")
                 }
             } finally {
-                markInflightRef.current.delete(conversationId)
+                markInflightRef.current.delete(threadId)
             }
         },
         [messages, token],
     )
 
     /**
-     * ✅ REQUIRED BEHAVIOR:
+     * REQUIRED BEHAVIOR:
      * - Do NOT mark read unless the user OPENED the thread (clicked it / auto-start) OR sent a reply.
      * - Once opened, auto-mark as read (no "NEW" pill inside the thread).
      */
     React.useEffect(() => {
-        if (!activeConversationId) return
-        if (!openedConversationIdsRef.current.has(activeConversationId)) return
-        void markConversationReadById(activeConversationId, { silent: true })
-    }, [activeConversationId, activeMessages.length, markConversationReadById])
+        if (!activeThreadId) return
+        if (!openedThreadIdsRef.current.has(activeThreadId)) return
+        void markThreadReadById(activeThreadId, { silent: true })
+    }, [activeThreadId, activeMessages.length, markThreadReadById])
 
     const markConversationRead = async () => {
-        if (!activeConversationId) return
+        if (!activeThreadId) return
         setIsMarking(true)
         try {
-            await markConversationReadById(activeConversationId, { silent: false })
+            await markThreadReadById(activeThreadId, { silent: false })
         } finally {
             setIsMarking(false)
         }
@@ -1566,12 +1630,26 @@ const CounselorMessages: React.FC = () => {
         const peerId = newRecipient.id
         const peerName = newRecipient.name
 
-        const conversationId = `new-${newRecipient.role}-${String(peerId)}-${Date.now()}`
+        // ✅ FIX: stable thread id (no "new-...Date.now()" ids)
+        const threadId = computeThreadId(myUserId, newRecipient.role, peerId)
+
+        // if thread already exists (from messages or drafts), just open it
+        const existing = conversations.find((c) => c.threadId === threadId) ?? null
+        if (existing) {
+            openConversation(existing.threadId)
+            setShowNewMessage(false)
+            setNewRecipient(null)
+            setRecipientQuery("")
+            setRecipientResults([])
+            return
+        }
+
         const subtitle = roleThreadLabel(newRecipient.role)
         const nowIso = new Date().toISOString()
 
         const convo: Conversation = {
-            id: conversationId,
+            threadId,
+            conversationId: null,
             peerRole: newRecipient.role,
             peerName,
             peerId,
@@ -1582,8 +1660,11 @@ const CounselorMessages: React.FC = () => {
             peerAvatarUrl: newRecipient.avatar_url ?? null,
         }
 
-        setDraftConversations((prev) => [convo, ...prev])
-        openConversation(conversationId)
+        setDraftConversations((prev) => {
+            const already = prev.some((d) => d.threadId === threadId)
+            return already ? prev : [convo, ...prev]
+        })
+        openConversation(threadId)
         setShowNewMessage(false)
 
         const k = peerKey(convo.peerRole, convo.peerId)
@@ -1609,8 +1690,8 @@ const CounselorMessages: React.FC = () => {
             return
         }
 
-        // ✅ sending a reply counts as "opened" for auto-mark-read behavior
-        openedConversationIdsRef.current.add(activeConversation.id)
+        // sending a reply counts as "opened" for auto-mark-read behavior
+        openedThreadIdsRef.current.add(activeConversation.threadId)
 
         const text = draft.trim()
         if (!text) return
@@ -1623,9 +1704,17 @@ const CounselorMessages: React.FC = () => {
         const tempId = `local-${++localIdRef.current}`
         const nowIso = new Date().toISOString()
 
+        // best-effort backend conversation id for this thread
+        const backendConversationId =
+            activeConversation.conversationId ??
+            [...activeMessages].reverse().find((m) => m.conversationId && String(m.conversationId).trim())?.conversationId ??
+            null
+
         const optimistic: UiMessage = {
             id: tempId,
-            conversationId: activeConversation.id,
+            threadId: activeConversation.threadId,
+            conversationId: backendConversationId,
+
             sender: "counselor",
             senderName: counselorName,
             content: text,
@@ -1644,21 +1733,37 @@ const CounselorMessages: React.FC = () => {
         try {
             const payload: any = {
                 content: text,
-                conversation_id: activeConversation.id,
                 recipient_role: activeConversation.peerRole,
                 recipient_id: activeConversation.peerId,
             }
 
+            // ✅ CRITICAL FIX (NO DUPLICATE THREADS):
+            // Only send conversation_id if we already KNOW the backend conversation id.
+            // If we don't know it (first message), omit it so backend can:
+            // - reuse existing convo between the same participants, OR
+            // - create it once (then returns conversation_id).
+            if (backendConversationId) {
+                payload.conversation_id = backendConversationId
+            }
+
             const res = await counselorInboxSend(payload, token)
             const dto = res?.messageRecord ?? res?.message ?? null
-            const serverMsg = dto ? mapDtoToUi(dto) : null
+            const serverMsg = dto ? mapDtoToUi(dto, myUserId, counselorName) : null
 
             if (serverMsg) {
-                setMessages((prev) => prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)))
+                setMessages((prev) =>
+                    prev.map((m) => (m.id === tempId ? { ...serverMsg, isUnread: false } : m)),
+                )
 
-                if (serverMsg.conversationId && serverMsg.conversationId !== activeConversation.id) {
-                    openedConversationIdsRef.current.add(serverMsg.conversationId)
-                    setActiveConversationId(serverMsg.conversationId)
+                // If backend returned a conversationId for this thread, store it in draft conversation entry if needed
+                if (serverMsg.conversationId) {
+                    setDraftConversations((prev) =>
+                        prev.map((c) =>
+                            c.threadId === activeConversation.threadId
+                                ? { ...c, conversationId: serverMsg.conversationId }
+                                : c,
+                        ),
+                    )
                 }
 
                 if (serverMsg.recipientRole && serverMsg.recipientId != null) {
@@ -1676,10 +1781,11 @@ const CounselorMessages: React.FC = () => {
                 }
             }
 
-            setDraftConversations((prev) => prev.filter((c) => c.id !== activeConversation.id))
+            // remove any draft for this thread once first message is sent
+            setDraftConversations((prev) => prev.filter((c) => c.threadId !== activeConversation.threadId))
 
             // auto-mark-read after sending (silent)
-            void markConversationReadById(activeConversation.id, { silent: true })
+            void markThreadReadById(activeConversation.threadId, { silent: true })
         } catch (err: any) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId))
             if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
@@ -1779,27 +1885,30 @@ const CounselorMessages: React.FC = () => {
     const confirmDeleteConversation = async () => {
         if (!activeConversation) return
 
-        const convoId = activeConversation.id
+        const threadId = activeConversation.threadId
         const toDelete = activeMessages
 
         setIsDeletingConvo(true)
 
         const removedPayload = {
             messages: toDelete,
-            draft: draftConversations.find((d) => d.id === convoId) ?? null,
+            draft: draftConversations.find((d) => d.threadId === threadId) ?? null,
         }
 
-        setMessages((prev) => prev.filter((m) => m.conversationId !== convoId))
-        setDraftConversations((prev) => prev.filter((d) => d.id !== convoId))
+        setMessages((prev) => prev.filter((m) => m.threadId !== threadId))
+        setDraftConversations((prev) => prev.filter((d) => d.threadId !== threadId))
 
         try {
-            await tryDeleteConversationApi(convoId, token)
+            // Prefer backend conversation id, fallback to thread id (some APIs accept thread keys)
+            const idForApi = activeConversation.conversationId ?? threadId
+            await tryDeleteConversationApi(idForApi, token)
+
             toast.success("Conversation deleted.")
             setDeleteConvoOpen(false)
 
-            // ✅ Do NOT auto-activate another thread after delete
-            openedConversationIdsRef.current.delete(convoId)
-            setActiveConversationId("")
+            // Do NOT auto-activate another thread after delete
+            openedThreadIdsRef.current.delete(threadId)
+            setActiveThreadId("")
             setMobileView("list")
         } catch (err) {
             setMessages((prev) => [...prev, ...removedPayload.messages])
@@ -1974,19 +2083,18 @@ const CounselorMessages: React.FC = () => {
                                             </div>
                                         ) : (
                                             filteredConversations.map((c) => {
-                                                const active = c.id === activeConversationId
+                                                const active = c.threadId === activeThreadId
                                                 const avatarSrc = getConversationAvatarSrc(c)
                                                 const displayName = getConversationDisplayName(c)
 
                                                 return (
                                                     <Button
-                                                        key={c.id}
+                                                        key={c.threadId}
                                                         type="button"
                                                         variant="ghost"
-                                                        onClick={() => openConversation(c.id)}
+                                                        onClick={() => openConversation(c.threadId)}
                                                         className={cn(
                                                             "h-auto w-full justify-start rounded-xl border p-0 text-left transition-colors",
-                                                            // ✅ Active thread color uses theme tokens from index.css
                                                             active
                                                                 ? "border-sidebar-border bg-sidebar-accent text-sidebar-accent-foreground ring-1 ring-ring/20 shadow-sm hover:bg-sidebar-accent"
                                                                 : "border-border bg-card/60 hover:bg-card",
@@ -2181,8 +2289,6 @@ const CounselorMessages: React.FC = () => {
 
                                                                     <span className="sm:hidden">{formatTimeOnly(m.createdAt)}</span>
                                                                     <span className="hidden sm:inline">{formatTimestamp(m.createdAt)}</span>
-
-                                                                    {/* ✅ Removed the in-thread "NEW" pill (your requirement) */}
 
                                                                     {(canEdit(m) || canDelete(m)) && (
                                                                         <DropdownMenu>

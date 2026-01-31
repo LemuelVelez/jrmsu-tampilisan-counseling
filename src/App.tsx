@@ -1,6 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { Suspense } from "react";
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
+import {
+  BrowserRouter,
+  Routes,
+  Route,
+  Navigate,
+  useLocation,
+  useSearchParams,
+} from "react-router-dom";
 
 import LandingPage from "./pages/landing";
 import AuthPage from "./pages/auth/auth";
@@ -106,7 +113,12 @@ function RequireRole({
   // Email not verified
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
+    return (
+      <Navigate
+        to={`/auth/verify-email?email=${encodeURIComponent(email)}`}
+        replace
+      />
+    );
   }
 
   const role = normalizeRole(user.role ?? "");
@@ -130,7 +142,12 @@ function DashboardIndexRoute() {
   // If somehow they have a session but not verified, always push to verify
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
+    return (
+      <Navigate
+        to={`/auth/verify-email?email=${encodeURIComponent(email)}`}
+        replace
+      />
+    );
   }
 
   const dashboardPath = resolveDashboardPathForRole(user.role ?? null);
@@ -145,7 +162,12 @@ function SettingsIndexRoute() {
 
   if (!isEmailVerified(user)) {
     const email = typeof user.email === "string" ? user.email : "";
-    return <Navigate to={`/auth/verify-email?email=${encodeURIComponent(email)}`} replace />;
+    return (
+      <Navigate
+        to={`/auth/verify-email?email=${encodeURIComponent(email)}`}
+        replace
+      />
+    );
   }
 
   const role = normalizeRole(user.role ?? "");
@@ -173,6 +195,31 @@ function SettingsIndexRoute() {
   // Otherwise go to their dashboard home
   const dashboardPath = resolveDashboardPathForRole(user.role ?? null);
   return <Navigate to={dashboardPath} replace />;
+}
+
+/**
+ * ✅ Fix navigation mismatch:
+ * Your referrals list navigates to:
+ *   /dashboard/counselor/referral-details?id=123
+ * But the canonical details route is:
+ *   /dashboard/counselor/referrals/:id
+ *
+ * This route adapter redirects (with replace) so Back works correctly.
+ */
+function CounselorReferralDetailsIndexRoute() {
+  const [searchParams] = useSearchParams();
+  const id = (searchParams.get("id") || "").trim();
+
+  if (!id) {
+    return <Navigate to="/dashboard/counselor/referrals" replace />;
+  }
+
+  return (
+    <Navigate
+      to={`/dashboard/counselor/referrals/${encodeURIComponent(id)}`}
+      replace
+    />
+  );
 }
 
 function App() {
@@ -296,7 +343,17 @@ function App() {
             }
           />
 
-          {/* ✅ Counselor referral details */}
+          {/* ✅ FIX: Legacy/details navigation adapter (query-based) */}
+          <Route
+            path="/dashboard/counselor/referral-details"
+            element={
+              <RequireRole allowedRoles={["counselor", "counsellor"]}>
+                <CounselorReferralDetailsIndexRoute />
+              </RequireRole>
+            }
+          />
+
+          {/* ✅ Counselor referral details (canonical, param-based) */}
           <Route
             path="/dashboard/counselor/referrals/:id"
             element={
