@@ -273,14 +273,62 @@ function isUnreadFlag(dto: any): boolean {
     return dto?.is_read === false || dto?.is_read === 0
 }
 
+function normalizeIdString(v: unknown): string {
+    if (v == null) return ""
+    const s = String(v).trim()
+    return s
+}
+
+function isCounselorSenderValue(raw: unknown): boolean {
+    const s = String(raw ?? "").trim().toLowerCase()
+    if (!s) return false
+    return s === "counselor" || s.includes("counselor") || s.includes("counsellor") || s.includes("guidance")
+}
+
+/**
+ * ✅ Canonical conversation id for ReferralUser <-> Counselor:
+ *    referral_user-{referralUserId}-counselor-{counselorId}
+ * This prevents "new thread" duplication even if older messages are missing conversation_id.
+ */
+function canonicalConversationIdFromDto(dto: any): string | null {
+    const senderRaw = dto?.sender ?? dto?.sender_role ?? dto?.senderRole
+    const senderKind = normalizeSender(senderRaw)
+
+    const senderId = normalizeIdString(dto?.sender_id ?? dto?.senderId)
+    const recipientId = normalizeIdString(dto?.recipient_id ?? dto?.recipientId)
+    const recipientRole = normalizeIdString(dto?.recipient_role ?? dto?.recipientRole).toLowerCase()
+
+    // referral_user -> counselor
+    if (senderKind === "referral_user" && recipientRole === "counselor" && senderId && recipientId) {
+        return `referral_user-${senderId}-counselor-${recipientId}`
+    }
+
+    // counselor -> referral_user
+    if (
+        (senderKind === "counselor" || isCounselorSenderValue(senderRaw)) &&
+        recipientRole === "referral_user" &&
+        senderId &&
+        recipientId
+    ) {
+        // recipient_id is referral_user, sender_id is counselor
+        return `referral_user-${recipientId}-counselor-${senderId}`
+    }
+
+    return null
+}
+
 function safeConversationId(dto: any): string {
     const raw = dto?.conversation_id ?? dto?.conversationId
     if (raw != null && String(raw).trim()) return String(raw)
 
-    const userId = dto?.user_id ?? dto?.userId ?? null
-    if (userId != null) return `referral_user-${userId}`
+    const canonical = canonicalConversationIdFromDto(dto)
+    if (canonical) return canonical
 
-    return `general-${Date.now()}`
+    // Stable fallback (avoid Date.now() which creates artificial new threads)
+    const userId = normalizeIdString(dto?.user_id ?? dto?.userId)
+    if (userId) return `referral_user-${userId}`
+
+    return "referral_user-office"
 }
 
 function mapDtoToUi(dto: any): UiMessage {
@@ -671,8 +719,7 @@ const ReferralUserMessages: React.FC = () => {
 
             const convs = buildConversations(ui)
 
-            // ✅ IMPORTANT (same behavior as counselor/messages.tsx):
-            // Do NOT auto-open / auto-select the first thread on page load.
+            // ✅ IMPORTANT: Do NOT auto-open / auto-select the first thread on page load.
             // Only clear the active thread if it no longer exists.
             const current = activeConversationId
             const hasCurrent = !!current && convs.some((c) => c.id === current)
@@ -764,16 +811,33 @@ const ReferralUserMessages: React.FC = () => {
             toast.error("Counselor is required.")
             return
         }
+        if (!myUserId) {
+            toast.error("Your account ID is missing. Please log out and log in again.")
+            return
+        }
 
         const peerId = newRecipient.id
         const peerName = newRecipient.name
 
-        const conversationId = `new-counselor-${String(peerId)}-${Date.now()}`
+        // ✅ Messenger-like behavior:
+        // If a thread already exists with this counselor, just open it.
+        const canonicalId = `referral_user-${myUserId}-counselor-${String(peerId)}`
+        const existing = conversations.find((c) => c.id === canonicalId)
+        if (existing) {
+            openConversation(existing.id)
+            setShowNewMessage(false)
+            setNewRecipient(null)
+            setRecipientQuery("")
+            setRecipientResults([])
+            return
+        }
+
+        // ✅ Otherwise create a client-only seed in the canonical thread id (NO timestamp id)
         const nowIso = new Date().toISOString()
 
         const seed: UiMessage = {
-            id: `seed-${conversationId}`,
-            conversationId,
+            id: `seed-${canonicalId}`,
+            conversationId: canonicalId,
             sender: "system",
             senderName: "System",
             content: `Conversation started with ${peerName}.`,
@@ -789,7 +853,7 @@ const ReferralUserMessages: React.FC = () => {
         setMessages((prev) => [...prev, seed])
 
         // ✅ Starting a conversation counts as "opened"
-        openConversation(conversationId)
+        openConversation(canonicalId)
 
         setShowNewMessage(false)
         setNewRecipient(null)
@@ -1046,6 +1110,9 @@ const ReferralUserMessages: React.FC = () => {
             const payload: any = {
                 content: text,
                 recipient_id: counselorId,
+
+                // ✅ helps the backend + guarantees same thread id across clients
+                conversation_id: activeConversation.id,
             }
 
             const res = await trySendReferralUserMessage(payload, token)
@@ -1055,6 +1122,8 @@ const ReferralUserMessages: React.FC = () => {
                 (res as any)?.message ||
                 (res as any)?.data ||
                 null
+
+            let finalConversationId = activeConversation.id
 
             if (dto) {
                 const serverMsg = mapDtoToUi(dto)
@@ -1066,6 +1135,7 @@ const ReferralUserMessages: React.FC = () => {
                     const from = activeConversation.id
                     const to = serverMsg.conversationId
 
+                    finalConversationId = to
                     openedConversationIdsRef.current.add(to)
 
                     setMessages((prev) => prev.map((m) => (m.conversationId === from ? { ...m, conversationId: to } : m)))
@@ -1074,7 +1144,7 @@ const ReferralUserMessages: React.FC = () => {
             }
 
             // ✅ Auto-mark-read after sending (silent)
-            void markConversationReadById(activeConversation.id, { silent: true })
+            void markConversationReadById(finalConversationId, { silent: true })
         } catch (err: any) {
             setMessages((prev) => prev.filter((m) => m.id !== tempId))
             if (err?.status === 401) toast.error("Unauthorized (401). Please log in again.")
